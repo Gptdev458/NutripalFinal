@@ -158,4 +158,39 @@ export const fetchUserGoals = async (userId) => {
     const errorObject = error instanceof Error ? error : new Error(String(error.message || 'Unknown error fetching user goals'));
     return { data: null, error: errorObject }; // Return null data and the error object
   }
+};
+
+/**
+ * Deletes a specific food log entry by its ID.
+ * @param {string|number} logId - The unique ID of the food log entry to delete.
+ * @returns {Promise<{ data: any, error: object | null }>} - An object reflecting the outcome of the delete operation.
+ */
+export const deleteFoodLogEntry = async (logId) => {
+  if (!logId) {
+    console.error('deleteFoodLogEntry: Missing logId');
+    return { data: null, error: new Error('Missing required parameter: logId') };
+  }
+
+  try {
+    console.log(`Attempting to delete food log entry with ID: ${logId}`);
+
+    const { data, error } = await supabase
+      .from('food_log')
+      .delete()
+      .match({ id: logId }); // Use match to specify the row to delete based on the primary key 'id'
+
+    if (error) {
+      console.error('Supabase delete error:', error);
+      throw error; // Propagate the error
+    }
+
+    console.log(`Successfully deleted food log entry with ID: ${logId}`, data);
+    // Note: Supabase delete might return data depending on configuration (e.g., RETURNING), often it's null or an empty array on success.
+    return { data, error: null };
+
+  } catch (error) {
+    console.error('Error in deleteFoodLogEntry:', error);
+    const errorObject = error instanceof Error ? error : new Error(String(error.message || 'Unknown error deleting food log entry'));
+    return { data: null, error: errorObject };
+  }
 }; 

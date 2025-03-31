@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import ChatScreen from '../screens/ChatScreen';
 import RecipeListScreen from '../screens/RecipeListScreen';
-import DashboardScreen from '../screens/DashboardScreen';
+import DashboardStackNavigator from './DashboardStackNavigator';
 import SettingsStackNavigator from './SettingsStackNavigator';
 import { Colors } from '../constants/colors';
 
@@ -44,9 +44,9 @@ const AppNavigator = () => {
     >
       <Tab.Screen
         name="Dashboard"
-        component={DashboardScreen}
+        component={DashboardStackNavigator}
         options={{
-          title: 'Dashboard',
+          headerShown: false,
         }}
       />
       <Tab.Screen

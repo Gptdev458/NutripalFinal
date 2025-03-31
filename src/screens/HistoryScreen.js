@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, Platform, FlatList } from 'react-native';
+import { View, StyleSheet, Platform, FlatList, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import {
   ActivityIndicator,
   Button,
@@ -9,13 +9,15 @@ import {
   List,
   Card,
   ProgressBar,
-  Divider, // Import Divider
+  Divider,
+  Caption,
+  IconButton
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import DateTimePicker from '@react-native-community/datetimepicker'; // Assuming this will be installed
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useAuth } from '../context/AuthContext';
 import { fetchFoodLogsByDateRange, fetchUserGoals } from '../utils/logUtils';
-import { getNutrientDetails } from '../constants/nutrients';
+import { getNutrientDetails, MASTER_NUTRIENT_LIST } from '../constants/nutrients';
 import { Colors } from '../constants/colors';
 
 // Helper function to format Date to 'YYYY-MM-DD'
@@ -24,6 +26,15 @@ const formatDate = (date) => {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+};
+
+// Helper function to check if a date is today or in the future
+const isTodayOrFuture = (date) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); // Normalize today to the start of the day
+  const compareDate = new Date(date);
+  compareDate.setHours(0, 0, 0, 0); // Normalize the comparison date
+  return compareDate >= today;
 };
 
 const HistoryScreen = ({ navigation }) => {
@@ -35,6 +46,10 @@ const HistoryScreen = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
+
+  // Add state for the modal
+  const [isHistoryModalVisible, setIsHistoryModalVisible] = useState(false);
+  const [selectedHistoryItem, setSelectedHistoryItem] = useState(null);
 
   // Fetch data when selectedDate or user changes
   const fetchHistoryData = useCallback(async () => {
@@ -110,6 +125,24 @@ const HistoryScreen = ({ navigation }) => {
     }
   };
 
+  // Function to handle changing the date via arrows
+  const handleDateArrowChange = (daysToAdd) => {
+    setSelectedDate(prevDate => {
+      const newDate = new Date(prevDate);
+      newDate.setDate(newDate.getDate() + daysToAdd);
+
+      // Prevent navigating to future dates with arrows as well
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      if (newDate > today && daysToAdd > 0) {
+          return prevDate; // Return original date if trying to go past today
+      }
+
+      return newDate;
+    });
+    // The useEffect watching selectedDate will trigger fetchHistoryData
+  };
+
   // --- Render Functions ---
 
   const renderSummaryItem = (goal) => {
@@ -139,6 +172,17 @@ const HistoryScreen = ({ navigation }) => {
      );
   };
 
+  // Function to handle pressing a history log item
+  const handleHistoryItemPress = (item) => {
+      setSelectedHistoryItem(item);
+      setIsHistoryModalVisible(true);
+  };
+
+  // Function to close the history modal
+  const handleCloseHistoryModal = () => {
+      setIsHistoryModalVisible(false);
+      setSelectedHistoryItem(null);
+  };
 
   const renderLogListItem = ({ item }) => {
     const timestamp = new Date(item.timestamp);
@@ -146,29 +190,56 @@ const HistoryScreen = ({ navigation }) => {
     const primaryNutrient = item.calories ? `${Math.round(item.calories)} kcal` : '';
 
     return (
-      <List.Item
-        title={item.food_name || 'Unnamed Item'}
-        description={`${timeString}${primaryNutrient ? ` - ${primaryNutrient}` : ''}`}
-        titleStyle={styles.logItemTitle}
-        descriptionStyle={styles.logItemDescription}
-        style={styles.logItem}
-        left={props => <List.Icon {...props} icon="food-variant" />}
-      />
+      // Wrap List.Item in TouchableOpacity
+      <TouchableOpacity onPress={() => handleHistoryItemPress(item)}>
+        <List.Item
+          title={item.food_name || 'Unnamed Item'}
+          description={`${timeString}${primaryNutrient ? ` - ${primaryNutrient}` : ''}`}
+          titleStyle={styles.logItemTitle}
+          descriptionStyle={styles.logItemDescription}
+          style={styles.logItem}
+          left={props => <List.Icon {...props} icon="food-variant" />}
+          // Optionally add a visual indicator like a chevron
+          right={props => <List.Icon {...props} icon="chevron-right" />}
+        />
+      </TouchableOpacity>
     );
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        {/* Date Picker Trigger */}
-        <Button
-          icon="calendar"
-          mode="outlined"
-          onPress={() => setShowDatePicker(true)}
-          style={styles.dateButton}
-        >
-          {selectedDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
-        </Button>
+        {/* Date Navigation Header */}
+        <View style={styles.dateHeader}>
+          {/* Previous Day Arrow */}
+          <IconButton
+            icon="chevron-left"
+            size={28}
+            onPress={() => handleDateArrowChange(-1)}
+            color={Colors.primary}
+          />
+
+          {/* Date Picker Trigger Button */}
+          <Button
+            icon="calendar"
+            mode="outlined"
+            onPress={() => setShowDatePicker(true)}
+            style={styles.dateButton}
+            labelStyle={styles.dateButtonLabel}
+            contentStyle={styles.dateButtonContent}
+          >
+            {selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+          </Button>
+
+          {/* Next Day Arrow */}
+          <IconButton
+            icon="chevron-right"
+            size={28}
+            onPress={() => handleDateArrowChange(1)}
+            disabled={isTodayOrFuture(selectedDate)}
+            color={isTodayOrFuture(selectedDate) ? Colors.disabled : Colors.primary}
+          />
+        </View>
 
         {/* Date Picker Modal */}
         {showDatePicker && (
@@ -229,6 +300,55 @@ const HistoryScreen = ({ navigation }) => {
           />
         )}
       </View>
+
+      {/* History Item Details Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={isHistoryModalVisible}
+        onRequestClose={handleCloseHistoryModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <ScrollView>
+              {selectedHistoryItem && (
+                <>
+                  <Title style={styles.modalTitle}>{selectedHistoryItem.food_name || 'Log Details'}</Title>
+                  <Divider style={styles.modalDivider} />
+
+                  {/* Display Nutrient Details */}
+                  {MASTER_NUTRIENT_LIST.map(nutrient => {
+                    const value = selectedHistoryItem[nutrient.key];
+                    // Only display if value exists and is a number or non-empty string
+                    if (value !== null && value !== undefined && value !== '') {
+                      const details = getNutrientDetails(nutrient.key);
+                      return (
+                        <View key={nutrient.key} style={styles.nutrientRow}>
+                          <Text style={styles.nutrientName}>{details?.name || nutrient.key}:</Text>
+                          <Text style={styles.nutrientValue}>
+                            {typeof value === 'number' ? Math.round(value * 10) / 10 : value} {details?.unit || ''}
+                          </Text>
+                        </View>
+                      );
+                    }
+                    return null; // Don't render if nutrient value is missing/null
+                  })}
+                   <Divider style={styles.modalDivider} />
+                   <Caption style={styles.modalTimestamp}>
+                     Logged at: {new Date(selectedHistoryItem.timestamp).toLocaleString('en-US', {
+                       dateStyle: 'medium',
+                       timeStyle: 'short',
+                     })}
+                   </Caption>
+                </>
+              )}
+            </ScrollView>
+            <Button mode="contained" onPress={handleCloseHistoryModal} style={styles.modalCloseButton}>
+              Close
+            </Button>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -258,8 +378,23 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     fontSize: 16,
   },
+  dateHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 5,
+    marginVertical: 10,
+  },
   dateButton: {
-    margin: 15,
+    flexShrink: 1,
+    borderColor: Colors.grey,
+    borderWidth: 1,
+  },
+  dateButtonContent: {
+    paddingHorizontal: 8,
+  },
+  dateButtonLabel: {
+    fontSize: 14,
   },
   sectionHeader: {
     paddingHorizontal: 15,
@@ -330,6 +465,58 @@ const styles = StyleSheet.create({
   },
   listContentContainer: {
     paddingBottom: 20,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContent: {
+    width: '90%',
+    maxHeight: '80%',
+    backgroundColor: Colors.background,
+    borderRadius: 10,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    textAlign: 'center',
+    color: Colors.primary,
+  },
+  modalDivider: {
+    marginVertical: 10,
+  },
+  nutrientRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+  },
+  nutrientName: {
+    fontSize: 16,
+    color: Colors.text,
+    fontWeight: '500',
+  },
+  nutrientValue: {
+    fontSize: 16,
+    color: Colors.textSecondary,
+  },
+  modalTimestamp: {
+      textAlign: 'center',
+      marginTop: 10,
+      color: Colors.textSecondary,
+      fontSize: 13,
+  },
+  modalCloseButton: {
+    marginTop: 20,
+    backgroundColor: Colors.primary, // Use primary or accent based on theme intention
   },
 });
 

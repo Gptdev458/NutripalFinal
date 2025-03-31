@@ -5,6 +5,7 @@ import {
   View,
   FlatList,
   Alert, // Import Alert for error handling in quick log
+  TouchableOpacity, // Import TouchableOpacity
 } from 'react-native';
 import {
   ActivityIndicator,
@@ -22,111 +23,63 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import { getNutrientDetails, MASTER_NUTRIENT_LIST } from '../constants/nutrients';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Colors } from '../constants/colors';
 import { quickLogRecipe, fetchRecipeDetails, fetchUserGoals, fetchFoodLogsByDateRange } from '../utils/logUtils';
 
+// Define the formatDate helper function here
+const formatDate = (date) => {
+  if (!date) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-indexed
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const DashboardScreen = ({ navigation }) => {
   const { user } = useAuth();
-  const [dashboardSections, setDashboardSections] = useState([]); // New state for combined data
-  const [recentRecipes, setRecentRecipes] = useState([]);
+  const [dashboardData, setDashboardData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
-  const [loggingRecipeId, setLoggingRecipeId] = useState(null);
+  const [todayDateString, setTodayDateString] = useState(formatDate(new Date())); // Store today's date string
+
+  // Use navigation hook in case navigation prop is not passed down correctly
+  const navHook = useNavigation();
 
   const fetchDashboardData = useCallback(async () => {
     if (!user) {
       setLoading(false);
-      setRefreshing(false);
       return;
     }
-
+    setLoading(true);
     setError(null);
-    if (!refreshing) {
-      setLoading(true);
-    }
+
+    const todayStr = formatDate(new Date());
+    setTodayDateString(todayStr); // Store today's date string
 
     try {
-      // Get today's date in YYYY-MM-DD format
-      const today = new Date();
-      const year = today.getFullYear();
-      const month = String(today.getMonth() + 1).padStart(2, '0'); // Months are 0-indexed
-      const day = String(today.getDate()).padStart(2, '0');
-      const todayDateString = `${year}-${month}-${day}`;
-
-      // Fetch goals, logs for today, and recent recipes concurrently
-      const [goalsResponse, logsResponse, recipesResult] = await Promise.all([
+      const [goalsResponse, logsResponse] = await Promise.all([
         fetchUserGoals(user.id),
-        fetchFoodLogsByDateRange(user.id, todayDateString, todayDateString),
-        supabase.from('user_recipes').select('id, recipe_name').eq('user_id', user.id).order('created_at', { ascending: false }).limit(3)
+        fetchFoodLogsByDateRange(user.id, todayStr, todayStr)
       ]);
 
-      // Handle errors from the fetched results
       if (goalsResponse.error) throw new Error(`Goals fetch failed: ${goalsResponse.error.message}`);
       if (logsResponse.error) throw new Error(`Logs fetch failed: ${logsResponse.error.message}`);
-      if (recipesResult.error) throw new Error(`Recipes fetch failed: ${recipesResult.error.message}`);
 
-      const rawGoals = goalsResponse.data || [];
-      const rawLogs = logsResponse.data || [];
+      const userGoals = goalsResponse.data || [];
+      const todaysLog = logsResponse.data || [];
 
-      setRecentRecipes(recipesResult.data || []);
-
-      // --- Process Data for Sections ---
-      const sections = [];
-
-      // Add Goals Section Header
-      sections.push({ type: 'header', title: "Today's Goals", id: 'goals-header' });
-
-      if (rawGoals.length > 0) {
-        const finalProcessedGoals = rawGoals.map(goal => {
-          const nutrientDetails = getNutrientDetails(goal.nutrient);
-          let currentIntake = 0;
-          rawLogs.forEach(log => {
-            const logValue = log[goal.nutrient];
-            if (typeof logValue === 'number' && !isNaN(logValue)) {
-              currentIntake += logValue;
-            }
-          });
-          return {
-            type: 'goal', // Add type for renderItem logic
-            id: `goal-${goal.id}`, // Unique ID for keyExtractor
-            key: goal.nutrient,
-            name: nutrientDetails?.name || goal.nutrient,
-            unit: nutrientDetails?.unit || goal.unit || '',
-            target: goal.target_value || 0,
-            current: currentIntake,
-          };
-        });
-        sections.push(...finalProcessedGoals); // Add processed goals to sections
-      } else {
-         // Add message if no goals are set
-         sections.push({ type: 'noGoalsMessage', id: 'no-goals-msg' });
-      }
-
-      // Add Logs Section Header
-      sections.push({ type: 'header', title: "Today's Log", id: 'logs-header' });
-
-      if (rawLogs.length > 0) {
-         // Add log items, assign type and unique ID
-         sections.push(...rawLogs.map(log => ({ ...log, type: 'log', id: `log-${log.id}` })));
-      } else {
-        // Add message if no logs exist for today
-        sections.push({ type: 'noLogsMessage', id: 'no-logs-msg' });
-      }
-
-      setDashboardSections(sections); // Update state with the new structure
+      prepareDashboardData(userGoals, todaysLog);
 
     } catch (err) {
-      setError('Error fetching dashboard data: ' + (err.message || 'Unknown error'));
       console.error('Error fetching dashboard data:', err);
-      setDashboardSections([]); // Clear sections on error
-      setRecentRecipes([]);
+      setError('Failed to load dashboard data.');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user, refreshing]);
+  }, [user]);
 
   useFocusEffect(
     useCallback(() => {
@@ -135,31 +88,63 @@ const DashboardScreen = ({ navigation }) => {
     }, [fetchDashboardData])
   );
 
+  const prepareDashboardData = (goals, logs) => {
+    let data = [];
+    let todaysTotals = {};
+
+    // Calculate totals from logs for relevant nutrients (e.g., calories)
+    logs.forEach(log => {
+        Object.keys(log).forEach(key => {
+            if (typeof log[key] === 'number') {
+                todaysTotals[key] = (todaysTotals[key] || 0) + log[key];
+            }
+        });
+    });
+
+
+    // Goals Section
+    data.push({ type: 'header', title: 'Nutrition Goals' });
+    if (goals.length > 0) {
+      goals.forEach(goal => {
+        const nutrientDetail = getNutrientDetails(goal.nutrient);
+        if (nutrientDetail) {
+          data.push({
+            type: 'goal',
+            key: goal.nutrient,
+            name: nutrientDetail.name,
+            target: goal.target_value,
+            unit: nutrientDetail.unit,
+            current: todaysTotals[goal.nutrient] || 0,
+          });
+        }
+      });
+    } else {
+      data.push({ type: 'noGoalsMessage' });
+    }
+
+    // Today's Log Section Header
+    data.push({ type: 'header', title: "Today's Log" });
+
+    // Replace detailed logs with a summary item or no logs message
+    if (logs.length > 0) {
+        data.push({
+            type: 'logSummary',
+            count: logs.length,
+            calories: todaysTotals.calories || 0,
+            // Pass other totals if needed for summary
+        });
+    } else {
+        data.push({ type: 'noLogsMessage' });
+    }
+
+
+    setDashboardData(data);
+  };
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-  }, []);
-
-  const handleQuickLog = async (recipeId, recipeName) => {
-      if (loggingRecipeId) return;
-      setLoggingRecipeId(recipeId);
-      try {
-        const recipeDetails = await fetchRecipeDetails(recipeId);
-        if (recipeDetails) {
-           const success = await quickLogRecipe(recipeDetails, user);
-           if (success) {
-               // Trigger refresh after successful log
-               setRefreshing(true); // Set refreshing to true to trigger fetchDashboardData
-           }
-        } else {
-            Alert.alert('Error', 'Could not fetch recipe details to log.');
-        }
-      } catch (err) {
-          console.error("Error during quick log process:", err);
-          Alert.alert('Error', 'An unexpected error occurred during logging.');
-      } finally {
-          setLoggingRecipeId(null);
-      }
-  };
+    fetchDashboardData();
+  }, [fetchDashboardData]);
 
   // --- Render Functions for Different Item Types ---
 
@@ -187,26 +172,6 @@ const DashboardScreen = ({ navigation }) => {
     );
   };
 
-  const renderLogItem = (item) => {
-      // Format timestamp
-      const timestamp = new Date(item.timestamp);
-      const timeString = timestamp.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      // Display primary nutrient (e.g., calories) if available, otherwise just name
-      const primaryNutrient = item.calories ? `${Math.round(item.calories)} kcal` : '';
-
-      return (
-          <List.Item
-             title={item.food_name || 'Unnamed Item'}
-             description={`${timeString}${primaryNutrient ? ` - ${primaryNutrient}` : ''}`}
-             titleStyle={styles.logItemTitle}
-             descriptionStyle={styles.logItemDescription}
-             style={styles.logItem}
-             left={props => <List.Icon {...props} icon="food-variant" color={Colors.accent} />}
-             // Add onPress later if needed for editing/deleting logs
-          />
-      );
-  };
-
   const renderHeaderItem = (item) => (
       <View style={styles.sectionHeader}>
           <Subheading style={styles.sectionTitle}>{item.title}</Subheading>
@@ -218,7 +183,7 @@ const DashboardScreen = ({ navigation }) => {
           <Text style={styles.emptyText}>No goals set yet.</Text>
           <Button
              mode="outlined"
-             onPress={() => navigation.navigate('SettingsTab', { screen: 'GoalSettings' })}
+             onPress={() => navHook.navigate('SettingsTab', { screen: 'GoalSettings' })}
              icon="target"
              style={styles.setGoalsButton}
           >
@@ -232,14 +197,50 @@ const DashboardScreen = ({ navigation }) => {
             <Text style={styles.emptyText}>No food logged today.</Text>
             <Button
                mode="outlined"
-               onPress={() => navigation.navigate('Chat')} // Navigate to Chat screen
+               onPress={() => navHook.navigate('Chat')}
                icon="message-plus-outline"
-               style={styles.setGoalsButton} // Reuse style or create new one
+               style={styles.setGoalsButton}
             >
                Log Food via Chat
             </Button>
         </View>
     );
+
+  // NEW function to render the log summary item
+  const renderLogSummaryItem = (item) => (
+    <TouchableOpacity
+       onPress={() => navigation.navigate('LogScreen', { date: todayDateString })}
+    >
+      <List.Item
+        title={`Today's Log (${item.count} items)`}
+        description={`Total Calories: ${Math.round(item.calories)} kcal`}
+        left={props => <List.Icon {...props} icon="notebook-outline" color={Colors.accent} />}
+        right={props => <List.Icon {...props} icon="chevron-right" />}
+        style={styles.summaryItem}
+        titleStyle={styles.summaryTitle}
+        descriptionStyle={styles.summaryDescription}
+      />
+    </TouchableOpacity>
+  );
+
+  const renderQuickLogRecipeItem = (item) => (
+    <Button
+      key={item.id}
+      mode="outlined" // Or "contained" based on desired appearance
+      onPress={() => handleQuickLogRecipe(item)}
+      style={styles.quickLogButton}
+      labelStyle={styles.quickLogButtonText} // Apply the updated style here
+      disabled={item.logging}
+      loading={item.logging}
+      icon="plus"
+      compact // Makes the button slightly smaller vertically
+      // Use children prop for more control if labelStyle doesn't work reliably
+      // children={<Text style={styles.quickLogButtonText} numberOfLines={0}>{item.recipe_name}</Text>}
+    >
+      {/* The text here is handled by Button's internal label */}
+      {item.recipe_name}
+    </Button>
+  );
 
   // --- Main renderItem function for the FlatList ---
   const renderDashboardItem = ({ item }) => {
@@ -248,12 +249,12 @@ const DashboardScreen = ({ navigation }) => {
         return renderHeaderItem(item);
       case 'goal':
         return renderGoalItem(item);
-      case 'log':
-        return renderLogItem(item);
-       case 'noGoalsMessage':
-         return renderNoGoalsMessage();
-       case 'noLogsMessage':
-         return renderNoLogsMessage();
+      case 'logSummary':
+          return renderLogSummaryItem(item);
+      case 'noGoalsMessage':
+        return renderNoGoalsMessage();
+      case 'noLogsMessage':
+        return renderNoLogsMessage();
       default:
         return null; // Or a placeholder for unknown types
     }
@@ -271,32 +272,6 @@ const DashboardScreen = ({ navigation }) => {
       </View>
   );
 
-
-  const ListFooter = () => (
-    // Keep Quick Log Recipes in the footer
-    recentRecipes.length > 0 && (
-      <View style={styles.section}>
-        <Subheading style={styles.sectionTitle}>Quick Log Recipes</Subheading>
-        {recentRecipes.map(recipe => (
-          <Button
-            key={recipe.id}
-            mode="contained-tonal"
-            onPress={() => handleQuickLog(recipe.id, recipe.recipe_name)}
-            style={styles.quickLogButton}
-            labelStyle={styles.quickLogButtonText}
-            loading={loggingRecipeId === recipe.id}
-            disabled={loggingRecipeId === recipe.id || loggingRecipeId === 'fetching'}
-            icon="plus-circle-outline"
-          >
-            {recipe.recipe_name || 'Unnamed Recipe'}
-          </Button>
-        ))}
-        {/* Add some bottom padding to the footer */}
-        <View style={{ height: 20 }} />
-      </View>
-    )
-  );
-
   // EmptyListComponent might not be needed anymore if sections handle their own empty states
   const EmptyListComponent = () => {
       // Only show if still loading initially or a major error occurred preventing sections
@@ -304,7 +279,7 @@ const DashboardScreen = ({ navigation }) => {
           return null; // Loading/Error handled elsewhere or in header
       }
       // Optional: Message if absolutely nothing is available (no goals, no logs, no recipes)
-      if (dashboardSections.length === 0 && recentRecipes.length === 0) {
+      if (dashboardData.length === 0) {
           return (
               <View style={styles.emptyListContainer}>
                   <Text style={styles.emptyText}>Dashboard is empty. Set goals or log food!</Text>
@@ -328,11 +303,10 @@ const DashboardScreen = ({ navigation }) => {
   // --- Main Render using FlatList ---
   return (
     <FlatList
-      data={dashboardSections} // Use the new combined sections data
-      renderItem={renderDashboardItem} // Use the versatile item renderer
-      keyExtractor={(item) => item.id} // Use the unique ID assigned to each item
+      data={dashboardData}
+      renderItem={renderDashboardItem}
+      keyExtractor={(item, index) => `${item.type}-${item.key || item.title || index}`}
       ListHeaderComponent={ListHeader}
-      ListFooterComponent={ListFooter}
       ListEmptyComponent={EmptyListComponent}
       contentContainerStyle={styles.listContentContainer}
       ItemSeparatorComponent={() => <Divider style={styles.logItemDivider} />} // Optional divider between log items
@@ -478,15 +452,42 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
   },
   quickLogButton: {
-    marginVertical: 6,
-    paddingVertical: 4,
+    marginVertical: 4, // Reduced vertical margin slightly
+    // Ensure no fixed height that could prevent wrapping
+    height: 'auto', // Allow height to adjust to content
+    minHeight: 40, // Ensure a minimum touchable area
+    justifyContent: 'center', // Center content vertically
+    paddingVertical: 6, // Adjust padding as needed
   },
   quickLogButtonText: {
     fontSize: 15,
-    fontWeight: 'bold',
+    fontWeight: '500', // Adjusted weight slightly
+    textAlign: 'center', // Center text within the button
+    flexShrink: 1, // Allow text to shrink if absolutely necessary (should wrap first)
+    numberOfLines: 0, // Allow text to wrap onto multiple lines
   },
   listContentContainer: {
     paddingBottom: 20, // Add padding at the bottom
+  },
+  summaryItem: { // Style for the new summary item
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+    marginHorizontal: 5, // Match card style if needed
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    paddingVertical: 10, // Add padding
+  },
+  summaryTitle: {
+    fontWeight: 'bold',
+    fontSize: 16,
+    color: Colors.text,
+  },
+  summaryDescription: {
+    color: Colors.textSecondary,
+    fontSize: 14,
   },
 });
 
