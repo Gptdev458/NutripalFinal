@@ -1,46 +1,39 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
-  TextInput,
-  Button,
-  FlatList,
-  Text,
-  ActivityIndicator,
-  TouchableOpacity,
   StyleSheet,
+  FlatList,
   KeyboardAvoidingView,
   Platform,
+  TouchableOpacity,
+  Alert,
 } from 'react-native';
+import {
+  TextInput as PaperTextInput,
+  IconButton,
+  Text as PaperText,
+  ActivityIndicator,
+  Card,
+  Paragraph,
+  Surface,
+} from 'react-native-paper';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { useNetInfo } from '@react-native-community/netinfo';
+import { Colors } from '../constants/colors';
 
 const ChatScreen = () => {
-  // Access auth context for user information
   const { user, session } = useAuth();
-  
-  // Set up state
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
-  const [waitingForContext, setWaitingForContext] = useState(null);
-  
-  // Reference to the FlatList to auto-scroll to bottom
-  const flatListRef = useRef(null);
+  const [isOffline, setIsOffline] = useState(false);
 
-  // Inside component before other hooks
+  const flatListRef = useRef(null);
   const netInfo = useNetInfo();
 
-  // Effect to scroll to bottom when messages change
   useEffect(() => {
-    if (messages.length > 0 && flatListRef.current) {
-      flatListRef.current.scrollToEnd({ animated: true });
-    }
-  }, [messages]);
-
-  // Load initial message on mount
-  useEffect(() => {
-    // Add welcome message
     setMessages([
       {
         id: '0',
@@ -50,284 +43,251 @@ const ChatScreen = () => {
     ]);
   }, []);
 
-  // New consolidated async function for sending messages
-  const handleSend = async () => {
-    // Check for internet connectivity
-    if (!netInfo.isConnected) {
-      addMessage("No internet connection. Please check your network and try again.", 'ai');
+  useEffect(() => {
+    if (messages.length > 0 && flatListRef.current) {
+      flatListRef.current.scrollToEnd({ animated: true });
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    setIsOffline(netInfo.isConnected === false);
+    if (netInfo.isConnected === false) {
+        // Optionally show an alert or banner when offline
+        // Alert.alert("Offline", "You are currently offline. Chat functionality may be limited.");
+    }
+  }, [netInfo.isConnected]);
+
+  const handleSend = useCallback(async () => {
+    if (!inputText.trim() || loading || isOffline) {
+      if (isOffline) {
+          Alert.alert("Offline", "Cannot send messages while offline.");
+      }
       return;
     }
-    
-    // Get current text and context
-    const currentText = inputText;
-    const currentWaitingContext = waitingForContext;
-    
-    // Clear input text immediately for better UX
-    setInputText('');
-    
-    // Return if text is empty
-    if (!currentText.trim()) return;
-    
-    // Create and add user message
+
+    console.log('Send attempt - Auth state:', {
+      hasUser: !!user,
+      hasSession: !!session,
+      hasToken: !!session?.access_token,
+    });
+
     const userMessage = {
       id: Date.now().toString(),
-      text: currentText,
-      sender: 'user'
+      text: inputText,
+      sender: 'user',
     };
+
     setMessages(prevMessages => [...prevMessages, userMessage]);
-    
-    // Set loading state
+    setInputText('');
     setLoading(true);
-    
-    // Add thinking message
-    const thinkingMessageId = 'thinking-' + Date.now();
+
+    const thinkingMessageId = (Date.now() + 1).toString();
     const thinkingMessage = {
       id: thinkingMessageId,
-      text: 'NutriPal is thinking...',
+      text: '...',
       sender: 'ai',
-      isThinking: true
+      isThinking: true,
     };
     setMessages(prevMessages => [...prevMessages, thinkingMessage]);
-    
-    // Prepare request body
-    const requestBody = {
-      message: currentText,
-      context: currentWaitingContext
-    };
-    
-    // Clear waiting context
-    setWaitingForContext(null);
-    
-    // Add logging before invoke
-    console.log("Attempting to invoke function 'ai-handler-v2'");
-    console.log("User Session Exists:", !!session); // Check if session object is present
-    console.log("Request Body:", JSON.stringify(requestBody, null, 2)); // Log the body
 
     try {
-      // Call the Edge Function
-      const { data, error } = await supabase.functions.invoke('ai-handler-v2', {
-        body: requestBody
-      });
-
-      // Add logging for the response
-      console.log("Function Response Data:", data);
-      console.log("Function Response Error:", error);
-
-      if (error) {
-        // Enhanced error logging
-        console.error("Supabase function invocation error:", error); // Log the full error object
-        const aiErrorMessage = {
-          id: Date.now().toString(),
-          // Provide more specific error if available, otherwise generic
-          text: `Sorry, I encountered an error (${error.message || 'Unknown invoke error'}). Please try again.`,
-          sender: 'ai'
-        };
-        setMessages(prevMessages => [...prevMessages, aiErrorMessage]);
-      } else {
-        // Handle successful response
-        const aiMessage = {
-          id: Date.now().toString(),
-          text: data.message || "Received response, but no message content.", // Handle potentially missing message
-          sender: 'ai'
-        };
-        setMessages(prevMessages => [...prevMessages, aiMessage]);
-        
-        // Check if we need to set context for ingredients
-        if (data.status === 'needs_ingredients') {
-          setWaitingForContext({
-            type: 'ingredients',
-            recipeName: data.recipeName
-          });
-        }
+      if (!session?.access_token) {
+        throw new Error('Authentication token not found.');
       }
-    } catch (error) {
-      // Log the error from the catch block as well
-      console.error('Error invoking Supabase function:', error); // Log the full error from the catch block
-      const aiErrorMessage = {
-        id: Date.now().toString(),
-        // Provide more specific error if available, otherwise generic
-        text: `Sorry, a critical error occurred (${error.message || 'Unknown catch error'}). Please try again.`,
-        sender: 'ai'
-      };
-      setMessages(prevMessages => [...prevMessages, aiErrorMessage]);
-    } finally {
-      // Reset loading state
-      setLoading(false);
-      // Remove thinking message
-      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== thinkingMessageId));
-      // Ensure scroll happens after final message is added
-      setTimeout(() => {
-        if (flatListRef.current) {
-          flatListRef.current.scrollToEnd({ animated: true });
-        }
-      }, 0);
-    }
-  };
 
-  // Render a chat message
-  const renderMessage = ({ item }) => {
+      const url = `${supabase.supabaseUrl}/functions/v1/ai-handler-v2`;
+      console.log('Attempting fetch to:', url);
+
+      const response = await fetch(
+        url,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ message: userMessage.text }),
+        }
+      );
+
+      console.log('Response status:', response.status);
+
+      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== thinkingMessageId));
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      const aiMessage = {
+        id: (Date.now() + 2).toString(),
+        text: data.message || "Sorry, I couldn't process that.",
+        sender: 'ai',
+      };
+      setMessages(prevMessages => [...prevMessages, aiMessage]);
+
+    } catch (error) {
+        console.error('Detailed fetch error:', {
+          message: error.message,
+          stack: error.stack,
+          name: error.name,
+          type: error.type
+        });
+        setMessages(prevMessages => prevMessages.filter(msg => msg.id !== thinkingMessageId));
+      console.error('Error sending message:', error);
+      const errorMessage = {
+        id: (Date.now() + 2).toString(),
+        text: `Error: ${error.message || 'Could not get response.'}`,
+        sender: 'ai',
+        isError: true,
+      };
+      setMessages(prevMessages => [...prevMessages, errorMessage]);
+      Alert.alert('Error', `Failed to send message: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [inputText, loading, session, isOffline, user]);
+
+  const renderMessageItem = ({ item }) => {
     const isUser = item.sender === 'user';
-    
+    const cardStyle = isUser ? styles.userMessageCard : styles.aiMessageCard;
+    const textStyle = isUser ? styles.userMessageText : styles.aiMessageText;
+    const thinkingStyle = item.isThinking ? styles.thinkingText : {};
+    const errorStyle = item.isError ? styles.errorText : {};
+
     return (
-      <View style={[
-        styles.messageContainer,
-        isUser ? styles.userMessage : styles.aiMessage
-      ]}>
-        <View style={[
-          styles.messageBubble,
-          !isUser && styles.aiMessageBubble,
-          item.isThinking && styles.thinkingMessageBubble
-        ]}>
-          <Text style={[
-            styles.messageText,
-            !isUser && styles.aiMessageText
-          ]}>
-            {item.text}
-          </Text>
-        </View>
-      </View>
+      <Card style={[styles.messageCard, cardStyle]} elevation={1}>
+        <Paragraph style={[textStyle, thinkingStyle, errorStyle]}>
+          {item.text}
+        </Paragraph>
+      </Card>
     );
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={100}
-    >
-      <View style={styles.chatContainer}>
+    <SafeAreaView style={styles.safeArea}>
+      {isOffline && (
+            <View style={styles.offlineBanner}>
+                <PaperText style={styles.offlineText}>You are offline</PaperText>
+            </View>
+        )}
+
         <FlatList
           ref={flatListRef}
           data={messages}
-          renderItem={renderMessage}
-          keyExtractor={item => item.id}
-          contentContainerStyle={styles.messagesList}
+          renderItem={renderMessageItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContentContainer}
+          style={styles.messageList}
         />
-        
-        <View style={styles.inputContainer}>
-          <TextInput
+
+        <Surface style={styles.inputSurface} elevation={4}>
+          <PaperTextInput
             style={styles.input}
             value={inputText}
             onChangeText={setInputText}
-            placeholder={
-              waitingForContext?.type === 'ingredients'
-                ? `Enter ingredients for ${waitingForContext.recipeName}...`
-                : "Type a message..."
-            }
+            placeholder={isOffline ? "Offline - Cannot send" : "Type your message..."}
+            mode="outlined"
+            dense
             multiline
-            returnKeyType="send"
-            onSubmitEditing={handleSend}
-            editable={!loading}
+            editable={!loading && !isOffline}
           />
-          
           {loading ? (
-            <ActivityIndicator size="small" color="#007AFF" style={styles.sendButton} />
+              <ActivityIndicator animating={true} color={Colors.accent} style={styles.sendButtonContainer}/>
           ) : (
-            <TouchableOpacity
-              style={styles.sendButton}
-              onPress={handleSend}
-              disabled={!inputText.trim()}
-            >
-              <Text style={styles.sendButtonText}>Send</Text>
-            </TouchableOpacity>
+             <IconButton
+               icon="send"
+               color={Colors.accent}
+               size={28}
+               onPress={handleSend}
+               disabled={!inputText.trim() || loading || isOffline}
+               style={styles.sendButtonContainer}
+             />
           )}
-        </View>
-      </View>
-    </KeyboardAvoidingView>
+        </Surface>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: Colors.lightGrey,
   },
-  chatContainer: {
+  offlineBanner: {
+    backgroundColor: Colors.warning,
+    paddingVertical: 4,
+    alignItems: 'center',
+  },
+  offlineText: {
+    color: Colors.background,
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  messageList: {
     flex: 1,
-    justifyContent: 'space-between',
   },
-  messagesList: {
-    padding: 16,
-    paddingBottom: 20,
+  listContentContainer: {
+    paddingHorizontal: 10,
+    paddingVertical: 10,
   },
-  messageContainer: {
+  messageCard: {
     maxWidth: '80%',
-    marginVertical: 8,
-    padding: 16,
-    borderRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
+    marginBottom: 10,
+    borderRadius: 15,
   },
-  userMessage: {
+  userMessageCard: {
     alignSelf: 'flex-end',
-    backgroundColor: '#007AFF',
-    borderBottomRightRadius: 4, // Pointed edge
+    backgroundColor: Colors.accent,
   },
-  aiMessage: {
+  aiMessageCard: {
     alignSelf: 'flex-start',
-    backgroundColor: '#FFFFFF',
-    borderBottomLeftRadius: 4, // Pointed edge
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.lightGrey,
   },
-  messageBubble: {
-    maxWidth: '80%',
-    padding: 12,
-    borderRadius: 18,
-  },
-  messageText: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    lineHeight: 22,
+  userMessageText: {
+    color: Colors.background,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
   },
   aiMessageText: {
-    color: '#333333', // Darker text for AI messages on white background
+    color: Colors.primary,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
   },
-  inputContainer: {
+   thinkingText: {
+     color: Colors.grey,
+     fontStyle: 'italic',
+   },
+   errorText: {
+       color: Colors.error,
+   },
+  inputSurface: {
     flexDirection: 'row',
-    padding: 12,
-    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
     borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
+    borderTopColor: Colors.lightGrey,
+    backgroundColor: Colors.background,
   },
   input: {
     flex: 1,
-    minHeight: 46, // Slightly taller
-    maxHeight: 120,
-    backgroundColor: '#F0F0F0',
-    borderRadius: 23, // Half of height for perfect circle
-    paddingHorizontal: 18,
-    paddingTop: 12,
-    paddingBottom: 12,
-    fontSize: 16,
+    marginRight: 8,
+    backgroundColor: Colors.background,
+    paddingVertical: 8,
+    paddingLeft: 12,
+    textAlignVertical: 'center',
   },
-  sendButton: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 10,
-    width: 46, 
-    height: 46,
-    backgroundColor: '#007AFF',
-    borderRadius: 23, // Circle
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  sendButtonText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    fontSize: 15,
-  },
-  aiMessageBubble: {
-    backgroundColor: '#E5E5EA',
-    borderBottomLeftRadius: 4,
-  },
-  thinkingMessageBubble: {
-    backgroundColor: '#E5E5EA',
-    opacity: 0.7,
+  sendButtonContainer: {
+      margin: 0,
   },
 });
 

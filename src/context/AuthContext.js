@@ -112,13 +112,34 @@ export const AuthProvider = ({ children }) => {
   // Sign out
   const signOut = async () => {
     try {
-      setLoading(true);
+      // Add debug logs
+      console.log('Starting sign out process...');
+      console.log('Supabase client status:', !!supabase?.auth);
+      
+      // Check if supabase is properly initialized
+      if (!supabase?.auth) {
+        throw new Error('Supabase client is not properly initialized');
+      }
+
       const { error } = await supabase.auth.signOut();
-      if (error) throw error;
+      console.log('Sign out response:', { error });
+
+      if (error) {
+        throw error;
+      }
+
+      // Clear session and user state
+      setSession(null);
+      setUser(null);
+      return { error: null };
+
     } catch (error) {
-      console.error('Error signing out:', error.message);
-    } finally {
-      setLoading(false);
+      console.error('Detailed sign out error:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+      return { error };
     }
   };
 

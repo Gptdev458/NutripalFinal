@@ -1,20 +1,24 @@
-import React, { useState, useContext } from 'react';
+import React, { useState } from 'react';
+import { View, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
 import {
-  View,
-  Text,
-  TextInput,
-  Button,
+  TextInput as PaperTextInput,
+  Button as PaperButton,
+  Text as PaperText,
+  Title,
+  Subheading,
+  HelperText,
   ActivityIndicator,
-  StyleSheet,
-  TouchableOpacity,
-} from 'react-native';
+  Surface,
+} from 'react-native-paper';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
+import { Colors } from '../constants/colors';
 
 const LoginScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
   
   const { signIn } = useAuth();
 
@@ -34,7 +38,8 @@ const LoginScreen = ({ navigation }) => {
         throw signInError;
       }
     } catch (err) {
-      setError(err.message || 'Failed to sign in');
+      setError(err.message || 'An unexpected error occurred.');
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -45,90 +50,133 @@ const LoginScreen = ({ navigation }) => {
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>NutriPal</Text>
-      <Text style={styles.subtitle}>Your AI Nutrition Assistant</Text>
-      
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
-      
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
-        editable={!loading}
-      />
-      
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-        editable={!loading}
-      />
-      
-      {loading ? (
-        <ActivityIndicator size="large" color="#0000ff" style={styles.loader} />
-      ) : (
-        <Button title="Login" onPress={handleLogin} disabled={loading} />
-      )}
-      
-      <View style={styles.signupContainer}>
-        <Text>Don't have an account? </Text>
-        <TouchableOpacity onPress={navigateToSignUp}>
-          <Text style={styles.signupText}>Sign Up</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+    <SafeAreaView style={styles.safeArea}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.container}
+      >
+        <Surface style={styles.content}>
+          <Title style={styles.title}>NutriPal</Title>
+          <Subheading style={styles.subtitle}>Your AI Nutrition Assistant</Subheading>
+          
+          <HelperText type="error" visible={!!error} style={styles.errorText}>
+            {error}
+          </HelperText>
+          
+          <PaperTextInput
+            label="Email"
+            value={email}
+            onChangeText={setEmail}
+            mode="outlined"
+            style={styles.input}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            editable={!loading}
+            left={<PaperTextInput.Icon icon="email" />}
+          />
+          
+          <PaperTextInput
+            label="Password"
+            value={password}
+            onChangeText={setPassword}
+            mode="outlined"
+            style={styles.input}
+            secureTextEntry
+            editable={!loading}
+            left={<PaperTextInput.Icon icon="lock" />}
+          />
+          
+          {loading ? (
+            <ActivityIndicator animating={true} color={Colors.accent} size="large" style={styles.loader} />
+          ) : (
+            <PaperButton
+              mode="contained"
+              onPress={handleLogin}
+              disabled={loading}
+              style={styles.button}
+              labelStyle={styles.buttonLabel}
+              color={Colors.accent}
+            >
+              Login
+            </PaperButton>
+          )}
+          
+          <View style={styles.signupContainer}>
+            <PaperText style={styles.signupPrompt}>Don't have an account? </PaperText>
+            <TouchableOpacity onPress={navigateToSignUp} disabled={loading}>
+              <PaperText style={styles.signupLink}>Sign Up</PaperText>
+            </TouchableOpacity>
+          </View>
+        </Surface>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
   container: {
     flex: 1,
     justifyContent: 'center',
-    padding: 20,
-    backgroundColor: '#fff',
+  },
+  content: {
+    padding: 30,
+    marginHorizontal: 20,
+    borderRadius: 12,
+    elevation: 4,
+    backgroundColor: Colors.background,
   },
   title: {
+    textAlign: 'center',
     fontSize: 32,
     fontWeight: 'bold',
-    textAlign: 'center',
     marginBottom: 8,
+    color: Colors.primary,
   },
   subtitle: {
-    fontSize: 18,
-    color: '#666',
     textAlign: 'center',
-    marginBottom: 30,
-  },
-  input: {
-    height: 50,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    marginBottom: 15,
-    paddingHorizontal: 10,
+    marginBottom: 25,
+    color: Colors.grey,
   },
   errorText: {
-    color: 'red',
-    marginBottom: 15,
+    marginBottom: 10,
     textAlign: 'center',
+    fontSize: 14,
+    color: Colors.error,
+  },
+  input: {
+    marginBottom: 15,
+    backgroundColor: Colors.background,
+  },
+  button: {
+    marginTop: 10,
+    paddingVertical: 8,
+  },
+  buttonLabel: {
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   loader: {
-    marginVertical: 20,
+    marginTop: 20,
+    marginBottom: 20,
   },
   signupContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 20,
+    alignItems: 'center',
+    marginTop: 25,
   },
-  signupText: {
-    color: '#0066cc',
+  signupPrompt: {
+    color: Colors.grey,
+    fontSize: 15,
+  },
+  signupLink: {
+    color: Colors.accent,
     fontWeight: 'bold',
+    fontSize: 15,
   },
 });
 

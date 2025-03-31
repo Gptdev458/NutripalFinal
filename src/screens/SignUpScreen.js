@@ -1,49 +1,42 @@
 import React, { useState } from 'react';
+import { View, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
+// Import Paper components and SafeAreaView
 import {
-  View,
-  Text,
-  TextInput,
-  Button,
+  TextInput as PaperTextInput,
+  Button as PaperButton,
+  Text as PaperText,
+  Title,
+  Subheading,
+  HelperText,
   ActivityIndicator,
-  StyleSheet,
-  TouchableOpacity,
-} from 'react-native';
+  Surface,
+} from 'react-native-paper';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
+import { Colors } from '../constants/colors';
 
 const SignUpScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
-  
   const { signUp } = useAuth();
 
   const handleSignUp = async () => {
-    if (!email || !password) {
-      setError('Email and password are required');
-      return;
-    }
-
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
-      return;
-    }
-
+    setLoading(true);
+    setError(null);
+    setSuccess(false);
     try {
-      setError('');
-      setSuccess(false);
-      setLoading(true);
-      
-      const { data, error: signUpError } = await signUp(email, password);
-      
+      const { error: signUpError } = await signUp(email, password);
       if (signUpError) {
-        throw signUpError;
+        setError(signUpError.message);
+      } else {
+        setSuccess(true);
       }
-      
-      setSuccess(true);
     } catch (err) {
-      setError(err.message || 'Failed to sign up');
+      setError(err.message || 'An unexpected error occurred.');
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -54,114 +47,161 @@ const SignUpScreen = ({ navigation }) => {
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Create Account</Text>
-      <Text style={styles.subtitle}>Join NutriPal and start tracking your nutrition</Text>
-      
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
-      
-      {success ? (
-        <View style={styles.successContainer}>
-          <Text style={styles.successText}>
-            Sign up successful! Please check your email for confirmation instructions.
-          </Text>
-          <Button title="Back to Login" onPress={navigateToLogin} />
-        </View>
-      ) : (
-        <>
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            editable={!loading}
-          />
-          
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            editable={!loading}
-          />
-          
-          {loading ? (
-            <ActivityIndicator size="large" color="#0000ff" style={styles.loader} />
+    <SafeAreaView style={styles.safeArea}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.container}
+      >
+        <Surface style={styles.content}>
+          <Title style={styles.title}>Create Account</Title>
+          <Subheading style={styles.subtitle}>Join NutriPal</Subheading>
+
+          <HelperText type="error" visible={!!error} style={styles.errorText}>
+            {error}
+          </HelperText>
+
+          {success ? (
+            <View style={styles.successContainer}>
+              <PaperText style={styles.successText}>
+                Sign up successful! Please check your email for confirmation instructions.
+              </PaperText>
+              <PaperButton
+                mode="outlined"
+                onPress={navigateToLogin}
+                style={styles.button}
+                color={Colors.accent}
+              >
+                Back to Login
+              </PaperButton>
+            </View>
           ) : (
-            <Button title="Sign Up" onPress={handleSignUp} disabled={loading} />
+            <>
+              <PaperTextInput
+                label="Email"
+                value={email}
+                onChangeText={setEmail}
+                mode="outlined"
+                style={styles.input}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                editable={!loading}
+                left={<PaperTextInput.Icon icon="email" />}
+              />
+
+              <PaperTextInput
+                label="Password"
+                value={password}
+                onChangeText={setPassword}
+                mode="outlined"
+                style={styles.input}
+                secureTextEntry
+                editable={!loading}
+                left={<PaperTextInput.Icon icon="lock" />}
+              />
+
+              {loading ? (
+                <ActivityIndicator animating={true} color={Colors.accent} size="large" style={styles.loader} />
+              ) : (
+                <PaperButton
+                  mode="contained"
+                  onPress={handleSignUp}
+                  disabled={loading}
+                  style={styles.button}
+                  labelStyle={styles.buttonLabel}
+                  color={Colors.accent}
+                >
+                  Sign Up
+                </PaperButton>
+              )}
+
+              <View style={styles.loginContainer}>
+                <PaperText style={styles.loginPrompt}>Already have an account? </PaperText>
+                <TouchableOpacity onPress={navigateToLogin} disabled={loading}>
+                  <PaperText style={styles.loginLink}>Login</PaperText>
+                </TouchableOpacity>
+              </View>
+            </>
           )}
-          
-          <View style={styles.loginContainer}>
-            <Text>Already have an account? </Text>
-            <TouchableOpacity onPress={navigateToLogin}>
-              <Text style={styles.loginText}>Login</Text>
-            </TouchableOpacity>
-          </View>
-        </>
-      )}
-    </View>
+        </Surface>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
   container: {
     flex: 1,
     justifyContent: 'center',
-    padding: 20,
-    backgroundColor: '#fff',
+  },
+  content: {
+    padding: 30,
+    marginHorizontal: 20,
+    borderRadius: 12,
+    elevation: 4,
+    backgroundColor: Colors.background,
   },
   title: {
+    textAlign: 'center',
     fontSize: 32,
     fontWeight: 'bold',
-    textAlign: 'center',
     marginBottom: 8,
+    color: Colors.primary,
   },
   subtitle: {
-    fontSize: 18,
-    color: '#666',
     textAlign: 'center',
-    marginBottom: 30,
-  },
-  input: {
-    height: 50,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    marginBottom: 15,
-    paddingHorizontal: 10,
+    marginBottom: 25,
+    color: Colors.grey,
   },
   errorText: {
-    color: 'red',
+    marginBottom: 10,
+    textAlign: 'center',
+    fontSize: 14,
+    color: Colors.error,
+  },
+  input: {
     marginBottom: 15,
-    textAlign: 'center',
+    backgroundColor: Colors.background,
   },
-  successContainer: {
-    padding: 20,
-    backgroundColor: '#e6f7e6',
-    borderRadius: 8,
-    alignItems: 'center',
-    marginBottom: 20,
+  button: {
+    marginTop: 10,
+    paddingVertical: 8,
   },
-  successText: {
-    color: '#2e7d32',
+  buttonLabel: {
     fontSize: 16,
-    textAlign: 'center',
-    marginBottom: 20,
+    fontWeight: 'bold',
   },
   loader: {
-    marginVertical: 20,
+    marginTop: 20,
+    marginBottom: 20,
   },
   loginContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 20,
+    alignItems: 'center',
+    marginTop: 25,
   },
-  loginText: {
-    color: '#0066cc',
+  loginPrompt: {
+    color: Colors.grey,
+    fontSize: 15,
+  },
+  loginLink: {
+    color: Colors.accent,
     fontWeight: 'bold',
+    fontSize: 15,
+  },
+  successContainer: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  successText: {
+    color: Colors.success,
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 20,
   },
 });
 

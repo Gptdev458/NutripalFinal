@@ -1,87 +1,83 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
+import { ScrollView, StyleSheet, View, Alert } from 'react-native';
 import {
-  View,
+  List,
+  Divider,
+  Title,
+  Subheading,
+  ActivityIndicator,
   Text,
-  StyleSheet,
-  Button,
-  TouchableOpacity,
-  ScrollView,
-  Alert,
-  ActivityIndicator
-} from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+  Caption,
+} from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabaseClient';
+import { Colors } from '../constants/colors';
 
-const SettingsScreen = () => {
-  const navigation = useNavigation();
-  const { signOut, user } = useAuth();
+const SettingsScreen = ({ navigation }) => {
+  const { user, signOut } = useAuth();
   const [signingOut, setSigningOut] = useState(false);
 
-  const handleSignOut = async () => {
-    Alert.alert(
-      "Sign Out",
-      "Are you sure you want to sign out?",
-      [
-        {
-          text: "Cancel",
-          style: "cancel"
-        },
-        { 
-          text: "Sign Out", 
-          onPress: async () => {
-            try {
-              setSigningOut(true);
-              await signOut();
-            } catch (error) {
-              Alert.alert("Error", "Failed to sign out. Please try again.");
-              console.error("Sign out error:", error);
-              setSigningOut(false);
-            }
-          },
-          style: "destructive"
-        }
-      ]
-    );
-  };
+  const handleSignOut = useCallback(async () => {
+    setSigningOut(true);
+    try {
+      const { error } = await signOut();
+      if (error) {
+        Alert.alert('Sign Out Error', error.message);
+      }
+    } catch (error) {
+      Alert.alert('Sign Out Error', 'An unexpected error occurred.');
+      console.error('Sign Out error:', error);
+    } finally {
+      setSigningOut(false);
+    }
+  }, [signOut]);
 
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Settings</Text>
-        <Text style={styles.subtitle}>Manage your account and preferences</Text>
+        <Title style={styles.title}>Settings</Title>
+        <Caption style={styles.subtitle}>Manage your account and preferences</Caption>
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Nutrition</Text>
-        <TouchableOpacity 
-          style={styles.menuItem}
+      <List.Section style={styles.section}>
+        <List.Subheader style={styles.sectionTitle}>Nutrition & History</List.Subheader>
+        <List.Item
+          title="Set Nutrient Goals"
+          description="Choose which nutrients to track"
+          left={props => <List.Icon {...props} icon="target" color={Colors.accent} />}
           onPress={() => navigation.navigate('GoalSettings')}
-        >
-          <Text style={styles.menuItemText}>Set Nutrient Goals</Text>
-        </TouchableOpacity>
-      </View>
+          style={styles.listItem}
+          titleStyle={styles.listItemTitle}
+        />
+        <List.Item
+          title="View Log History"
+          description="Review past food logs by date"
+          left={props => <List.Icon {...props} icon="history" color={Colors.accent} />}
+          onPress={() => navigation.navigate('History')}
+          style={styles.listItem}
+          titleStyle={styles.listItemTitle}
+        />
+      </List.Section>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Account</Text>
+      <Divider style={styles.divider} />
+
+      <List.Section style={styles.section}>
+        <List.Subheader style={styles.sectionTitle}>Account</List.Subheader>
         {user && (
           <Text style={styles.emailText}>
             Signed in as: {user.email}
           </Text>
         )}
-        
-        {signingOut ? (
-          <View style={[styles.menuItem, styles.signOutButton]}>
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          </View>
-        ) : (
-          <TouchableOpacity 
-            style={[styles.menuItem, styles.signOutButton]}
-            onPress={handleSignOut}
-          >
-            <Text style={styles.signOutText}>Sign Out</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+        <List.Item
+          title="Sign Out"
+          left={props => <List.Icon {...props} icon="logout" color={Colors.error} />}
+          onPress={handleSignOut}
+          disabled={signingOut}
+          style={styles.listItem}
+          titleStyle={{ color: Colors.error }}
+          right={props => signingOut ? <ActivityIndicator {...props} animating={true} color={Colors.error} /> : null}
+        />
+      </List.Section>
     </ScrollView>
   );
 };
@@ -89,77 +85,52 @@ const SettingsScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
-    padding: 16,
+    backgroundColor: Colors.background,
   },
   header: {
-    marginBottom: 24,
-    paddingVertical: 8,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.lightGrey,
+    marginBottom: 10,
   },
   title: {
     fontSize: 28,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    color: '#333',
+    color: Colors.primary,
   },
   subtitle: {
     fontSize: 16,
-    color: '#666',
-    marginBottom: 20,
+    color: Colors.grey,
+    marginTop: 4,
   },
   section: {
-    marginBottom: 24,
-    borderRadius: 12,
-    backgroundColor: '#f9f9f9',
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 1,
+    marginTop: 10,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    color: '#333',
-  },
-  menuItem: {
-    backgroundColor: '#fff',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#eee',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  menuItemText: {
     fontSize: 16,
-    color: '#333',
-    fontWeight: '500',
+    fontWeight: 'bold',
+    color: Colors.primary,
+    paddingHorizontal: 16,
+  },
+  listItem: {
+    backgroundColor: Colors.background,
+    paddingHorizontal: 16,
+  },
+  listItemTitle: {
+    color: Colors.primary,
+    fontSize: 16,
   },
   emailText: {
-    fontSize: 15,
-    color: '#666',
-    marginBottom: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    fontSize: 14,
+    color: Colors.grey,
   },
-  signOutButton: {
-    borderColor: '#ffdddd',
-    backgroundColor: '#fff8f8',
+  divider: {
+    backgroundColor: Colors.lightGrey,
+    height: 1,
   },
-  signOutText: {
-    color: '#d9534f',
-    fontSize: 16,
-    fontWeight: '500',
-  }
 });
 
 export default SettingsScreen; 

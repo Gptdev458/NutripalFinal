@@ -6,6 +6,7 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@env';
 import AuthContext, { AuthProvider, useAuth } from './src/context/AuthContext';
 import { testEnvVars } from './src/lib/envTest';
 import { PaperProvider } from 'react-native-paper';
+import { verifySupabaseConnection } from './src/lib/supabaseClient';
 
 // Direct check for environment variables
 console.log('App.js - Direct environment check:');
@@ -24,6 +25,18 @@ const AppContent = () => {
     // Test environment variables
     const envVars = testEnvVars();
     console.log('App.js - Environment variables test result:', envVars);
+  }, []);
+
+  useEffect(() => {
+    const checkSupabase = async () => {
+      const isConnected = await verifySupabaseConnection();
+      if (!isConnected) {
+        console.error('Failed to establish Supabase connection');
+        // Optionally show an alert to the user
+      }
+    };
+    
+    checkSupabase();
   }, []);
 
   // Show loading indicator while checking authentication

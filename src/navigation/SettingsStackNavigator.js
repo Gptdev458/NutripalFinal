@@ -2,6 +2,7 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import SettingsScreen from '../screens/SettingsScreen';
 import GoalSettingsScreen from '../screens/GoalSettingsScreen';
+import HistoryScreen from '../screens/HistoryScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -26,6 +27,14 @@ const SettingsStackNavigator = () => {
         component={GoalSettingsScreen} 
         options={{ 
           title: 'Nutrient Goals',
+          headerBackTitleVisible: false
+        }}
+      />
+      <Stack.Screen
+        name="History"
+        component={HistoryScreen}
+        options={{
+          title: 'Log History',
           headerBackTitleVisible: false
         }}
       />

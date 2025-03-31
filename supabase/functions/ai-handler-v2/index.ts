@@ -45,10 +45,14 @@ serve(async (req: Request) => {
   }
 
   try {
-    // Only accept POST requests
+    // Validate request method
     if (req.method !== "POST") {
       return new Response(
-        JSON.stringify({ error: "Method not allowed" }),
+        JSON.stringify({ 
+          status: 'error',
+          message: 'Method not allowed',
+          detail: 'Only POST requests are accepted'
+        }),
         {
           status: 405,
           headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
@@ -56,11 +60,15 @@ serve(async (req: Request) => {
       );
     }
 
-    // Extract Authorization header (JWT)
+    // Extract and validate authorization
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(
-        JSON.stringify({ error: "Unauthorized: No authorization header" }),
+        JSON.stringify({
+          status: 'error',
+          message: 'Unauthorized',
+          detail: 'No authorization header provided'
+        }),
         {
           status: 401,
           headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
@@ -68,39 +76,75 @@ serve(async (req: Request) => {
       );
     }
 
-    // Create a Supabase client for this request context with the user's JWT
-    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
-    
-    const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
-      global: {
-        headers: {
-          Authorization: authHeader,
+    // Initialize Supabase client
+    let supabaseClient;
+    try {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL");
+      const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+      
+      if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error('Missing Supabase configuration');
+      }
+
+      supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+        global: {
+          headers: { Authorization: authHeader },
         },
-      },
-    });
-
-    // Get the authenticated user
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
-    if (userError || !user) {
+      });
+    } catch (error) {
+      console.error('Error initializing Supabase client:', error);
       return new Response(
-        JSON.stringify({ error: "Unauthorized: Invalid user" }),
+        JSON.stringify({
+          status: 'error',
+          message: 'Failed to initialize Supabase client',
+          detail: error.message
+        }),
+        {
+          status: 500,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Verify user authentication
+    let userId;
+    try {
+      const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
+      if (userError) throw userError;
+      if (!user) throw new Error('No user found');
+      userId = user.id;
+    } catch (error) {
+      console.error('Error authenticating user:', error);
+      return new Response(
+        JSON.stringify({
+          status: 'error',
+          message: 'Authentication failed',
+          detail: error.message
+        }),
         {
           status: 401,
           headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
         }
       );
     }
-    
-    const userId = user.id;
 
     // Parse request body
-    const requestData = await req.json();
-    const { message, context } = requestData;
-    
-    if (!message) {
+    let message, context;
+    try {
+      const requestData = await req.json();
+      ({ message, context } = requestData);
+      
+      if (!message) {
+        throw new Error('Message is required');
+      }
+    } catch (error) {
+      console.error('Error parsing request body:', error);
       return new Response(
-        JSON.stringify({ error: "Bad request: Message is required" }),
+        JSON.stringify({
+          status: 'error',
+          message: 'Invalid request body',
+          detail: error.message
+        }),
         {
           status: 400,
           headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
@@ -607,6 +651,54 @@ serve(async (req: Request) => {
       }
     }
 
+    // Store conversation in database
+    try {
+      const { error: insertError } = await supabaseClient
+        .from('conversations')
+        .insert({
+          user_id: userId,
+          message: message,
+          response: responseData.message,
+          timestamp: new Date().toISOString()
+        });
+
+      if (insertError) {
+        // Log the raw error object for inspection
+        console.error("Raw Supabase insertError object:", JSON.stringify(insertError, null, 2));
+        
+        // Construct a more robust error message
+        const errorMessage = insertError.message || JSON.stringify(insertError);
+        
+        // Throw the new Error with the constructed message
+        throw new Error(`Database error storing conversation: ${errorMessage}`);
+      }
+    } catch (error) {
+      // Rest of the catch block remains unchanged
+      console.error("Error details during conversation storage:");
+      if (error instanceof Error) {
+        console.error("Error message:", error.message);
+        console.error("Error stack:", error.stack);
+        console.error("Error name:", error.name);
+      } else {
+        console.error("Non-Error object thrown:", error);
+      }
+
+      return new Response(
+        JSON.stringify({
+          status: 'error',
+          message: 'Failed to store conversation data',
+          detail: error instanceof Error ? error.message : String(error)
+        }),
+        {
+          status: 500,
+          headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Log the final response data BEFORE sending
+    console.log("Final responseData being sent (Status 200):", JSON.stringify(responseData, null, 2));
+
     // Return successful response
     return new Response(
       JSON.stringify(responseData),
@@ -617,10 +709,14 @@ serve(async (req: Request) => {
     );
     
   } catch (error) {
-    // Handle any unexpected errors
-    console.error("Error processing request:", error);
+    // Catch any unhandled errors
+    console.error('Unhandled error in edge function:', error);
     return new Response(
-      JSON.stringify({ error: `Internal server error: ${error.message}` }),
+      JSON.stringify({
+        status: 'error',
+        message: 'Internal server error',
+        detail: error.message
+      }),
       {
         status: 500,
         headers: { ...CORS_HEADERS, "Content-Type": "application/json" },

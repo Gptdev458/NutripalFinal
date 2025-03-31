@@ -1,66 +1,58 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
-  Text,
-  FlatList,
-  Switch,
-  TextInput,
-  Button,
-  ActivityIndicator,
   StyleSheet,
-  TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
-  ScrollView,
-  Alert
+  FlatList,
+  Alert,
 } from 'react-native';
+import {
+  Switch as PaperSwitch,
+  TextInput as PaperTextInput,
+  Button as PaperButton,
+  ActivityIndicator,
+  Text as PaperText,
+  Title,
+  HelperText,
+  Subheading,
+  Surface,
+} from 'react-native-paper';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import { MASTER_NUTRIENT_LIST, getNutrientDetails } from '../constants/nutrients';
+import { Colors } from '../constants/colors';
 
 const GoalSettingsScreen = ({ navigation }) => {
-  // State variables
-  const [goals, setGoals] = useState([]);
   const [trackedNutrients, setTrackedNutrients] = useState({});
   const [targetValues, setTargetValues] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
-  
   const { user } = useAuth();
 
-  // Fetch existing goals on component mount
-  useEffect(() => {
-    fetchGoals();
-  }, []);
-
-  // Fetch user's goals from Supabase
-  const fetchGoals = async () => {
+  const fetchGoals = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
+      if (!user) throw new Error("User not authenticated");
 
-      if (!user) return;
-
-      const { data, error } = await supabase
+      const { data, error: fetchError } = await supabase
         .from('user_goals')
-        .select('*')
+        .select('nutrient, target_value')
         .eq('user_id', user.id);
 
-      if (error) throw error;
+      if (fetchError) throw fetchError;
 
-      // Initialize state from fetched goals
       const tracked = {};
       const targets = {};
-
-      if (data && data.length > 0) {
+      if (data) {
         data.forEach(goal => {
-          tracked[goal.nutrient_key] = true;
-          targets[goal.nutrient_key] = goal.target_value.toString();
+          tracked[goal.nutrient] = true;
+          targets[goal.nutrient] = goal.target_value?.toString() || '';
         });
-        setGoals(data);
       }
-
       setTrackedNutrients(tracked);
       setTargetValues(targets);
     } catch (err) {
@@ -69,220 +61,224 @@ const GoalSettingsScreen = ({ navigation }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
 
-  // Toggle nutrient tracking
-  const toggleNutrient = (key) => {
+  useEffect(() => {
+    fetchGoals();
+  }, [fetchGoals]);
+
+  const toggleNutrient = (nutrientKey) => {
     setTrackedNutrients(prev => ({
       ...prev,
-      [key]: !prev[key]
+      [nutrientKey]: !prev[nutrientKey],
     }));
+    if (trackedNutrients[nutrientKey]) {
+      setTargetValues(prev => {
+        const newTargets = { ...prev };
+        delete newTargets[nutrientKey];
+        return newTargets;
+      });
+    }
+  };
 
-    // Initialize target value if not already set
-    if (!targetValues[key] && !trackedNutrients[key]) {
+  const updateTargetValue = (nutrientKey, value) => {
+    if (/^\d*\.?\d*$/.test(value)) {
       setTargetValues(prev => ({
         ...prev,
-        [key]: ''
+        [nutrientKey]: value,
       }));
     }
   };
 
-  // Update target value
-  const updateTargetValue = (key, value) => {
-    // Only allow numeric values
-    if (value === '' || /^\d*\.?\d*$/.test(value)) {
-      setTargetValues(prev => ({
-        ...prev,
-        [key]: value
-      }));
-    }
-  };
-
-  // Save goals to Supabase using delete-then-insert approach
   const handleSaveGoals = async () => {
+    if (!user) return;
+    setSaving(true);
+    setError(null);
+
+    const goalsToUpsert = MASTER_NUTRIENT_LIST.filter(
+      item => trackedNutrients[item.key]
+    ).map(item => {
+      const targetValue = parseFloat(targetValues[item.key]);
+      if (isNaN(targetValue) || targetValue <= 0) {
+        throw new Error(`Invalid target value for ${item.name}. Please enter a positive number.`);
+      }
+      return {
+        user_id: user.id,
+        nutrient: item.key,
+        target_value: targetValue,
+        unit: item.unit,
+      };
+    });
+
+    const nutrientsToDelete = MASTER_NUTRIENT_LIST.filter(
+        item => !trackedNutrients[item.key]
+    ).map(item => item.key);
+
     try {
-      setLoading(true);
-      setError(null);
+       if (nutrientsToDelete.length > 0) {
+         const { error: deleteError } = await supabase
+           .from('user_goals')
+           .delete()
+           .eq('user_id', user.id)
+           .in('nutrient', nutrientsToDelete);
 
-      if (!user) {
-        throw new Error('User not authenticated');
-      }
+         if (deleteError) throw deleteError;
+       }
 
-      const userId = user.id;
+       if (goalsToUpsert.length > 0) {
+           const { error: upsertError } = await supabase
+             .from('user_goals')
+             .upsert(goalsToUpsert, { onConflict: 'user_id, nutrient' });
 
-      // 1. Delete all existing goals for this user
-      const { error: deleteError } = await supabase
-        .from('user_goals')
-        .delete()
-        .match({ user_id: userId });
+           if (upsertError) throw upsertError;
+       }
 
-      if (deleteError) throw deleteError;
+      Alert.alert('Success', 'Nutrient goals saved successfully!');
+      navigation.goBack();
 
-      // 2. Filter MASTER_NUTRIENT_LIST to get only tracked nutrients
-      const trackedNutrientsList = MASTER_NUTRIENT_LIST.filter(
-        nutrient => trackedNutrients[nutrient.key]
-      );
-
-      // 3. Map to array of new goal objects
-      const newGoalsArray = trackedNutrientsList.map(nutrient => ({
-        user_id: userId,
-        nutrient: nutrient.key,
-        target_value: parseFloat(targetValues[nutrient.key] || '0'),
-        unit: nutrient.unit,
-        created_at: new Date().toISOString()
-      }));
-
-      // 4. Insert new goals if there are any
-      if (newGoalsArray.length > 0) {
-        const { error: insertError } = await supabase
-          .from('user_goals')
-          .insert(newGoalsArray);
-
-        if (insertError) throw insertError;
-      }
-
-      Alert.alert('Success', 'Your nutrient goals have been saved successfully.');
-      
-      // Refresh goals
-      fetchGoals();
     } catch (err) {
       setError('Error saving goals: ' + err.message);
-      Alert.alert('Error', err.message);
       console.error('Error saving goals:', err);
+      Alert.alert('Error', 'Failed to save goals: ' + err.message);
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
-  // Render loading state
   if (loading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#4CAF50" />
-        <Text style={styles.loadingText}>Loading your goals...</Text>
-      </View>
+      <SafeAreaView style={styles.centered}>
+        <ActivityIndicator animating={true} color={Colors.accent} size="large" />
+      </SafeAreaView>
     );
   }
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={100}
-    >
-      <View style={styles.header}>
-        <Text style={styles.title}>Nutrient Goal Settings</Text>
-        <Text style={styles.subtitle}>
-          Select the nutrients you want to track and set your daily target goals.
-        </Text>
-      </View>
+    <SafeAreaView style={styles.safeArea}>
+      <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.container}
+      >
+          <FlatList
+              data={MASTER_NUTRIENT_LIST}
+              keyExtractor={(item) => item.key}
+              renderItem={({ item }) => (
+                  <Surface style={styles.nutrientRowSurface} elevation={1}>
+                    <View style={styles.nutrientInfo}>
+                      <PaperSwitch
+                        value={!!trackedNutrients[item.key]}
+                        onValueChange={() => toggleNutrient(item.key)}
+                        color={Colors.accent}
+                      />
+                      <PaperText style={styles.nutrientName}>
+                        {item.name} ({item.unit})
+                      </PaperText>
+                    </View>
 
-      {error && <Text style={styles.errorText}>{error}</Text>}
-      
-      <FlatList
-        data={MASTER_NUTRIENT_LIST}
-        keyExtractor={(item) => item.key}
-        renderItem={({ item }) => (
-          <View style={styles.nutrientRow}>
-            <View style={styles.nutrientInfo}>
-              <Switch
-                value={!!trackedNutrients[item.key]}
-                onValueChange={() => toggleNutrient(item.key)}
-                trackColor={{ false: "#767577", true: "#4CAF50" }}
-              />
-              <Text style={styles.nutrientName}>
-                {item.name} ({item.unit})
-              </Text>
-            </View>
-            
-            {trackedNutrients[item.key] && (
-              <TextInput
-                style={styles.input}
-                value={targetValues[item.key] || ''}
-                onChangeText={(text) => updateTargetValue(item.key, text)}
-                placeholder={`Target ${item.unit}`}
-                keyboardType="numeric"
-              />
-            )}
-          </View>
-        )}
-        ListFooterComponent={
-          <View style={styles.buttonContainer}>
-            <Button
-              title={saving ? "Saving..." : "Save Goals"}
-              onPress={handleSaveGoals}
-              disabled={saving || loading}
-              color="#4CAF50"
-            />
-          </View>
-        }
-      />
-    </KeyboardAvoidingView>
+                    {trackedNutrients[item.key] && (
+                      <PaperTextInput
+                        style={styles.input}
+                        value={targetValues[item.key] || ''}
+                        onChangeText={(text) => updateTargetValue(item.key, text)}
+                        placeholder={`Target (${item.unit})`}
+                        keyboardType="numeric"
+                        mode="outlined"
+                        dense
+                      />
+                    )}
+                  </Surface>
+              )}
+              ListHeaderComponent={
+                  <View style={styles.listHeader}>
+                     <Subheading style={styles.listHeaderTitle}>Select Nutrients to Track</Subheading>
+                      {error && <HelperText type="error" visible={!!error}>{error}</HelperText>}
+                  </View>
+              }
+              ListFooterComponent={
+                  <View style={styles.footer}>
+                    <PaperButton
+                      mode="contained"
+                      onPress={handleSaveGoals}
+                      disabled={saving || loading}
+                      loading={saving}
+                      style={styles.saveButton}
+                      labelStyle={styles.saveButtonLabel}
+                      color={Colors.accent}
+                    >
+                      {saving ? "Saving..." : "Save Goals"}
+                    </PaperButton>
+                  </View>
+              }
+              contentContainerStyle={styles.listContentContainer}
+          />
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
+  safeArea: {
     flex: 1,
-    backgroundColor: '#fff',
-    padding: 16,
+    backgroundColor: Colors.lightGrey,
+  },
+  container: {
+      flex: 1,
   },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    backgroundColor: Colors.background,
   },
-  loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#666',
+  listContentContainer: {
+      paddingBottom: 20,
   },
-  header: {
-    marginBottom: 20,
+  listHeader: {
+      padding: 16,
+      backgroundColor: Colors.background,
+      borderBottomWidth: 1,
+      borderBottomColor: Colors.lightGrey,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 8,
+  listHeaderTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: Colors.primary,
   },
-  subtitle: {
-    fontSize: 16,
-    color: '#666',
-    marginBottom: 16,
-  },
-  nutrientRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+  nutrientRowSurface: {
+      padding: 16,
+      marginHorizontal: 8,
+      marginVertical: 4,
+      borderRadius: 8,
+      backgroundColor: Colors.background,
   },
   nutrientInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
+    marginBottom: 8,
   },
   nutrientName: {
-    marginLeft: 10,
+    marginLeft: 12,
     fontSize: 16,
+    flexShrink: 1,
+    color: Colors.primary,
   },
   input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 4,
-    padding: 8,
-    width: 100,
-    textAlign: 'center',
+    backgroundColor: Colors.background,
+    marginTop: 8,
   },
-  errorText: {
-    color: 'red',
-    marginBottom: 10,
+  footer: {
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: Colors.lightGrey,
+    backgroundColor: Colors.background,
   },
-  buttonContainer: {
-    marginVertical: 20,
+  saveButton: {
+     paddingVertical: 8,
   },
+  saveButtonLabel: {
+      fontSize: 16,
+      fontWeight: 'bold',
+  }
 });
 
 export default GoalSettingsScreen; 

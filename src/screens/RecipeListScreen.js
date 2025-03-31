@@ -1,17 +1,26 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
-  Text,
-  FlatList,
-  TouchableOpacity,
   StyleSheet,
-  ActivityIndicator,
   Alert,
-  RefreshControl
+  RefreshControl,
+  FlatList,
 } from 'react-native';
+import {
+  ActivityIndicator,
+  Button as PaperButton,
+  Card,
+  Paragraph,
+  Text as PaperText,
+  Title,
+  Caption,
+} from 'react-native-paper';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import { useFocusEffect } from '@react-navigation/native';
+import { quickLogRecipe, fetchRecipeDetails } from '../utils/logUtils';
+import { Colors } from '../constants/colors';
 
 const RecipeListScreen = () => {
   const { user } = useAuth();
@@ -19,6 +28,7 @@ const RecipeListScreen = () => {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [loggingRecipeId, setLoggingRecipeId] = useState(null);
 
   // Fetch recipes on component mount
   useEffect(() => {
@@ -66,52 +76,25 @@ const RecipeListScreen = () => {
     }, [fetchRecipes]) // Dependency: the memoized fetchRecipes function
   );
 
-  // Handle logging a recipe to food log
+  // Updated Handle Log Recipe using the utility function
   const handleLogRecipe = async (recipeId, recipeName) => {
+    if (loggingRecipeId) return; // Prevent double taps
+
+    setLoggingRecipeId(recipeId); // Indicate logging started
     try {
-      setLoading(true);
-      
-      // First, fetch the recipe with all nutrient data
-      const { data: recipeData, error: recipeError } = await supabase
-        .from('user_recipes')
-        .select('*')
-        .eq('id', recipeId)
-        .single();
-        
-      if (recipeError) throw recipeError;
-      
-      if (!recipeData) {
-        throw new Error('Recipe not found');
+      // Fetch full recipe details needed for logging
+      const recipeDetails = await fetchRecipeDetails(recipeId);
+      if (recipeDetails) {
+        await quickLogRecipe(recipeDetails, user);
+        // Optionally refresh data after successful log
+      } else {
+        Alert.alert('Error', 'Could not fetch recipe details to log.');
       }
-      
-      // Prepare food log entry
-      const foodLogEntry = {
-        user_id: user.id,
-        food_name: recipeName,
-        timestamp: new Date().toISOString(),
-        source: 'quick_recipe',
-        recipe_id: recipeId,
-        // Copy all nutrient values from the recipe
-        ...Object.fromEntries(
-          Object.entries(recipeData)
-            .filter(([key]) => !['id', 'user_id', 'recipe_name', 'description', 'created_at'].includes(key))
-        ),
-        created_at: new Date().toISOString()
-      };
-      
-      // Insert the food log entry
-      const { error: logError } = await supabase
-        .from('food_log')
-        .insert(foodLogEntry);
-      
-      if (logError) throw logError;
-      
-      Alert.alert('Success', `Logged "${recipeName}" to your food log.`);
-    } catch (error) {
-      console.error('Error logging recipe:', error);
-      Alert.alert('Error', `Failed to log recipe: ${error.message}`);
+    } catch (err) {
+      console.error("Error during quick log process:", err);
+      Alert.alert('Error', 'An unexpected error occurred during logging.');
     } finally {
-      setLoading(false);
+      setLoggingRecipeId(null); // Indicate logging finished
     }
   };
 
@@ -121,116 +104,131 @@ const RecipeListScreen = () => {
     fetchRecipes();
   };
 
-  // Render each recipe item
+  // Render function using Paper components
   const renderRecipeItem = ({ item }) => (
-    <View style={styles.recipeItem}>
-      <View style={styles.recipeInfo}>
-        <Text style={styles.recipeName}>{item.recipe_name}</Text>
-        <Text style={styles.recipeDescription} numberOfLines={2}>
-          {item.description || 'No description'}
-        </Text>
-      </View>
-      <TouchableOpacity
-        style={styles.logButton}
-        onPress={() => handleLogRecipe(item.id, item.recipe_name)}
-        disabled={loading}
-      >
-        <Text style={styles.logButtonText}>Log</Text>
-      </TouchableOpacity>
-    </View>
+    <Card style={styles.recipeItem} elevation={2}>
+      <Card.Content style={styles.cardContent}>
+        <View style={styles.recipeInfo}>
+          <Title style={styles.recipeName}>{item.recipe_name}</Title>
+          {item.description && (
+            <Paragraph style={styles.recipeDescription} numberOfLines={2}>
+              {item.description}
+            </Paragraph>
+          )}
+        </View>
+        <PaperButton
+          mode="contained"
+          onPress={() => handleLogRecipe(item.id, item.recipe_name)}
+          style={styles.logButton}
+          labelStyle={styles.logButtonText}
+          color={Colors.success}
+          icon="plus-circle-outline"
+          disabled={loggingRecipeId === item.id}
+          loading={loggingRecipeId === item.id}
+        >
+          Log
+        </PaperButton>
+      </Card.Content>
+    </Card>
   );
 
   // Show loading indicator while fetching data
   if (loading && !refreshing) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#007AFF" />
-        <Text style={styles.loadingText}>Loading your recipes...</Text>
-      </View>
+      <SafeAreaView style={styles.centered}>
+        <ActivityIndicator animating={true} color={Colors.accent} size="large" />
+        <PaperText style={styles.loadingText}>Loading Recipes...</PaperText>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Your Recipes</Text>
-        <Text style={styles.subtitle}>Quickly log your saved recipes</Text>
+        <Title style={styles.title}>Your Saved Recipes</Title>
+        <Caption style={styles.subtitle}>Quickly log your frequent meals.</Caption>
       </View>
 
-      {error && <Text style={styles.errorText}>{error}</Text>}
+      {error && <PaperText style={styles.errorText}>{error}</PaperText>}
 
-      {recipes.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>
-            You don't have any saved recipes yet.
-          </Text>
-          <Text style={styles.emptySubtext}>
-            Use the Chat to log new recipes, and they'll appear here for quick access.
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={recipes}
-          renderItem={renderRecipeItem}
-          keyExtractor={item => item.id.toString()}
-          contentContainerStyle={styles.recipeList}
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
-        />
-      )}
-    </View>
+      <FlatList
+        data={recipes}
+        renderItem={renderRecipeItem}
+        keyExtractor={(item) => item.id.toString()}
+        contentContainerStyle={styles.listContentContainer}
+        ListEmptyComponent={
+          !loading && (
+            <View style={styles.emptyContainer}>
+              <PaperText style={styles.emptyText}>No recipes saved yet.</PaperText>
+              <Caption style={styles.emptySubtext}>
+                Use the Chat screen to describe a recipe and save it.
+              </Caption>
+            </View>
+          )
+        }
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            colors={[Colors.accent]}
+            tintColor={Colors.accent}
+          />
+        }
+      />
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: Colors.background,
   },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
+    backgroundColor: Colors.background,
   },
   loadingText: {
     marginTop: 10,
     fontSize: 16,
-    color: '#666',
+    color: Colors.grey,
   },
   header: {
-    padding: 20,
-    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 20,
+    paddingTop: 15,
+    paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-    marginBottom: 16,
+    borderBottomColor: Colors.lightGrey,
+    backgroundColor: Colors.background,
   },
   title: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: 'bold',
-    marginBottom: 6,
-    color: '#333',
+    color: Colors.primary,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#666',
+    fontSize: 15,
+    color: Colors.grey,
+    marginTop: 4,
   },
-  recipeList: {
-    padding: 16,
+  listContentContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    flexGrow: 1,
   },
   recipeItem: {
+    marginBottom: 14,
+    backgroundColor: Colors.background,
+  },
+  cardContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 18,
-    marginBottom: 14,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
   },
   recipeInfo: {
     flex: 1,
@@ -239,52 +237,47 @@ const styles = StyleSheet.create({
   recipeName: {
     fontSize: 18,
     fontWeight: '500',
-    flex: 1,
-    color: '#333',
+    color: Colors.primary,
+    marginBottom: 4,
   },
   recipeDescription: {
     fontSize: 14,
-    color: '#666',
+    color: Colors.grey,
   },
   logButton: {
-    backgroundColor: '#4CAF50',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 24,
-    marginLeft: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    borderRadius: 20,
+    marginLeft: 10,
   },
   logButtonText: {
-    color: '#FFFFFF',
+    fontSize: 14,
     fontWeight: 'bold',
-    fontSize: 15,
   },
   errorText: {
-    color: 'red',
+    color: Colors.error,
     padding: 16,
     textAlign: 'center',
+    fontSize: 16,
   },
   emptyContainer: {
-    padding: 30,
-    backgroundColor: '#f8f8f8',
-    borderRadius: 12,
-    marginHorizontal: 16,
-    marginTop: 40,
+    flexGrow: 1,
+    justifyContent: 'center',
     alignItems: 'center',
+    padding: 30,
+    marginHorizontal: 16,
+    marginTop: 20,
+    backgroundColor: Colors.lightGrey,
+    borderRadius: 8,
   },
   emptyText: {
     fontSize: 18,
     fontWeight: '500',
     textAlign: 'center',
     marginBottom: 12,
+    color: Colors.primary,
   },
   emptySubtext: {
-    fontSize: 16,
-    color: '#666',
+    fontSize: 14,
+    color: Colors.grey,
     textAlign: 'center',
   },
 });
