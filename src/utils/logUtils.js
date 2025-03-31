@@ -1,5 +1,6 @@
 import { Alert } from 'react-native';
 import { supabase } from '../lib/supabaseClient';
+import { MASTER_NUTRIENT_KEYS } from '../constants/nutrients';
 
 /**
  * Logs a specific recipe to the user's food log.
@@ -100,28 +101,36 @@ export const fetchFoodLogsByDateRange = async (userId, startDate, endDate) => {
 
     console.log(`Fetching logs for user ${userId} from ${startOfDayISO} to ${endOfDayISO}`);
 
+    // Include standard fields plus all nutrient keys from the master list
+    const selectColumns = `
+      id,
+      food_name,
+      timestamp,
+      source,
+      recipe_id,
+      ${MASTER_NUTRIENT_KEYS.join(', ')}
+    `;
 
     const { data, error } = await supabase
       .from('food_log')
-      .select('id, food_name, calories, protein_g, carbs_g, fat_total_g, timestamp') // Select specified columns
-      .eq('user_id', userId) // Filter by user ID
-      .gte('timestamp', startOfDayISO) // Filter by start date (inclusive)
-      .lte('timestamp', endOfDayISO)   // Filter by end date (inclusive)
-      .order('timestamp', { ascending: false }); // Order by timestamp descending
+      .select(selectColumns) // Use the constructed string
+      .eq('user_id', userId)
+      .gte('timestamp', startOfDayISO)
+      .lte('timestamp', endOfDayISO)
+      .order('timestamp', { ascending: false });
 
     if (error) {
       console.error('Supabase query error in fetchFoodLogsByDateRange:', error);
-      throw error; // Propagate the error
+      throw error;
     }
 
     console.log(`Successfully fetched ${data?.length ?? 0} logs.`);
-    return { data: data || [], error: null }; // Return data (or empty array) and null error
+    return { data: data || [], error: null };
 
   } catch (error) {
     console.error('Error in fetchFoodLogsByDateRange:', error);
-    // Ensure the returned error is a standard Error object or Supabase error object
     const errorObject = error instanceof Error ? error : new Error(String(error.message || 'Unknown error fetching food logs'));
-    return { data: null, error: errorObject }; // Return null data and the error object
+    return { data: null, error: errorObject };
   }
 };
 

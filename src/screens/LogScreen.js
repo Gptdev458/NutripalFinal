@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, FlatList, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, Modal, ScrollView } from 'react-native';
-import { useRoute } from '@react-navigation/native';
+import { useRoute, useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { fetchFoodLogsByDateRange, deleteFoodLogEntry } from '../utils/logUtils';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,8 +25,9 @@ const isTodayOrFuture = (date) => {
   return compareDate >= today;
 };
 
-const LogScreen = ({ navigation }) => {
+const LogScreen = () => {
   const route = useRoute();
+  const navigation = useNavigation();
   const { user } = useAuth();
 
   // Get date from route params or default to today
@@ -78,7 +79,8 @@ const LogScreen = ({ navigation }) => {
   // Fetch logs when the component mounts or currentDate changes
   useEffect(() => {
     fetchLogs();
-  }, [fetchLogs]);
+    navigation.setOptions({ title: `Log for ${formatDate(currentDate)}` });
+  }, [fetchLogs, navigation, currentDate]);
 
   // Function to handle changing the date
   const handleDateChange = (daysToAdd) => {
@@ -92,6 +94,7 @@ const LogScreen = ({ navigation }) => {
 
   // Function to handle pressing a log item
   const handleLogItemPress = (item) => {
+    console.log('Item passed to modal:', JSON.stringify(item, null, 2));
     setSelectedLogItem(item);
     setIsModalVisible(true);
   };
@@ -164,6 +167,22 @@ const LogScreen = ({ navigation }) => {
     );
   };
 
+  const renderNutrientDetail = (nutrientKey) => {
+    if (!selectedLogItem || selectedLogItem[nutrientKey] === null || selectedLogItem[nutrientKey] === undefined) {
+      return null; // Don't render if data is missing
+    }
+    const nutrientInfo = getNutrientDetails(nutrientKey);
+    const value = selectedLogItem[nutrientKey];
+    return (
+      <View key={nutrientKey} style={styles.nutrientRow}>
+        <Text style={styles.nutrientName}>{nutrientInfo?.name || nutrientKey}:</Text>
+        <Text style={styles.nutrientValue}>
+          {typeof value === 'number' ? value.toFixed(1) : value} {nutrientInfo?.unit || ''}
+        </Text>
+      </View>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
@@ -225,26 +244,12 @@ const LogScreen = ({ navigation }) => {
             <ScrollView>
               {selectedLogItem && (
                 <>
+                  <Text style={{ display: 'none' }}>{console.log('Selected item in modal:', JSON.stringify(selectedLogItem, null, 2))}</Text>
                   <Title style={styles.modalTitle}>{selectedLogItem.food_name || 'Log Details'}</Title>
                   <Divider style={styles.modalDivider} />
 
                   {/* Display Nutrient Details */}
-                  {MASTER_NUTRIENT_LIST.map(nutrient => {
-                    const value = selectedLogItem[nutrient.key];
-                    // Only display if value exists and is a number or non-empty string
-                    if (value !== null && value !== undefined && value !== '') {
-                      const details = getNutrientDetails(nutrient.key);
-                      return (
-                        <View key={nutrient.key} style={styles.nutrientRow}>
-                          <Text style={styles.nutrientName}>{details?.name || nutrient.key}:</Text>
-                          <Text style={styles.nutrientValue}>
-                            {typeof value === 'number' ? Math.round(value * 10) / 10 : value} {details?.unit || ''}
-                          </Text>
-                        </View>
-                      );
-                    }
-                    return null; // Don't render if nutrient value is missing/null
-                  })}
+                  {MASTER_NUTRIENT_LIST.map(nutrient => renderNutrientDetail(nutrient.key))}
                    <Divider style={styles.modalDivider} />
                    <Caption style={styles.modalTimestamp}>
                      Logged at: {new Date(selectedLogItem.timestamp).toLocaleString('en-US', {

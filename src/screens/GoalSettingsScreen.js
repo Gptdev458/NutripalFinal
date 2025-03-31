@@ -6,6 +6,7 @@ import {
   Platform,
   FlatList,
   Alert,
+  TouchableOpacity,
 } from 'react-native';
 import {
   Switch as PaperSwitch,
@@ -17,12 +18,14 @@ import {
   HelperText,
   Subheading,
   Surface,
+  Banner,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import { MASTER_NUTRIENT_LIST, getNutrientDetails } from '../constants/nutrients';
 import { Colors } from '../constants/colors';
+import { fetchUserProfile, fetchGoalRecommendations } from '../utils/profileUtils';
 
 const GoalSettingsScreen = ({ navigation }) => {
   const [trackedNutrients, setTrackedNutrients] = useState({});
@@ -32,40 +35,95 @@ const GoalSettingsScreen = ({ navigation }) => {
   const [error, setError] = useState(null);
   const { user } = useAuth();
 
-  const fetchGoals = useCallback(async () => {
+  const [userProfile, setUserProfile] = useState(null);
+  const [goalRecommendations, setGoalRecommendations] = useState(null);
+  const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
+  const [recommendationError, setRecommendationError] = useState(null);
+
+  const [isCalculatingRecs, setIsCalculatingRecs] = useState(false);
+  const [calcError, setCalcError] = useState(null);
+
+  const loadInitialData = useCallback(async () => {
+    if (!user) {
+      setError("User not authenticated");
+      setLoading(false);
+      setIsLoadingRecommendations(false);
+      return;
+    }
+
     setLoading(true);
+    setIsLoadingRecommendations(true);
     setError(null);
+    setRecommendationError(null);
+    setCalcError(null);
+
     try {
-      if (!user) throw new Error("User not authenticated");
+      const [goalsResponse, profileResponse] = await Promise.all([
+        supabase
+          .from('user_goals')
+          .select('nutrient, target_value')
+          .eq('user_id', user.id),
+        fetchUserProfile(user.id)
+      ]);
 
-      const { data, error: fetchError } = await supabase
-        .from('user_goals')
-        .select('nutrient, target_value')
-        .eq('user_id', user.id);
-
-      if (fetchError) throw fetchError;
-
+      if (goalsResponse.error) throw new Error(`Failed to fetch goals: ${goalsResponse.error.message}`);
       const tracked = {};
       const targets = {};
-      if (data) {
-        data.forEach(goal => {
+      if (goalsResponse.data) {
+        goalsResponse.data.forEach(goal => {
           tracked[goal.nutrient] = true;
           targets[goal.nutrient] = goal.target_value?.toString() || '';
         });
       }
       setTrackedNutrients(tracked);
       setTargetValues(targets);
-    } catch (err) {
-      setError('Error fetching goals: ' + err.message);
-      console.error('Error fetching goals:', err);
-    } finally {
       setLoading(false);
+
+      if (profileResponse.error) {
+        console.error('Profile fetch error during initial load:', profileResponse.error);
+        setUserProfile(null);
+        setIsLoadingRecommendations(false);
+        return;
+      }
+
+      const fetchedProfile = profileResponse.data;
+      setUserProfile(fetchedProfile);
+
+      if (fetchedProfile && fetchedProfile.age && fetchedProfile.weight_kg && fetchedProfile.height_cm && fetchedProfile.sex) {
+         console.log("Profile complete, fetching initial recommendations...");
+        const { data: recData, error: recError } = await fetchGoalRecommendations(fetchedProfile);
+
+        if (recError) {
+          console.error('Initial Recommendation fetch error:', recError);
+          setRecommendationError(`Could not fetch initial recommendations: ${recError.message}`);
+          setGoalRecommendations(null);
+        } else if (recData && recData.recommendations) {
+          console.log("Initial Recommendations received:", recData.recommendations);
+          setGoalRecommendations(recData.recommendations);
+          setRecommendationError(null);
+        } else {
+           console.warn('Received invalid initial recommendation data.');
+           setRecommendationError('Received invalid initial recommendation data.');
+           setGoalRecommendations(null);
+        }
+      } else {
+        console.log("Profile incomplete or not found during initial load:", fetchedProfile);
+        setRecommendationError('Please complete your profile in Settings to get personalized recommendations.');
+        setGoalRecommendations(null);
+      }
+
+    } catch (err) {
+      console.error('Error loading initial data:', err);
+      setError(`Failed to load data: ${err.message}`);
+      setLoading(false);
+    } finally {
+      setIsLoadingRecommendations(false);
     }
   }, [user]);
 
   useEffect(() => {
-    fetchGoals();
-  }, [fetchGoals]);
+    loadInitialData();
+  }, [loadInitialData]);
 
   const toggleNutrient = (nutrientKey) => {
     setTrackedNutrients(prev => ({
@@ -82,7 +140,7 @@ const GoalSettingsScreen = ({ navigation }) => {
   };
 
   const updateTargetValue = (nutrientKey, value) => {
-    if (/^\d*\.?\d*$/.test(value)) {
+    if (value === '' || /^\d*\.?\d*$/.test(value)) {
       setTargetValues(prev => ({
         ...prev,
         [nutrientKey]: value,
@@ -91,70 +149,160 @@ const GoalSettingsScreen = ({ navigation }) => {
   };
 
   const handleSaveGoals = async () => {
-    if (!user) return;
+    if (!user) {
+      Alert.alert("Error", "User not authenticated.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
-    const goalsToUpsert = MASTER_NUTRIENT_LIST.filter(
-      item => trackedNutrients[item.key]
-    ).map(item => {
-      const targetValue = parseFloat(targetValues[item.key]);
-      if (isNaN(targetValue) || targetValue <= 0) {
-        throw new Error(`Invalid target value for ${item.name}. Please enter a positive number.`);
-      }
-      return {
-        user_id: user.id,
-        nutrient: item.key,
-        target_value: targetValue,
-        unit: item.unit,
-      };
-    });
+    const goalsToSave = Object.keys(trackedNutrients)
+      .filter(key => trackedNutrients[key])
+      .map(key => {
+        const nutrientDetail = getNutrientDetails(key);
+        const targetValue = parseFloat(targetValues[key]);
 
-    const nutrientsToDelete = MASTER_NUTRIENT_LIST.filter(
-        item => !trackedNutrients[item.key]
-    ).map(item => item.key);
+        if (isNaN(targetValue) || targetValue < 0) {
+             console.warn(`Invalid target value for ${key}: ${targetValues[key]}. Skipping.`);
+             setError(`Invalid target value provided for ${nutrientDetail?.name || key}. Please enter a number.`);
+             return null;
+         }
+
+        return {
+          user_id: user.id,
+          nutrient: key,
+          target_value: targetValue,
+          unit: nutrientDetail ? nutrientDetail.unit : null,
+        };
+      })
+       .filter(goal => goal !== null);
+
+     if (error) {
+         setSaving(false);
+         Alert.alert("Validation Error", error);
+         return;
+     }
+
+    if (goalsToSave.length === 0) {
+       console.log("No tracked goals to save.");
+       Alert.alert("No Goals", "No nutrients are currently selected for tracking.");
+       setSaving(false);
+       return;
+     }
 
     try {
-       if (nutrientsToDelete.length > 0) {
-         const { error: deleteError } = await supabase
-           .from('user_goals')
-           .delete()
-           .eq('user_id', user.id)
-           .in('nutrient', nutrientsToDelete);
+      const { data, error: upsertError } = await supabase
+        .from('user_goals')
+        .upsert(goalsToSave, {
+          onConflict: 'user_id, nutrient',
+        })
+        .select();
 
-         if (deleteError) throw deleteError;
-       }
+      if (upsertError) {
+        console.error("Supabase upsert error:", upsertError);
+        throw upsertError;
+      }
 
-       if (goalsToUpsert.length > 0) {
-           const { error: upsertError } = await supabase
-             .from('user_goals')
-             .upsert(goalsToUpsert, { onConflict: 'user_id, nutrient' });
-
-           if (upsertError) throw upsertError;
-       }
-
-      Alert.alert('Success', 'Nutrient goals saved successfully!');
-      navigation.goBack();
-
+      console.log('Goals saved successfully:', data);
+      Alert.alert("Success", "Your nutrient goals have been saved.");
+      setError(null);
     } catch (err) {
-      setError('Error saving goals: ' + err.message);
       console.error('Error saving goals:', err);
-      Alert.alert('Error', 'Failed to save goals: ' + err.message);
+      setError(`Failed to save goals: ${err.message}`);
+      Alert.alert("Error", `Failed to save goals: ${err.message}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleCalculateRecommendations = async () => {
+    if (!user) {
+      Alert.alert("Error", "You must be logged in to calculate recommendations.");
+      return;
+    }
+
+    console.log("Calculate button pressed");
+    setIsCalculatingRecs(true);
+    setCalcError(null);
+    setRecommendationError(null);
+
+    try {
+      const { data: profileData, error: profileError } = await fetchUserProfile(user.id);
+
+      if (profileError) {
+        throw new Error(profileError.message || 'Could not load your profile to get recommendations.');
+      }
+
+      if (!profileData || !profileData.age || !profileData.weight_kg || !profileData.height_cm || !profileData.sex) {
+        setCalcError('Your profile is incomplete. Please update Age, Weight, Height, and Sex in Settings first.');
+        setUserProfile(profileData);
+        setGoalRecommendations(null);
+        setIsCalculatingRecs(false);
+        return;
+      }
+
+      setUserProfile(profileData);
+
+      console.log("Profile complete, fetching recommendations via button press...");
+      const { data: recData, error: recError } = await fetchGoalRecommendations(profileData);
+
+      if (recError) {
+        throw new Error(recError.message || 'Failed to fetch recommendations from the server.');
+      }
+
+      if (recData && recData.status === 'success' && recData.recommendations) {
+        console.log("Recommendations received via button:", recData.recommendations);
+        setGoalRecommendations(recData.recommendations);
+        setCalcError(null);
+        Alert.alert("Success", "Personalized goal recommendations have been updated!");
+      } else {
+        console.error('Invalid recommendation data received:', recData);
+        throw new Error(recData?.message || 'Received invalid data structure for recommendations.');
+      }
+
+    } catch (error) {
+      console.error("Error during recommendation calculation:", error);
+      setCalcError(`Calculation failed: ${error.message}`);
+    } finally {
+      setIsCalculatingRecs(false);
     }
   };
 
   if (loading) {
     return (
       <SafeAreaView style={styles.centered}>
-        <ActivityIndicator animating={true} color={Colors.accent} size="large" />
+        <ActivityIndicator animating={true} color={Colors.primary} size="large" />
+        <PaperText>Loading goals...</PaperText>
       </SafeAreaView>
     );
   }
 
+  const getPlaceholder = (item) => {
+    const recommendationValue = goalRecommendations?.[item.key];
+    if (typeof recommendationValue === 'number' && recommendationValue !== null) {
+      const roundedValue = Math.round(recommendationValue);
+      return `e.g., Recommended: ${roundedValue} ${item.unit}`;
+    }
+    return `Target (${item.unit})`;
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
+      <Banner
+         visible={!!recommendationError || !!calcError || !!error}
+         actions={[
+             { label: 'Go to Profile', onPress: () => navigation.navigate('Profile'), condition: () => recommendationError?.includes('profile') || recommendationError?.includes('Profile') || calcError?.includes('profile') || calcError?.includes('Profile') },
+             { label: 'Dismiss', onPress: () => { setRecommendationError(null); setCalcError(null); setError(null); } }
+         ].filter(action => !action.condition || action.condition()).map(({label, onPress}) => ({label, onPress}))}
+          icon={({ size }) => <PaperText>ℹ️</PaperText>}
+          style={styles.banner}
+      >
+         <PaperText style={styles.bannerText}>
+          {calcError || error || recommendationError || ""}
+         </PaperText>
+      </Banner>
+
       <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.container}
@@ -168,7 +316,7 @@ const GoalSettingsScreen = ({ navigation }) => {
                       <PaperSwitch
                         value={!!trackedNutrients[item.key]}
                         onValueChange={() => toggleNutrient(item.key)}
-                        color={Colors.accent}
+                        color={Colors.primary}
                       />
                       <PaperText style={styles.nutrientName}>
                         {item.name} ({item.unit})
@@ -180,18 +328,29 @@ const GoalSettingsScreen = ({ navigation }) => {
                         style={styles.input}
                         value={targetValues[item.key] || ''}
                         onChangeText={(text) => updateTargetValue(item.key, text)}
-                        placeholder={`Target (${item.unit})`}
+                        placeholder={getPlaceholder(item)}
                         keyboardType="numeric"
                         mode="outlined"
                         dense
+                        error={error && error.includes(item.name)}
                       />
                     )}
                   </Surface>
               )}
               ListHeaderComponent={
                   <View style={styles.listHeader}>
-                     <Subheading style={styles.listHeaderTitle}>Select Nutrients to Track</Subheading>
-                      {error && <HelperText type="error" visible={!!error}>{error}</HelperText>}
+                     <Subheading style={styles.listHeaderTitle}>Select Nutrients & Set Goals</Subheading>
+                     {error && !calcError && !recommendationError && <HelperText type="error" visible={!!error}>{error}</HelperText>}
+                     <PaperButton
+                        mode="contained-tonal"
+                        onPress={handleCalculateRecommendations}
+                        disabled={isCalculatingRecs || isLoadingRecommendations}
+                        loading={isCalculatingRecs}
+                        icon="calculator"
+                        style={styles.calculateButton}
+                      >
+                          {isCalculatingRecs ? 'Calculating...' : 'Calculate Recommended Goals'}
+                      </PaperButton>
                   </View>
               }
               ListFooterComponent={
@@ -199,14 +358,15 @@ const GoalSettingsScreen = ({ navigation }) => {
                     <PaperButton
                       mode="contained"
                       onPress={handleSaveGoals}
-                      disabled={saving || loading}
+                      disabled={saving || loading || isCalculatingRecs}
                       loading={saving}
                       style={styles.saveButton}
                       labelStyle={styles.saveButtonLabel}
-                      color={Colors.accent}
+                      color={Colors.primary}
                     >
-                      {saving ? "Saving..." : "Save Goals"}
+                      {saving ? 'Saving...' : 'Save Goals'}
                     </PaperButton>
+                    {error && saving && <HelperText type="error" visible={!!error} style={styles.footerError}>{error}</HelperText>}
                   </View>
               }
               contentContainerStyle={styles.listContentContainer}
@@ -219,7 +379,7 @@ const GoalSettingsScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: Colors.lightGrey,
+    backgroundColor: Colors.background,
   },
   container: {
       flex: 1,
@@ -229,7 +389,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: Colors.background,
+    padding: 20,
   },
+  banner: {
+     backgroundColor: Colors.surface,
+   },
+  bannerText: {
+     color: Colors.text,
+     fontSize: 14,
+   },
   listContentContainer: {
       paddingBottom: 20,
   },
@@ -237,19 +405,23 @@ const styles = StyleSheet.create({
       padding: 16,
       backgroundColor: Colors.background,
       borderBottomWidth: 1,
-      borderBottomColor: Colors.lightGrey,
+      borderBottomColor: Colors.divider,
   },
   listHeaderTitle: {
       fontSize: 18,
       fontWeight: '600',
-      color: Colors.primary,
+      color: Colors.text,
+      marginBottom: 10,
+  },
+  calculateButton: {
+      marginTop: 15,
   },
   nutrientRowSurface: {
       padding: 16,
       marginHorizontal: 8,
       marginVertical: 4,
       borderRadius: 8,
-      backgroundColor: Colors.background,
+      backgroundColor: Colors.surface,
   },
   nutrientInfo: {
     flexDirection: 'row',
@@ -260,16 +432,16 @@ const styles = StyleSheet.create({
     marginLeft: 12,
     fontSize: 16,
     flexShrink: 1,
-    color: Colors.primary,
+    color: Colors.text,
   },
   input: {
-    backgroundColor: Colors.background,
+    backgroundColor: Colors.surface,
     marginTop: 8,
   },
   footer: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: Colors.lightGrey,
+    borderTopColor: Colors.divider,
     backgroundColor: Colors.background,
   },
   saveButton: {
@@ -278,7 +450,11 @@ const styles = StyleSheet.create({
   saveButtonLabel: {
       fontSize: 16,
       fontWeight: 'bold',
-  }
+  },
+  footerError: {
+      marginTop: 8,
+      textAlign: 'center',
+  },
 });
 
 export default GoalSettingsScreen; 

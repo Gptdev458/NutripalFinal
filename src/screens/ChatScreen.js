@@ -16,12 +16,14 @@ import {
   Card,
   Paragraph,
   Surface,
+  Caption,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { useNetInfo } from '@react-native-community/netinfo';
 import { Colors } from '../constants/colors';
+import { fetchUserProfile, fetchGoalRecommendations } from '../utils/profileUtils';
 
 const ChatScreen = () => {
   const { user, session } = useAuth();
@@ -29,6 +31,7 @@ const ChatScreen = () => {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
+  const [isFetchingRecommendations, setIsFetchingRecommendations] = useState(false);
 
   const flatListRef = useRef(null);
   const netInfo = useNetInfo();
@@ -57,8 +60,68 @@ const ChatScreen = () => {
     }
   }, [netInfo.isConnected]);
 
+  const triggerRecommendationFetch = async () => {
+    setIsFetchingRecommendations(true);
+    let fetchingMessageId = null;
+
+    try {
+      // Add a temporary "Fetching..." message
+      fetchingMessageId = (Date.now() + 3).toString();
+      const fetchingMessage = {
+          id: fetchingMessageId,
+          text: "Fetching recommendations...",
+          sender: 'ai',
+          isLoading: true
+      };
+      setMessages(prevMessages => [...prevMessages, fetchingMessage]);
+
+      // 1. Fetch user profile
+      const { data: profileData, error: profileError } = await fetchUserProfile(user.id);
+
+      if (profileError || !profileData) {
+        throw new Error(profileError?.message || 'Could not load your profile.');
+      }
+      if (!profileData.age || !profileData.weight_kg || !profileData.height_cm || !profileData.sex) {
+         throw new Error('Your profile is incomplete. Please update it in Settings.');
+      }
+
+      // 2. Fetch recommendations using the profile
+      const { data: recData, error: recError } = await fetchGoalRecommendations(profileData);
+
+      if (recError) {
+        throw new Error(recError.message || 'Failed to fetch recommendations.');
+      }
+
+      // Remove the temporary fetching message
+       setMessages(prevMessages => prevMessages.filter(msg => msg.id !== fetchingMessageId));
+
+      // Add success message
+      const successMessage = {
+        id: (Date.now() + 4).toString(),
+        text: "Recommendations generated! You can find them as placeholders in the Goal Settings screen.",
+        sender: 'ai',
+      };
+      setMessages(prevMessages => [...prevMessages, successMessage]);
+
+    } catch (error) {
+       console.error('Error triggering recommendation fetch:', error);
+       // Remove the temporary fetching message
+       setMessages(prevMessages => prevMessages.filter(msg => msg.id !== fetchingMessageId));
+       // Add error message
+        const errorMessage = {
+            id: (Date.now() + 4).toString(),
+            text: `Error fetching recommendations: ${error.message}`,
+            sender: 'ai',
+            isError: true,
+        };
+       setMessages(prevMessages => [...prevMessages, errorMessage]);
+    } finally {
+       setIsFetchingRecommendations(false);
+    }
+  };
+
   const handleSend = useCallback(async () => {
-    if (!inputText.trim() || loading || isOffline) {
+    if (!inputText.trim() || loading || isOffline || isFetchingRecommendations) {
       if (isOffline) {
           Alert.alert("Offline", "Cannot send messages while offline.");
       }
@@ -86,7 +149,7 @@ const ChatScreen = () => {
       id: thinkingMessageId,
       text: '...',
       sender: 'ai',
-      isThinking: true,
+      isLoading: true,
     };
     setMessages(prevMessages => [...prevMessages, thinkingMessage]);
 
@@ -128,6 +191,11 @@ const ChatScreen = () => {
       };
       setMessages(prevMessages => [...prevMessages, aiMessage]);
 
+      if (data.response_type === 'needs_recommendation_trigger') {
+        console.log("Received needs_recommendation_trigger signal from backend.");
+        triggerRecommendationFetch();
+      }
+
     } catch (error) {
         console.error('Detailed fetch error:', {
           message: error.message,
@@ -148,13 +216,13 @@ const ChatScreen = () => {
     } finally {
       setLoading(false);
     }
-  }, [inputText, loading, session, isOffline, user]);
+  }, [inputText, loading, session, isOffline, user, isFetchingRecommendations]);
 
   const renderMessageItem = ({ item }) => {
     const isUser = item.sender === 'user';
     const cardStyle = isUser ? styles.userMessageCard : styles.aiMessageCard;
     const textStyle = isUser ? styles.userMessageText : styles.aiMessageText;
-    const thinkingStyle = item.isThinking ? styles.thinkingText : {};
+    const thinkingStyle = item.isLoading ? styles.thinkingText : {};
     const errorStyle = item.isError ? styles.errorText : {};
 
     return (
@@ -183,6 +251,10 @@ const ChatScreen = () => {
           style={styles.messageList}
         />
 
+        {isFetchingRecommendations && (
+              <Caption style={styles.fetchingStatus}>Fetching recommendations...</Caption>
+        )}
+
         <Surface style={styles.inputSurface} elevation={4}>
           <PaperTextInput
             style={styles.input}
@@ -192,7 +264,7 @@ const ChatScreen = () => {
             mode="outlined"
             dense
             multiline
-            editable={!loading && !isOffline}
+            editable={!loading && !isOffline && !isFetchingRecommendations}
           />
           {loading ? (
               <ActivityIndicator animating={true} color={Colors.accent} style={styles.sendButtonContainer}/>
@@ -202,7 +274,7 @@ const ChatScreen = () => {
                color={Colors.accent}
                size={28}
                onPress={handleSend}
-               disabled={!inputText.trim() || loading || isOffline}
+               disabled={!inputText.trim() || loading || isOffline || isFetchingRecommendations}
                style={styles.sendButtonContainer}
              />
           )}
@@ -288,6 +360,12 @@ const styles = StyleSheet.create({
   },
   sendButtonContainer: {
       margin: 0,
+  },
+  fetchingStatus: {
+    textAlign: 'center',
+    paddingVertical: 4,
+    color: Colors.textSecondary,
+    fontStyle: 'italic',
   },
 });
 

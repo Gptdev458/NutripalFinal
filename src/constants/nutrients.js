@@ -57,6 +57,12 @@ export const MASTER_NUTRIENT_LIST = [
 ];
 
 /**
+ * Array of just the nutrient keys (database column names)
+ * Derived from MASTER_NUTRIENT_LIST for convenience
+ */
+export const MASTER_NUTRIENT_KEYS = MASTER_NUTRIENT_LIST.map(nutrient => nutrient.key);
+
+/**
  * Helper function to retrieve a nutrient's details by its key
  * @param {string} key - The unique identifier for the nutrient
  * @returns {Object|null} The nutrient object with key, name, and unit (or null if not found)

@@ -3,6 +3,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import SettingsScreen from '../screens/SettingsScreen';
 import GoalSettingsScreen from '../screens/GoalSettingsScreen';
 import HistoryScreen from '../screens/HistoryScreen';
+import ProfileScreen from '../screens/ProfileScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -35,6 +36,14 @@ const SettingsStackNavigator = () => {
         component={HistoryScreen}
         options={{
           title: 'Log History',
+          headerBackTitleVisible: false
+        }}
+      />
+      <Stack.Screen
+        name="Profile"
+        component={ProfileScreen}
+        options={{
+          title: 'Your Profile',
           headerBackTitleVisible: false
         }}
       />
