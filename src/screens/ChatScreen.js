@@ -6,7 +6,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   TouchableOpacity,
-  Alert,
+  Alert
 } from 'react-native';
 import {
   TextInput as PaperTextInput,
@@ -17,6 +17,7 @@ import {
   Paragraph,
   Surface,
   Caption,
+  Button,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabaseClient';
@@ -32,6 +33,8 @@ const ChatScreen = () => {
   const [loading, setLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [isFetchingRecommendations, setIsFetchingRecommendations] = useState(false);
+  const [pendingRecipeData, setPendingRecipeData] = useState(null);
+  const [isSavingRecipe, setIsSavingRecipe] = useState(false);
 
   const flatListRef = useRef(null);
   const netInfo = useNetInfo();
@@ -184,10 +187,20 @@ const ChatScreen = () => {
 
       const data = await response.json();
 
+      // Check for recipe save confirmation prompt
+      if (data.response_type === 'recipe_save_confirmation_prompt' && data.recipe_data_to_save) {
+        // Store the recipe data in state for later use
+        setPendingRecipeData(data.recipe_data_to_save);
+      } else {
+        // Clear any pending recipe data if a different response type is received
+        setPendingRecipeData(null);
+      }
+
       const aiMessage = {
         id: (Date.now() + 2).toString(),
         text: data.message || "Sorry, I couldn't process that.",
         sender: 'ai',
+        responseType: data.response_type, // Store the response type in the message
       };
       setMessages(prevMessages => [...prevMessages, aiMessage]);
 
@@ -216,21 +229,228 @@ const ChatScreen = () => {
     } finally {
       setLoading(false);
     }
-  }, [inputText, loading, session, isOffline, user, isFetchingRecommendations]);
+  }, [inputText, loading, session, isOffline, user, isFetchingRecommendations, setPendingRecipeData]);
+
+  // Function to handle saving and logging the recipe
+  const handleSaveAndLogRecipe = async () => {
+    if (!pendingRecipeData || !user || !session?.access_token) return;
+    
+    setIsSavingRecipe(true);
+    
+    // Add a temporary "Saving..." message
+    const savingMessageId = Date.now().toString();
+    const savingMessage = {
+      id: savingMessageId,
+      text: "Saving and logging recipe...",
+      sender: 'ai',
+      isLoading: true,
+    };
+    setMessages(prevMessages => [...prevMessages, savingMessage]);
+    
+    try {
+      console.log('Sending save and log request for:', pendingRecipeData.name);
+      
+      // Construct the payload for the backend
+      const payload = {
+        action: "confirm_save_and_log_recipe",
+        recipe_data: pendingRecipeData
+      };
+      
+      // Send the request to the backend
+      const url = `${supabase.supabaseUrl}/functions/v1/ai-handler-v2`;
+      const response = await fetch(
+        url,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+      
+      // Remove the temporary saving message
+      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== savingMessageId));
+      
+      if (!response.ok) {
+        const errorText = await response.text(); // Get the raw response
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        
+        try {
+          // Try to parse as JSON
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.error || errorData.message || errorMessage;
+        } catch (parseError) {
+          // If parsing fails, use the raw text
+          console.error('Failed to parse error response:', parseError);
+          errorMessage = errorText || errorMessage;
+        }
+        
+        throw new Error(errorMessage);
+      }
+      
+      let data;
+      try {
+        const responseText = await response.text();
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('Error parsing response:', parseError);
+        throw new Error('Error parsing response from server');
+      }
+      
+      // Add the response message to the chat
+      const confirmationMessage = {
+        id: Date.now().toString(),
+        text: data?.message || `Great! I've saved "${pendingRecipeData.name}" to your recipes and logged it for today.`,
+        sender: 'ai',
+      };
+      setMessages(prevMessages => [...prevMessages, confirmationMessage]);
+      
+      // Clear the pending recipe data
+      setPendingRecipeData(null);
+    } catch (error) {
+      console.error('Error saving/logging recipe:', error);
+      
+      // Remove the temporary saving message
+      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== savingMessageId));
+      
+      // Add error message to the chat
+      const errorMessage = {
+        id: Date.now().toString(),
+        text: `Sorry, I encountered an error saving the recipe: ${error.message}`,
+        sender: 'ai',
+        isError: true,
+      };
+      setMessages(prevMessages => [...prevMessages, errorMessage]);
+      
+      Alert.alert('Error', `Failed to save and log recipe: ${error.message}`);
+    } finally {
+      setIsSavingRecipe(false);
+    }
+  };
+
+  // Function to handle just logging the recipe without saving
+  const handleJustLogRecipe = async () => {
+    if (!pendingRecipeData || !user || !session?.access_token) return;
+    
+    setIsSavingRecipe(true);
+    
+    // Add a temporary "Logging..." message
+    const loggingMessageId = Date.now().toString();
+    const loggingMessage = {
+      id: loggingMessageId,
+      text: "Logging recipe...",
+      sender: 'ai',
+      isLoading: true,
+    };
+    setMessages(prevMessages => [...prevMessages, loggingMessage]);
+    
+    try {
+      console.log('Sending log-only request for:', pendingRecipeData.name);
+      
+      // Construct the payload for the backend
+      const payload = {
+        action: "confirm_log_only_recipe",
+        recipe_data: pendingRecipeData
+      };
+      
+      // Send the request to the backend
+      const url = `${supabase.supabaseUrl}/functions/v1/ai-handler-v2`;
+      const response = await fetch(
+        url,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+      
+      // Remove the temporary logging message
+      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== loggingMessageId));
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      // Add the response message to the chat
+      const confirmationMessage = {
+        id: Date.now().toString(),
+        text: data.message || `I've logged "${pendingRecipeData.name}" for today without saving it to your recipes.`,
+        sender: 'ai',
+      };
+      setMessages(prevMessages => [...prevMessages, confirmationMessage]);
+      
+      // Clear the pending recipe data
+      setPendingRecipeData(null);
+    } catch (error) {
+      console.error('Error logging recipe:', error);
+      
+      // Remove the temporary logging message
+      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== loggingMessageId));
+      
+      // Add error message to the chat
+      const errorMessage = {
+        id: Date.now().toString(),
+        text: `Sorry, I encountered an error logging the recipe: ${error.message}`,
+        sender: 'ai',
+        isError: true,
+      };
+      setMessages(prevMessages => [...prevMessages, errorMessage]);
+      
+      Alert.alert('Error', `Failed to log recipe: ${error.message}`);
+    } finally {
+      setIsSavingRecipe(false);
+    }
+  };
 
   const renderMessageItem = ({ item }) => {
     const isUser = item.sender === 'user';
-    const cardStyle = isUser ? styles.userMessageCard : styles.aiMessageCard;
     const textStyle = isUser ? styles.userMessageText : styles.aiMessageText;
     const thinkingStyle = item.isLoading ? styles.thinkingText : {};
     const errorStyle = item.isError ? styles.errorText : {};
 
+    const isRecipeConfirmation = 
+      item.responseType === 'recipe_save_confirmation_prompt' && pendingRecipeData;
+    
     return (
-      <Card style={[styles.messageCard, cardStyle]} elevation={1}>
-        <Paragraph style={[textStyle, thinkingStyle, errorStyle]}>
-          {item.text}
-        </Paragraph>
-      </Card>
+      <View style={[styles.messageContainer, isUser ? styles.userMessage : styles.aiMessage]}>
+        <View style={styles.textContainer}>
+          <PaperText style={[textStyle, thinkingStyle, errorStyle]}>
+            {item.text}
+          </PaperText>
+        </View>
+        
+        {isRecipeConfirmation && (
+          <View style={styles.actionButtonsContainer}>
+            <Button
+              mode="contained"
+              onPress={handleSaveAndLogRecipe}
+              disabled={isSavingRecipe}
+              style={styles.actionButton}
+              labelStyle={styles.buttonLabel}
+            >
+              Yes, save recipe & log
+            </Button>
+            <Button
+              mode="outlined"
+              onPress={handleJustLogRecipe}
+              disabled={isSavingRecipe}
+              style={[styles.actionButton, styles.secondaryButton]}
+              labelStyle={styles.secondaryButtonLabel}
+            >
+              No, just log (don't save)
+            </Button>
+            {isSavingRecipe && <ActivityIndicator size="small" style={styles.loader} />}
+          </View>
+        )}
+      </View>
     );
   };
 
@@ -314,33 +534,48 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderRadius: 15,
   },
-  userMessageCard: {
+  messageContainer: {
+    flexDirection: 'column',
+    borderRadius: 16,
+    marginBottom: 12,
+    maxWidth: '85%',
+    elevation: 1,
+    overflow: 'hidden',
+  },
+  userMessage: {
     alignSelf: 'flex-end',
     backgroundColor: Colors.accent,
+    borderBottomRightRadius: 4,
   },
-  aiMessageCard: {
+  aiMessage: {
     alignSelf: 'flex-start',
     backgroundColor: Colors.background,
     borderWidth: 1,
     borderColor: Colors.lightGrey,
+    borderBottomLeftRadius: 4,
+  },
+  textContainer: {
+    padding: 12,
   },
   userMessageText: {
     color: Colors.background,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '400',
   },
   aiMessageText: {
     color: Colors.primary,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '400',
   },
-   thinkingText: {
-     color: Colors.grey,
-     fontStyle: 'italic',
-   },
-   errorText: {
-       color: Colors.error,
-   },
+  thinkingText: {
+    color: Colors.grey,
+    fontStyle: 'italic',
+  },
+  errorText: {
+    color: Colors.error,
+  },
   inputSurface: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -366,6 +601,33 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     color: Colors.textSecondary,
     fontStyle: 'italic',
+  },
+  actionButtonsContainer: {
+    padding: 12,
+    paddingTop: 4,
+    flexDirection: 'column',
+    width: '100%',
+    backgroundColor: 'rgba(0,0,0,0.03)',
+  },
+  actionButton: {
+    marginVertical: 4,
+    borderRadius: 8,
+  },
+  secondaryButton: {
+    borderColor: '#555',
+  },
+  buttonLabel: {
+    fontSize: 14,
+    paddingVertical: 2,
+  },
+  secondaryButtonLabel: {
+    fontSize: 14,
+    color: '#555',
+    paddingVertical: 2,
+  },
+  loader: {
+    marginTop: 8,
+    alignSelf: 'center',
   },
 });
 

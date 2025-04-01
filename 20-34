@@ -1,0 +1,16 @@
+// Prepare food log entry
+const foodLogEntry = {
+  user_id: user.id,
+  food_name: recipe.recipe_name || 'Unnamed Recipe',
+  timestamp: new Date().toISOString(),
+  source: 'quick_recipe_dashboard', // Indicate source
+  recipe_id: recipe.id,
+  // Copy all relevant nutrient values from the recipe
+  // Exclude metadata fields
+  ...Object.fromEntries(
+    Object.entries(recipe)
+      .filter(([key]) => !['id', 'user_id', 'recipe_name', 'description', 'created_at'].includes(key) && recipe[key] !== null) // Filter out metadata and nulls
+      .map(([key, value]) => [key, typeof value === 'number' ? value : 0]) // Ensure numeric values, default to 0 if not
+  ),
+   created_at: new Date().toISOString() // Ensure created_at is set for the log entry
+}; 

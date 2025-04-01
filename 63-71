@@ -1,0 +1,9 @@
+*   **`user_goals`**: Stores user-selected nutrient targets.
+    *   `id`, `user_id` (FK to `auth.users`), `nutrient` (text key, e.g., 'protein_g'), `target_value` (numeric), `unit` (text), `created_at`.
+    *   RLS Enabled (User owns their data).
+*   **`user_recipes`**: Stores user-defined recipes created via chat.
+    *   `id`, `user_id` (FK), `recipe_name` (text), `description` (text, user's ingredient input), *[nullable numeric columns for ALL nutrients in `MASTER_NUTRIENT_LIST`]* (e.g., `calories`, `protein_g`, ...), `created_at`.
+    *   RLS Enabled.
+*   **`food_log`**: Stores individual food/meal log entries.
+    *   `id`, `user_id` (FK), `food_name` (text), `timestamp` (timestamptz), `source` (text: 'ai_chat_item', 'ai_chat_recipe_new', 'ai_chat_recipe_saved', 'quick_recipe'), `recipe_id` (nullable FK to `user_recipes`), *[nullable numeric columns for ALL nutrients in `MASTER_NUTRIENT_LIST`]* (e.g., `calories`, `protein_g`, ...), `created_at`.
+    *   RLS Enabled. 
