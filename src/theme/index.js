@@ -1,3 +1,56 @@
+import { MD3LightTheme as DefaultTheme, configureFonts } from 'react-native-paper';
+import { Platform } from 'react-native';
+
+// Define base font settings (adjust font family as needed)
+const baseFont = {
+  fontFamily: Platform.select({ ios: 'System', android: 'Roboto', default: 'System' }),
+};
+
+// Define specific font configurations for different variants
+const fontConfig = {
+  displayLarge: { ...baseFont, fontSize: 57, fontWeight: '400', letterSpacing: 0 },
+  displayMedium: { ...baseFont, fontSize: 45, fontWeight: '400', letterSpacing: 0 },
+  displaySmall: { ...baseFont, fontSize: 36, fontWeight: '400', letterSpacing: 0 },
+
+  headlineLarge: { ...baseFont, fontSize: 32, fontWeight: '400', letterSpacing: 0 },
+  headlineMedium: { ...baseFont, fontSize: 28, fontWeight: '400', letterSpacing: 0 },
+  headlineSmall: { ...baseFont, fontSize: 24, fontWeight: '400', letterSpacing: 0 },
+
+  titleLarge: { ...baseFont, fontSize: 22, fontWeight: '500', letterSpacing: 0 },
+  titleMedium: { ...baseFont, fontSize: 16, fontWeight: '500', letterSpacing: 0.15 },
+  titleSmall: { ...baseFont, fontSize: 14, fontWeight: '500', letterSpacing: 0.1 },
+
+  labelLarge: { ...baseFont, fontSize: 14, fontWeight: '500', letterSpacing: 0.1 },
+  labelMedium: { ...baseFont, fontSize: 12, fontWeight: '500', letterSpacing: 0.5 },
+  labelSmall: { ...baseFont, fontSize: 11, fontWeight: '500', letterSpacing: 0.5 },
+
+  bodyLarge: { ...baseFont, fontSize: 16, fontWeight: '400', letterSpacing: 0.15 },
+  bodyMedium: { ...baseFont, fontSize: 14, fontWeight: '400', letterSpacing: 0.25 },
+  bodySmall: { ...baseFont, fontSize: 12, fontWeight: '400', letterSpacing: 0.4 },
+};
+
+const theme = {
+  ...DefaultTheme,
+  roundness: 12,
+  colors: {
+    ...DefaultTheme.colors,
+    primary: '#4CAF50',
+    secondary: '#007AFF',
+    tertiary: '#FF9500',
+    background: '#FFFFFF',
+    surface: '#FFFFFF',
+    error: '#FF3B30',
+    text: '#333333',
+    textSecondary: '#666666',
+    success: '#34C759',
+    warning: '#FF9500',
+    // MD3 will derive onPrimary, onSecondary, etc. unless overridden here
+  },
+  fonts: configureFonts({ config: fontConfig }), // Add the configured fonts
+};
+
+export default theme;
+
 // App-wide theme constants
 export const colors = {
   primary: '#007AFF',        // iOS blue

@@ -6,6 +6,7 @@ import {
   FlatList,
   Alert, // Import Alert for error handling in quick log
   TouchableOpacity, // Import TouchableOpacity
+  ScrollView, // Import ScrollView for the main container
 } from 'react-native';
 import {
   ActivityIndicator,
@@ -26,6 +27,7 @@ import { getNutrientDetails, MASTER_NUTRIENT_LIST } from '../constants/nutrients
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Colors } from '../constants/colors';
 import { quickLogRecipe, fetchRecipeDetails, fetchUserGoals, fetchFoodLogsByDateRange } from '../utils/logUtils';
+import useSafeTheme from '../hooks/useSafeTheme'; // Import useSafeTheme
 
 // Define the formatDate helper function here
 const formatDate = (date) => {
@@ -37,6 +39,7 @@ const formatDate = (date) => {
 };
 
 const DashboardScreen = ({ navigation }) => {
+  const theme = useSafeTheme(); // Use the hook
   const { user } = useAuth();
   const [dashboardData, setDashboardData] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -131,7 +134,9 @@ const DashboardScreen = ({ navigation }) => {
             type: 'logSummary',
             count: logs.length,
             calories: todaysTotals.calories || 0,
-            // Pass other totals if needed for summary
+            protein: todaysTotals.protein || 0,
+            carbohydrates: todaysTotals.carbohydrates || 0,
+            fat: todaysTotals.total_fat || 0,
         });
     } else {
         data.push({ type: 'noLogsMessage' });
@@ -153,19 +158,19 @@ const DashboardScreen = ({ navigation }) => {
     const progressPercentage = (progress * 100).toFixed(0);
     const currentRounded = item.current.toFixed(0);
     const targetRounded = item.target.toFixed(0);
-    let progressBarColor = Colors.accent;
+    let progressBarColor = theme.colors.primary;
     if (item.current > item.target && item.target > 0) {
-        progressBarColor = Colors.warning;
+        progressBarColor = theme.colors.warning;
     }
 
     return (
-      <Card style={styles.cardVertical}>
+      <Card style={[styles.cardVertical, { backgroundColor: theme.colors.surface }]}>
         <Card.Content>
-          <Title style={styles.cardTitleVertical}>{item.name}</Title>
+          <Text variant="titleMedium" style={[styles.cardTitleVertical, { color: theme.colors.text }]}>{item.name}</Text>
           <ProgressBar progress={progress} color={progressBarColor} style={styles.progressBarVertical} />
           <View style={styles.progressTextContainerVertical}>
-            <Text style={styles.progressTextVertical}>{`${currentRounded} / ${targetRounded} ${item.unit}`}</Text>
-            <Text style={styles.progressPercentageText}>{`${progressPercentage}%`}</Text>
+            <Text variant="bodySmall" style={[styles.progressTextVertical, { color: theme.colors.textSecondary }]}>{`${currentRounded} / ${targetRounded} ${item.unit}`}</Text>
+            <Text variant="bodySmall" style={[styles.progressPercentageText, { color: theme.colors.textSecondary }]}>{`${progressPercentage}%`}</Text>
           </View>
         </Card.Content>
       </Card>
@@ -174,18 +179,18 @@ const DashboardScreen = ({ navigation }) => {
 
   const renderHeaderItem = (item) => (
       <View style={styles.sectionHeader}>
-          <Subheading style={styles.sectionTitle}>{item.title}</Subheading>
+          <Text variant="titleLarge" style={[styles.sectionTitle, { color: theme.colors.primary }]}>{item.title}</Text>
       </View>
   );
 
    const renderNoGoalsMessage = () => (
        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>No goals set yet.</Text>
+          <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>No goals set yet.</Text>
           <Button
              mode="outlined"
              onPress={() => navHook.navigate('SettingsTab', { screen: 'GoalSettings' })}
              icon="target"
-             style={styles.setGoalsButton}
+             style={styles.actionButton}
           >
              Set Goals
           </Button>
@@ -194,12 +199,12 @@ const DashboardScreen = ({ navigation }) => {
 
     const renderNoLogsMessage = () => (
         <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No food logged today.</Text>
+            <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>No food logged today.</Text>
             <Button
                mode="outlined"
                onPress={() => navHook.navigate('Chat')}
                icon="message-plus-outline"
-               style={styles.setGoalsButton}
+               style={styles.actionButton}
             >
                Log Food via Chat
             </Button>
@@ -213,12 +218,12 @@ const DashboardScreen = ({ navigation }) => {
     >
       <List.Item
         title={`Today's Log (${item.count} items)`}
-        description={`Total Calories: ${Math.round(item.calories)} kcal`}
-        left={props => <List.Icon {...props} icon="notebook-outline" color={Colors.accent} />}
-        right={props => <List.Icon {...props} icon="chevron-right" />}
-        style={styles.summaryItem}
-        titleStyle={styles.summaryTitle}
-        descriptionStyle={styles.summaryDescription}
+        description={`Cals: ${Math.round(item.calories)} | P: ${Math.round(item.protein)}g | C: ${Math.round(item.carbohydrates)}g | F: ${Math.round(item.fat)}g`}
+        left={props => <List.Icon {...props} icon="notebook-outline" color={theme.colors.primary} />}
+        right={props => <List.Icon {...props} icon="chevron-right" color={theme.colors.textSecondary} />}
+        style={[styles.summaryItem, { backgroundColor: theme.colors.surface }]}
+        titleStyle={[styles.summaryTitle, { color: theme.colors.text }]}
+        descriptionStyle={[styles.summaryDescription, { color: theme.colors.textSecondary }]}
       />
     </TouchableOpacity>
   );
@@ -293,8 +298,8 @@ const DashboardScreen = ({ navigation }) => {
   // Render Loading Indicator
   if (loading && !refreshing) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator animating={true} size="large" color={Colors.accent} />
+      <View style={[styles.centered, { backgroundColor: theme.colors.background }]}>
+        <ActivityIndicator animating={true} size="large" color={theme.colors.primary} />
         <Text style={styles.loadingText}>Loading Dashboard...</Text>
       </View>
     );
@@ -302,33 +307,34 @@ const DashboardScreen = ({ navigation }) => {
 
   // --- Main Render using FlatList ---
   return (
-    <FlatList
-      data={dashboardData}
-      renderItem={renderDashboardItem}
-      keyExtractor={(item, index) => `${item.type}-${item.key || item.title || index}`}
-      ListHeaderComponent={ListHeader}
-      ListEmptyComponent={EmptyListComponent}
-      contentContainerStyle={styles.listContentContainer}
-      ItemSeparatorComponent={() => <Divider style={styles.logItemDivider} />} // Optional divider between log items
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          colors={[Colors.accent]}
-          tintColor={Colors.accent}
-        />
-      }
-    />
+    <ScrollView
+      style={[styles.container, { backgroundColor: theme.colors.background }]}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary}/>}
+      contentContainerStyle={styles.contentContainer}
+    >
+      {dashboardData.map((item, index) => (
+        <View key={item.key || `${item.type}-${index}`}>
+            {renderDashboardItem({ item })}
+            {item.type === 'header' && index > 0 && index < dashboardData.length -1 && <Divider style={styles.divider} />}
+        </View>
+      ))}
+    </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  contentContainer: {
+     paddingVertical: 16, // Add vertical padding to the content
+     paddingHorizontal: 8, // Add horizontal padding
+  },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
-    backgroundColor: Colors.background,
   },
   loadingText: {
     marginTop: 10,
@@ -372,6 +378,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 15, // Add horizontal margin for spacing from screen edges
     elevation: 2,
     backgroundColor: Colors.background, // Ensure background color
+    borderRadius: 6, // Apply requested border radius
   },
   cardTitleVertical: {
     fontSize: 18, // Slightly larger title
@@ -416,8 +423,9 @@ const styles = StyleSheet.create({
     marginHorizontal: 15, // Match card horizontal margin
     marginBottom: 10, // Add margin below empty messages
   },
-  setGoalsButton: { // Style for buttons within empty states
-    marginTop: 10,
+  actionButton: { // Renamed from setGoalsButton for generic use
+    marginTop: 16, // Use theme.spacing.md?
+    // Colors handled by theme for outlined button
   },
   emptyListContainer: { // Container for the FlatList's overall empty state
     padding: 20,
@@ -469,25 +477,24 @@ const styles = StyleSheet.create({
   listContentContainer: {
     paddingBottom: 20, // Add padding at the bottom
   },
-  summaryItem: { // Style for the new summary item
-    backgroundColor: Colors.surface,
-    borderRadius: 8,
-    marginHorizontal: 5, // Match card style if needed
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.15,
-    shadowRadius: 2,
-    paddingVertical: 10, // Add padding
+  summaryItem: {
+    marginVertical: 8,
+    marginHorizontal: 8,
+    borderRadius: 12, // Use theme.roundness?
+    elevation: 2, // Use theme.elevation?
   },
   summaryTitle: {
-    fontWeight: 'bold',
-    fontSize: 16,
-    color: Colors.text,
+    // fontSize: 16, // Handled by List.Item or theme variant
+    // fontWeight: '600', // Handled by List.Item or theme variant
+    // color: theme.colors.text, // Applied inline
   },
   summaryDescription: {
-    color: Colors.textSecondary,
-    fontSize: 14,
+    // fontSize: 14, // Handled by List.Item or theme variant
+    // color: theme.colors.textSecondary, // Applied inline
+  },
+  divider: {
+      marginVertical: 8, // Add some space around dividers
+      marginHorizontal: 16,
   },
 });
 

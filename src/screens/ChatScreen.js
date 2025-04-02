@@ -23,10 +23,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { useNetInfo } from '@react-native-community/netinfo';
-import { Colors } from '../constants/colors';
 import { fetchUserProfile, fetchGoalRecommendations } from '../utils/profileUtils';
+import useSafeTheme from '../hooks/useSafeTheme';
 
 const ChatScreen = () => {
+  const theme = useSafeTheme();
   const { user, session } = useAuth();
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
@@ -249,23 +250,42 @@ const ChatScreen = () => {
        };
        setMessages(prevMessages => [...prevMessages, errorMessage]);
        setPendingAction(null);
+    } finally {
+        setIsAiThinking(false);
+        setIsSending(false);
     }
   }, [inputText, isSending, isFetchingRecommendations, isAiThinking, session, pendingAction, isOffline]);
 
   const renderMessageItem = ({ item }) => {
     const isUser = item.sender === 'user';
-    const textStyle = isUser ? styles.userMessageText : styles.aiMessageText;
+
+    // Base styles from StyleSheet
+    const messageContainerBaseStyle = styles.messageContainer;
+    const messageSpecificBaseStyle = isUser ? styles.userMessage : styles.aiMessage;
+    const textContainerStyle = styles.textContainer;
+    const textBaseStyle = styles.baseMessageText; // New base style for text
     const thinkingStyle = item.isLoading ? styles.thinkingText : {};
     const errorStyle = item.isError ? styles.errorText : {};
 
-    const isRecipeConfirmation = 
-      item.responseType === 'recipe_save_confirmation_prompt' && pendingAction;
-    
-    const showRecipeAnalysisButtons =
-      item.sender === 'ai' && item.responseType === 'recipe_analysis_prompt' && pendingAction?.type === 'log_analyzed_recipe';
+    // Theme-dependent inline styles
+    const messageContainerInlineStyle = {
+        backgroundColor: isUser ? theme.colors.primary : theme.colors.surface,
+        borderColor: item.isError ? theme.colors.error : (isUser ? theme.colors.primary : theme.colors.outline),
+        borderWidth: item.isError || item.sender === 'ai' ? 1 : 0, // Border for AI or errors
+    };
+    const textInlineStyle = {
+        color: isUser ? theme.colors.onPrimary : (item.isError ? theme.colors.error : theme.colors.text)
+    };
+    const thinkingInlineStyle = { color: theme.colors.textSecondary }; // Apply thinking color inline
+    const errorInlineStyle = { color: theme.colors.error }; // Apply error color inline
 
-    const showSavedRecipeConfirmButton =
-      item.sender === 'ai' && item.responseType === 'saved_recipe_confirmation_prompt' && item.contextForReply?.recipe_id;
+    // Combine base and inline styles
+    const combinedContainerStyle = [messageContainerBaseStyle, messageSpecificBaseStyle, messageContainerInlineStyle];
+    const combinedTextStyle = [textBaseStyle, textInlineStyle, item.isLoading ? thinkingInlineStyle : {}, item.isError ? errorInlineStyle : {}];
+
+    const isRecipeConfirmation = item.responseType === 'recipe_save_confirmation_prompt' && pendingAction;
+    const showRecipeAnalysisButtons = item.sender === 'ai' && item.responseType === 'recipe_analysis_prompt' && pendingAction?.type === 'log_analyzed_recipe';
+    const showSavedRecipeConfirmButton = item.sender === 'ai' && item.responseType === 'saved_recipe_confirmation_prompt' && item.contextForReply?.recipe_id;
 
     const handleConfirmation = (confirmationMessage) => {
         setInputText(confirmationMessage);
@@ -317,19 +337,19 @@ const ChatScreen = () => {
      };
 
     return (
-      <View style={[styles.messageContainer, isUser ? styles.userMessage : styles.aiMessage]}>
-        <View style={styles.textContainer}>
+      <View style={combinedContainerStyle}>
+        <View style={textContainerStyle}>
           {item.isLoading ? (
-            <ActivityIndicator size="small" color={isUser ? Colors.white : Colors.primary} />
+            <ActivityIndicator size="small" color={isUser ? theme.colors.onPrimary : theme.colors.primary} />
           ) : (
-            <PaperText style={[textStyle, thinkingStyle, errorStyle]}>
+            <PaperText style={combinedTextStyle}>
               {item.text}
             </PaperText>
           )}
         </View>
         
         {isRecipeConfirmation && (
-          <View style={styles.actionButtonsContainer}>
+          <View style={[styles.actionButtonsContainer, { backgroundColor: theme.colors.surfaceVariant }]}>
             <Button
               mode="contained"
               onPress={() => handleConfirmation("Save and log")}
@@ -344,11 +364,11 @@ const ChatScreen = () => {
               onPress={() => handleConfirmation("Log only")}
               disabled={isFetchingRecommendations}
               style={[styles.actionButton, styles.secondaryButton]}
-              labelStyle={styles.secondaryButtonLabel}
+              labelStyle={[styles.secondaryButtonLabel, { color: theme.colors.primary }]}
             >
               No, just log (don't save)
             </Button>
-            {isFetchingRecommendations && <ActivityIndicator size="small" style={styles.loader} />}
+            {isFetchingRecommendations && <ActivityIndicator size="small" style={styles.loader} color={theme.colors.primary} />}
           </View>
         )}
 
@@ -383,10 +403,10 @@ const ChatScreen = () => {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.background }]}>
       {isOffline && (
-            <View style={styles.offlineBanner}>
-                <PaperText style={styles.offlineText}>You are offline</PaperText>
+            <View style={[styles.offlineBanner, { backgroundColor: theme.colors.warning }]}>
+                <PaperText style={[styles.offlineText, { color: theme.colors.surface }]}>You are offline</PaperText>
             </View>
         )}
 
@@ -400,19 +420,19 @@ const ChatScreen = () => {
         />
 
         {isFetchingRecommendations && (
-              <Caption style={styles.fetchingStatus}>Fetching recommendations...</Caption>
+              <Caption style={[styles.fetchingStatus, { color: theme.colors.textSecondary }]}>Fetching recommendations...</Caption>
         )}
 
         {isAiThinking && (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="small" color={Colors.primary} />
-            <Caption style={styles.loadingText}>NutriPal is thinking...</Caption>
+          <View style={[styles.loadingContainer, { backgroundColor: theme.colors.background }]}>
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+            <Caption style={[styles.loadingText, { color: theme.colors.textSecondary }]}>NutriPal is thinking...</Caption>
           </View>
         )}
 
-        <Surface style={styles.inputSurface} elevation={4}>
+        <Surface style={[styles.inputSurface, { backgroundColor: theme.colors.surface, borderTopColor: theme.colors.outline }]} elevation={4}>
           <PaperTextInput
-            style={styles.input}
+            style={[styles.input, { backgroundColor: theme.colors.background }]}
             value={inputText}
             onChangeText={setInputText}
             placeholder={isOffline ? "Offline - Cannot send" : "Type your message..."}
@@ -422,11 +442,11 @@ const ChatScreen = () => {
             editable={!isAiThinking && !isSending && !isOffline && !isFetchingRecommendations}
           />
           {(isAiThinking || isSending) ? (
-              <ActivityIndicator animating={true} color={Colors.accent} style={styles.sendButtonContainer}/>
+              <ActivityIndicator animating={true} color={theme.colors.primary} style={styles.sendButtonContainer}/>
           ) : (
              <IconButton
                icon="send"
-               color={Colors.accent}
+               iconColor={theme.colors.primary}
                size={28}
                onPress={handleSend}
                disabled={!inputText.trim() || isAiThinking || isSending || isOffline || isFetchingRecommendations}
@@ -441,19 +461,15 @@ const ChatScreen = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: Colors.background,
   },
   container: {
     flex: 1,
-    backgroundColor: Colors.lightGrey,
   },
   offlineBanner: {
-    backgroundColor: Colors.warning,
     paddingVertical: 4,
     alignItems: 'center',
   },
   offlineText: {
-    color: Colors.background,
     fontSize: 14,
     fontWeight: 'bold',
   },
@@ -463,11 +479,7 @@ const styles = StyleSheet.create({
   listContentContainer: {
     paddingHorizontal: 10,
     paddingVertical: 10,
-  },
-  messageCard: {
-    maxWidth: '80%',
-    marginBottom: 10,
-    borderRadius: 15,
+    flexGrow: 1,
   },
   messageContainer: {
     flexDirection: 'column',
@@ -479,37 +491,26 @@ const styles = StyleSheet.create({
   },
   userMessage: {
     alignSelf: 'flex-end',
-    backgroundColor: Colors.accent,
     borderBottomRightRadius: 4,
+    marginLeft: '15%',
   },
   aiMessage: {
     alignSelf: 'flex-start',
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.lightGrey,
     borderBottomLeftRadius: 4,
+    marginRight: '15%',
   },
   textContainer: {
     padding: 12,
   },
-  userMessageText: {
-    color: Colors.background,
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: '400',
-  },
-  aiMessageText: {
-    color: Colors.primary,
+  baseMessageText: {
     fontSize: 16,
     lineHeight: 22,
     fontWeight: '400',
   },
   thinkingText: {
-    color: Colors.grey,
     fontStyle: 'italic',
   },
   errorText: {
-    color: Colors.error,
   },
   inputSurface: {
     flexDirection: 'row',
@@ -517,14 +518,11 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 8,
     borderTopWidth: 1,
-    borderTopColor: Colors.lightGrey,
-    backgroundColor: Colors.background,
   },
   input: {
     flex: 1,
     marginRight: 8,
-    backgroundColor: Colors.background,
-    paddingVertical: 8,
+    paddingVertical: 0,
     paddingLeft: 12,
     textAlignVertical: 'center',
   },
@@ -538,7 +536,6 @@ const styles = StyleSheet.create({
   fetchingStatus: {
     textAlign: 'center',
     paddingVertical: 4,
-    color: Colors.textSecondary,
     fontStyle: 'italic',
   },
   actionButtonsContainer: {
@@ -546,14 +543,12 @@ const styles = StyleSheet.create({
     paddingTop: 4,
     flexDirection: 'column',
     width: '100%',
-    backgroundColor: 'rgba(0,0,0,0.03)',
   },
   actionButton: {
     marginVertical: 4,
     borderRadius: 8,
   },
   secondaryButton: {
-    borderColor: '#555',
   },
   buttonLabel: {
     fontSize: 14,
@@ -561,7 +556,6 @@ const styles = StyleSheet.create({
   },
   secondaryButtonLabel: {
     fontSize: 14,
-    color: '#555',
     paddingVertical: 2,
   },
   loader: {
@@ -574,6 +568,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 10,
     marginHorizontal: -5,
+    paddingHorizontal: 8,
+    paddingBottom: 8,
   },
   confirmButton: {
     marginHorizontal: 5,
@@ -590,11 +586,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 8,
-    backgroundColor: Colors.background,
   },
   loadingText: {
     marginLeft: 8,
-    color: Colors.textSecondary,
   },
 });
 

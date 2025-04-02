@@ -7,6 +7,7 @@ import {
   FlatList,
   Alert,
   TouchableOpacity,
+  ScrollView,
 } from 'react-native';
 import {
   Switch as PaperSwitch,
@@ -14,20 +15,21 @@ import {
   Button as PaperButton,
   ActivityIndicator,
   Text as PaperText,
-  Title,
   HelperText,
-  Subheading,
+  Text,
   Surface,
   Banner,
+  Divider,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import { MASTER_NUTRIENT_LIST, getNutrientDetails } from '../constants/nutrients';
-import { Colors } from '../constants/colors';
 import { fetchUserProfile, fetchGoalRecommendations } from '../utils/profileUtils';
+import useSafeTheme from '../hooks/useSafeTheme';
 
 const GoalSettingsScreen = ({ navigation }) => {
+  const theme = useSafeTheme();
   const [trackedNutrients, setTrackedNutrients] = useState({});
   const [targetValues, setTargetValues] = useState({});
   const [loading, setLoading] = useState(true);
@@ -269,191 +271,226 @@ const GoalSettingsScreen = ({ navigation }) => {
     }
   };
 
+  const getPlaceholder = (item) => {
+    if (isLoadingRecommendations) return "Loading recs...";
+    const recValue = goalRecommendations?.[item.key];
+    if (recValue !== undefined && recValue !== null) {
+        const formattedRec = typeof recValue === 'number' ? recValue.toFixed(0) : recValue;
+        return `Rec: ${formattedRec} ${item.unit}`;
+    }
+    if (recommendationError) return "Recs unavailable";
+    return `Target ${item.unit}`;
+  };
+
+  const navigateToProfile = () => {
+    navigation.navigate('SettingsTab', { screen: 'Profile' });
+  };
+
+  const renderNutrientItem = ({ item }) => {
+    const isTracked = trackedNutrients[item.key];
+    const placeholder = getPlaceholder(item);
+
+    return (
+      <View style={styles.nutrientItemContainer}>
+        <View style={styles.nutrientInfo}>
+          <Text style={[styles.nutrientName, { color: theme.colors.text }]}>{item.name}</Text>
+          <Text style={[styles.nutrientUnit, { color: theme.colors.textSecondary }]}>{item.unit}</Text>
+        </View>
+        <View style={styles.nutrientControls}>
+          {isTracked && (
+            <PaperTextInput
+              style={[styles.targetInput, { backgroundColor: theme.colors.background }]}
+              value={targetValues[item.key] || ''}
+              onChangeText={(text) => updateTargetValue(item.key, text)}
+              placeholder={placeholder}
+              keyboardType="numeric"
+              mode="outlined"
+              dense
+              disabled={saving}
+            />
+          )}
+          <PaperSwitch
+            value={isTracked}
+            onValueChange={() => toggleNutrient(item.key)}
+            color={theme.colors.primary}
+            style={styles.switchControl}
+            disabled={saving}
+          />
+        </View>
+      </View>
+    );
+  };
+
+  const nutrientList = Object.entries(MASTER_NUTRIENT_LIST)
+      .map(([key, details]) => ({ key, ...details }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
   if (loading) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <ActivityIndicator animating={true} color={Colors.primary} size="large" />
-        <PaperText>Loading goals...</PaperText>
+      <SafeAreaView style={[styles.centered, { backgroundColor: theme.colors.background }]}>
+        <ActivityIndicator animating={true} color={theme.colors.primary} size="large" />
       </SafeAreaView>
     );
   }
 
-  const getPlaceholder = (item) => {
-    const recommendationValue = goalRecommendations?.[item.key];
-    if (typeof recommendationValue === 'number' && recommendationValue !== null) {
-      const roundedValue = Math.round(recommendationValue);
-      return `e.g., Recommended: ${roundedValue} ${item.unit}`;
-    }
-    return `Target (${item.unit})`;
-  };
-
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <Banner
-         visible={!!recommendationError || !!calcError || !!error}
-         actions={[
-             { label: 'Go to Profile', onPress: () => navigation.navigate('Profile'), condition: () => recommendationError?.includes('profile') || recommendationError?.includes('Profile') || calcError?.includes('profile') || calcError?.includes('Profile') },
-             { label: 'Dismiss', onPress: () => { setRecommendationError(null); setCalcError(null); setError(null); } }
-         ].filter(action => !action.condition || action.condition()).map(({label, onPress}) => ({label, onPress}))}
-          icon={({ size }) => <PaperText>ℹ️</PaperText>}
-          style={styles.banner}
-      >
-         <PaperText style={styles.bannerText}>
-          {calcError || error || recommendationError || ""}
-         </PaperText>
-      </Banner>
-
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.container}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.flex}
       >
-          <FlatList
-              data={MASTER_NUTRIENT_LIST}
-              keyExtractor={(item) => item.key}
-              renderItem={({ item }) => (
-                  <Surface style={styles.nutrientRowSurface} elevation={1}>
-                    <View style={styles.nutrientInfo}>
-                      <PaperSwitch
-                        value={!!trackedNutrients[item.key]}
-                        onValueChange={() => toggleNutrient(item.key)}
-                        color={Colors.primary}
-                      />
-                      <PaperText style={styles.nutrientName}>
-                        {item.name} ({item.unit})
-                      </PaperText>
-                    </View>
+        {(recommendationError || calcError) && (
+          <Banner
+            visible={true}
+            actions={[
+              { label: 'Go to Profile', onPress: navigateToProfile, },
+              { label: 'Dismiss', onPress: () => { setRecommendationError(null); setCalcError(null); } },
+            ]}
+            icon="alert-circle-outline"
+            style={{ backgroundColor: theme.colors.surfaceVariant }}
+          >
+            <Text style={{ color: theme.colors.onSurfaceVariant }}> 
+              {calcError || recommendationError}
+            </Text>
+          </Banner>
+        )}
 
-                    {trackedNutrients[item.key] && (
-                      <PaperTextInput
-                        style={styles.input}
-                        value={targetValues[item.key] || ''}
-                        onChangeText={(text) => updateTargetValue(item.key, text)}
-                        placeholder={getPlaceholder(item)}
-                        keyboardType="numeric"
-                        mode="outlined"
-                        dense
-                        error={error && error.includes(item.name)}
-                      />
-                    )}
-                  </Surface>
-              )}
-              ListHeaderComponent={
-                  <View style={styles.listHeader}>
-                     <Subheading style={styles.listHeaderTitle}>Select Nutrients & Set Goals</Subheading>
-                     {error && !calcError && !recommendationError && <HelperText type="error" visible={!!error}>{error}</HelperText>}
-                     <PaperButton
-                        mode="contained-tonal"
-                        onPress={handleCalculateRecommendations}
-                        disabled={isCalculatingRecs || isLoadingRecommendations}
-                        loading={isCalculatingRecs}
-                        icon="calculator"
-                        style={styles.calculateButton}
-                      >
-                          {isCalculatingRecs ? 'Calculating...' : 'Calculate Recommended Goals'}
-                      </PaperButton>
-                  </View>
-              }
-              ListFooterComponent={
-                  <View style={styles.footer}>
-                    <PaperButton
-                      mode="contained"
-                      onPress={handleSaveGoals}
-                      disabled={saving || loading || isCalculatingRecs}
-                      loading={saving}
-                      style={styles.saveButton}
-                      labelStyle={styles.saveButtonLabel}
-                      color={Colors.primary}
-                    >
-                      {saving ? 'Saving...' : 'Save Goals'}
-                    </PaperButton>
-                    {error && saving && <HelperText type="error" visible={!!error} style={styles.footerError}>{error}</HelperText>}
-                  </View>
-              }
-              contentContainerStyle={styles.listContentContainer}
-          />
+        <ScrollView style={styles.scrollView}>
+          <View style={styles.headerContainer}>
+            <Text variant="headlineSmall" style={[styles.title, { color: theme.colors.primary }]}>Set Nutrient Goals</Text>
+            <Text variant="bodyMedium" style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
+              Toggle nutrients to track and set your daily targets.
+            </Text>
+             {error && <Text style={[styles.errorText, { color: theme.colors.error }]}>{error}</Text>}
+          </View>
+
+           <Surface style={[styles.recommendationSection, { backgroundColor: theme.colors.surfaceVariant }]} elevation={1}>
+              <Text variant="titleMedium" style={{ color: theme.colors.onSurfaceVariant, marginBottom: 8 }}>Recommendations</Text>
+               {isLoadingRecommendations || isCalculatingRecs ? (
+                  <ActivityIndicator color={theme.colors.primary} />
+               ) : goalRecommendations ? (
+                 <Text style={{ color: theme.colors.onSurfaceVariant }}>Recommendations loaded. Use placeholders in the inputs below.</Text>
+               ) : (
+                 <Text style={{ color: theme.colors.onSurfaceVariant }}>{recommendationError || calcError || 'Complete your profile to calculate recommendations.'}</Text>
+               )}
+               <PaperButton
+                    mode="contained"
+                    onPress={handleCalculateRecommendations}
+                    loading={isCalculatingRecs}
+                    disabled={isCalculatingRecs || isLoadingRecommendations || saving}
+                    icon="calculator"
+                    style={styles.calcButton}
+               >
+                    {goalRecommendations ? 'Recalculate' : 'Calculate'}
+               </PaperButton>
+           </Surface>
+
+          {nutrientList.map((item, index) => (
+            <React.Fragment key={item.key}>
+              {renderNutrientItem({ item })}
+              {index < nutrientList.length - 1 && <Divider />} 
+            </React.Fragment>
+          ))}
+
+        </ScrollView>
+
+        <Surface style={[styles.saveArea, { backgroundColor: theme.colors.surface }]} elevation={4}>
+          <PaperButton
+            mode="contained"
+            onPress={handleSaveGoals}
+            loading={saving}
+            disabled={loading || saving || isCalculatingRecs}
+            icon="check-circle-outline"
+            style={styles.saveButton}
+            labelStyle={styles.saveButtonLabel}
+          >
+            Save Goals
+          </PaperButton>
+        </Surface>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
   container: {
+    flex: 1,
+  },
+  flex: {
       flex: 1,
+  },
+  scrollView: {
+    flex: 1,
   },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.background,
-    padding: 20,
   },
-  banner: {
-     backgroundColor: Colors.surface,
-   },
-  bannerText: {
-     color: Colors.text,
-     fontSize: 14,
-   },
-  listContentContainer: {
-      paddingBottom: 20,
+  headerContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
   },
-  listHeader: {
-      padding: 16,
-      backgroundColor: Colors.background,
-      borderBottomWidth: 1,
-      borderBottomColor: Colors.divider,
+  title: {
+    marginBottom: 4,
   },
-  listHeaderTitle: {
-      fontSize: 18,
-      fontWeight: '600',
-      color: Colors.text,
-      marginBottom: 10,
+  subtitle: {
   },
-  calculateButton: {
-      marginTop: 15,
+  errorText: {
+      marginTop: 8,
   },
-  nutrientRowSurface: {
-      padding: 16,
-      marginHorizontal: 8,
-      marginVertical: 4,
-      borderRadius: 8,
-      backgroundColor: Colors.surface,
+  recommendationSection: {
+    margin: 16,
+    padding: 16,
+    borderRadius: 8,
+  },
+  calcButton: {
+    marginTop: 12,
+  },
+  nutrientItemContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
   },
   nutrientInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
+    flex: 1,
+    marginRight: 10,
   },
   nutrientName: {
-    marginLeft: 12,
     fontSize: 16,
-    flexShrink: 1,
-    color: Colors.text,
+    marginBottom: 2,
   },
-  input: {
-    backgroundColor: Colors.surface,
-    marginTop: 8,
+  nutrientUnit: {
+    fontSize: 12,
   },
-  footer: {
+  nutrientControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  targetInput: {
+    width: 100,
+    marginRight: 10,
+    textAlign: 'right',
+    paddingVertical: 0,
+  },
+  switchControl: {
+  },
+  saveArea: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: Colors.divider,
-    backgroundColor: Colors.background,
+    borderTopColor: '#E0E0E0',
   },
   saveButton: {
-     paddingVertical: 8,
+    paddingVertical: 6,
   },
   saveButtonLabel: {
-      fontSize: 16,
-      fontWeight: 'bold',
-  },
-  footerError: {
-      marginTop: 8,
-      textAlign: 'center',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });
 

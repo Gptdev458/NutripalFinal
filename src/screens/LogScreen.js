@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, Modal, ScrollView } from 'react-native';
+import { View, FlatList, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, ScrollView } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { fetchFoodLogsByDateRange, deleteFoodLogEntry } from '../utils/logUtils';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Title, Paragraph, Button, List, Divider, IconButton, Subheading, Caption } from 'react-native-paper';
-import { Colors } from '../constants/colors';
+import { Paragraph, Button as PaperButton, List, Divider, IconButton, Text, Portal, Dialog } from 'react-native-paper';
 import { getNutrientDetails, MASTER_NUTRIENT_LIST } from '../constants/nutrients';
+import useSafeTheme from '../hooks/useSafeTheme';
 
 // Helper function to format Date to 'YYYY-MM-DD'
 const formatDate = (date) => {
@@ -26,6 +26,7 @@ const isTodayOrFuture = (date) => {
 };
 
 const LogScreen = () => {
+  const theme = useSafeTheme();
   const route = useRoute();
   const navigation = useNavigation();
   const { user } = useAuth();
@@ -80,7 +81,7 @@ const LogScreen = () => {
   useEffect(() => {
     fetchLogs();
     navigation.setOptions({ title: `Log for ${formatDate(currentDate)}` });
-  }, [fetchLogs, navigation, currentDate]);
+  }, [fetchLogs, navigation, currentDate, theme.colors.primary]);
 
   // Function to handle changing the date
   const handleDateChange = (daysToAdd) => {
@@ -157,11 +158,11 @@ const LogScreen = () => {
         <List.Item
           title={item.food_name || 'Unnamed Item'}
           description={`${timeString}${primaryNutrient ? ` - ${primaryNutrient}` : ''}`}
-          titleStyle={styles.logItemTitle}
-          descriptionStyle={styles.logItemDescription}
+          titleStyle={[styles.logItemTitle, { color: theme.colors.text }]}
+          descriptionStyle={[styles.logItemDescription, { color: theme.colors.textSecondary }]}
           style={styles.logItem}
-          left={props => <List.Icon {...props} icon="food-variant" color={Colors.accent} />}
-          right={props => <List.Icon {...props} icon="chevron-right" />}
+          left={props => <List.Icon {...props} icon="food-variant" color={theme.colors.primary} />}
+          right={props => <List.Icon {...props} icon="chevron-right" color={theme.colors.textSecondary} />}
         />
       </TouchableOpacity>
     );
@@ -173,18 +174,60 @@ const LogScreen = () => {
     }
     const nutrientInfo = getNutrientDetails(nutrientKey);
     const value = selectedLogItem[nutrientKey];
+    const displayValue = typeof value === 'number' ? value.toFixed(1) : value;
+    const displayUnit = nutrientInfo?.unit || '';
+
     return (
       <View key={nutrientKey} style={styles.nutrientRow}>
-        <Text style={styles.nutrientName}>{nutrientInfo?.name || nutrientKey}:</Text>
-        <Text style={styles.nutrientValue}>
-          {typeof value === 'number' ? value.toFixed(1) : value} {nutrientInfo?.unit || ''}
-        </Text>
+        <Text style={[styles.nutrientName, { color: theme.colors.text }]}>{nutrientInfo?.name || nutrientKey}:</Text>
+        <Text style={[styles.nutrientValue, { color: theme.colors.textSecondary }]}>{`${displayValue} ${displayUnit}`}</Text>
       </View>
     );
   };
 
+  const renderEmptyListComponent = () => (
+    <View style={styles.centered}>
+      <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>No food logged on this date.</Text>
+    </View>
+  );
+
+  const renderLogDetailDialog = () => (
+    <Portal>
+      <Dialog visible={isModalVisible} onDismiss={handleCloseModal} style={{ borderRadius: 8 }}>
+        <Dialog.Title style={{ color: theme.colors.primary }}>
+          {selectedLogItem?.food_name || 'Log Details'}
+        </Dialog.Title>
+        <Dialog.Content>
+          <ScrollView>
+            {selectedLogItem && (
+              <>
+                <Text variant="bodySmall" style={{ color: theme.colors.textSecondary, marginBottom: 16 }}>
+                  Logged at: {new Date(selectedLogItem.timestamp).toLocaleString()}
+                </Text>
+                <Divider style={{ marginBottom: 16 }} />
+                {MASTER_NUTRIENT_LIST.map(item => renderNutrientDetail(item.key))}
+              </>
+            )}
+          </ScrollView>
+        </Dialog.Content>
+        <Dialog.Actions style={styles.dialogActions}>
+          <PaperButton
+            onPress={handleDeletePress}
+            disabled={isDeleting}
+            loading={isDeleting}
+            textColor={theme.colors.error}
+            style={styles.deleteButton}
+          >
+            Delete
+          </PaperButton>
+          <PaperButton onPress={handleCloseModal} style={styles.closeButton}>Close</PaperButton>
+        </Dialog.Actions>
+      </Dialog>
+    </Portal>
+  );
+
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.background }]}>
       <View style={styles.container}>
         {/* Date Navigation Header */}
         <View style={styles.dateHeader}>
@@ -192,99 +235,43 @@ const LogScreen = () => {
             icon="chevron-left"
             size={28}
             onPress={() => handleDateChange(-1)}
-            color={Colors.primary}
+            iconColor={theme.colors.primary}
           />
-          <Title style={styles.title}>
-            {currentDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
-          </Title>
+          <Text variant="titleLarge" style={[styles.title, { color: theme.colors.primary }]}>
+            {currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+          </Text>
           <IconButton
             icon="chevron-right"
             size={28}
             onPress={() => handleDateChange(1)}
-            disabled={isTodayOrFuture(currentDate)} // Disable if date is today or future
-            color={isTodayOrFuture(currentDate) ? Colors.disabled : Colors.primary} // Grey out when disabled
+            disabled={isTodayOrFuture(currentDate)}
+            iconColor={isTodayOrFuture(currentDate) ? theme.colors.disabled : theme.colors.primary}
           />
         </View>
 
         {isLoading ? (
           <View style={styles.centered}>
-            <ActivityIndicator animating={true} size="large" color={Colors.primary} />
-            <Text style={styles.loadingText}>Loading logs...</Text>
+            <ActivityIndicator animating={true} size="large" color={theme.colors.primary} />
+            <Text style={[styles.loadingText, { color: theme.colors.textSecondary }]}>Loading logs...</Text>
           </View>
         ) : error ? (
           <View style={styles.centered}>
-            <Text style={styles.errorText}>{error}</Text>
-            <Button mode="contained" onPress={fetchLogs}>Retry</Button>
+            <Text style={[styles.errorText, { color: theme.colors.error }]}>{error}</Text>
+            <PaperButton mode="contained" onPress={fetchLogs}>Retry</PaperButton>
           </View>
         ) : (
           <FlatList
             data={logEntries}
             renderItem={renderLogItem}
             keyExtractor={(item) => `log-${item.id}`}
-            ListEmptyComponent={
-              <View style={styles.centered}>
-                <Text style={styles.emptyText}>No food logged on this date.</Text>
-              </View>
-            }
+            ListEmptyComponent={renderEmptyListComponent}
             ItemSeparatorComponent={() => <Divider style={styles.divider} />}
             contentContainerStyle={logEntries.length === 0 ? styles.centered : styles.listContentContainer}
           />
         )}
       </View>
 
-      {/* Log Details Modal */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={isModalVisible}
-        onRequestClose={handleCloseModal}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <ScrollView>
-              {selectedLogItem && (
-                <>
-                  <Text style={{ display: 'none' }}>{console.log('Selected item in modal:', JSON.stringify(selectedLogItem, null, 2))}</Text>
-                  <Title style={styles.modalTitle}>{selectedLogItem.food_name || 'Log Details'}</Title>
-                  <Divider style={styles.modalDivider} />
-
-                  {/* Display Nutrient Details */}
-                  {MASTER_NUTRIENT_LIST.map(nutrient => renderNutrientDetail(nutrient.key))}
-                   <Divider style={styles.modalDivider} />
-                   <Caption style={styles.modalTimestamp}>
-                     Logged at: {new Date(selectedLogItem.timestamp).toLocaleString('en-US', {
-                       dateStyle: 'medium',
-                       timeStyle: 'short',
-                     })}
-                   </Caption>
-                </>
-              )}
-            </ScrollView>
-            <View style={styles.modalButtonContainer}>
-              <Button
-                mode="outlined"
-                onPress={handleDeletePress}
-                style={[styles.modalButton, styles.deleteButton]}
-                labelStyle={styles.deleteButtonText}
-                icon="delete"
-                disabled={isDeleting || !selectedLogItem}
-                loading={isDeleting}
-                color={Colors.error}
-              >
-                {isDeleting ? 'Deleting...' : 'Delete'}
-              </Button>
-              <Button
-                mode="contained"
-                onPress={handleCloseModal}
-                style={[styles.modalButton, styles.closeButton]}
-                disabled={isDeleting}
-              >
-                Close
-              </Button>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {renderLogDetailDialog()}
     </SafeAreaView>
   );
 };
@@ -292,28 +279,23 @@ const LogScreen = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: Colors.background,
   },
   container: {
     flex: 1,
-    paddingHorizontal: 15, // Keep horizontal padding
-    paddingTop: 15, // Add top padding if needed, remove bottom to allow list scroll
-    paddingBottom: 0,
   },
   dateHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between', // Pushes arrows to edges
+    justifyContent: 'space-between',
     marginBottom: 15,
-    paddingHorizontal: 5, // Add some padding around the header
+    paddingHorizontal: 5,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
   },
   title: {
-    fontSize: 20, // Slightly smaller title to fit arrows
-    fontWeight: 'bold',
     textAlign: 'center',
-    color: Colors.primary,
-    flexShrink: 1, // Allow title to shrink if needed
-    marginHorizontal: 5, // Add space between title and arrows
+    flexShrink: 1,
+    marginHorizontal: 5,
   },
   centered: {
     flex: 1,
@@ -324,74 +306,33 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 10,
     fontSize: 16,
-    color: Colors.textSecondary,
   },
   errorText: {
-    color: Colors.error,
     fontSize: 16,
     textAlign: 'center',
     marginBottom: 10,
   },
   emptyText: {
     fontSize: 16,
-    color: Colors.textSecondary,
     textAlign: 'center',
   },
   listContentContainer: {
     paddingBottom: 20,
   },
   logItem: {
-    backgroundColor: Colors.surface,
     borderRadius: 8,
     marginVertical: 5,
     elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 1,
     paddingVertical: 5,
+    marginHorizontal: 16,
   },
   logItemTitle: {
     fontWeight: 'bold',
-    color: Colors.text,
   },
   logItemDescription: {
-    color: Colors.textSecondary,
   },
   divider: {
-    height: 0, // Make divider invisible, use margin on items for spacing
-    backgroundColor: 'transparent',
-  },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  modalContent: {
-    width: '90%',
-    maxHeight: '80%',
-    backgroundColor: Colors.background,
-    borderRadius: 10,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
-  },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 15,
-    textAlign: 'center',
-    color: Colors.primary,
-  },
-  modalDivider: {
-    marginVertical: 10,
+    marginHorizontal: 16,
   },
   nutrientRow: {
     flexDirection: 'row',
@@ -400,39 +341,17 @@ const styles = StyleSheet.create({
   },
   nutrientName: {
     fontSize: 16,
-    color: Colors.text,
     fontWeight: '500',
   },
   nutrientValue: {
-    fontSize: 16,
-    color: Colors.textSecondary,
   },
-  modalTimestamp: {
-      textAlign: 'center',
-      marginTop: 10,
-      color: Colors.textSecondary,
-      fontSize: 13,
-  },
-  modalButtonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginTop: 20,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: Colors.divider,
-  },
-  modalButton: {
-    flex: 1,
-    marginHorizontal: 5,
+  dialogActions: {
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
   },
   deleteButton: {
-     borderColor: Colors.error,
-  },
-  deleteButtonText: {
-      color: Colors.error,
   },
   closeButton: {
-      backgroundColor: Colors.primary,
   },
 });
 

@@ -4,17 +4,17 @@ import {
   TextInput as PaperTextInput,
   Button as PaperButton,
   Text as PaperText,
-  Title,
-  Subheading,
+  Text,
   HelperText,
   ActivityIndicator,
   Surface,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
-import { Colors } from '../constants/colors';
+import useSafeTheme from '../hooks/useSafeTheme';
 
 const LoginScreen = ({ navigation }) => {
+  const theme = useSafeTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -49,15 +49,22 @@ const LoginScreen = ({ navigation }) => {
     navigation.navigate('SignUp');
   };
 
+  const titleStyle = [styles.title, { color: theme.colors.primary }];
+  const subtitleStyle = [styles.subtitle, { color: theme.colors.textSecondary }];
+  const signupPromptStyle = [styles.signupPrompt, { color: theme.colors.textSecondary }];
+  const signupLinkStyle = [styles.signupLink, { color: theme.colors.primary }];
+  const safeAreaStyle = [styles.safeArea, { backgroundColor: theme.colors.background }];
+  const contentStyle = [styles.content, { backgroundColor: theme.colors.surface }];
+
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={safeAreaStyle}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.container}
       >
-        <Surface style={styles.content}>
-          <Title style={styles.title}>NutriPal</Title>
-          <Subheading style={styles.subtitle}>Your AI Nutrition Assistant</Subheading>
+        <Surface style={contentStyle}>
+          <Text variant="headlineMedium" style={titleStyle}>NutriPal</Text>
+          <Text variant="titleMedium" style={subtitleStyle}>Your AI Nutrition Assistant</Text>
           
           <HelperText type="error" visible={!!error} style={styles.errorText}>
             {error}
@@ -87,7 +94,7 @@ const LoginScreen = ({ navigation }) => {
           />
           
           {loading ? (
-            <ActivityIndicator animating={true} color={Colors.accent} size="large" style={styles.loader} />
+            <ActivityIndicator animating={true} color={theme.colors.primary} size="large" style={styles.loader} />
           ) : (
             <PaperButton
               mode="contained"
@@ -95,16 +102,15 @@ const LoginScreen = ({ navigation }) => {
               disabled={loading}
               style={styles.button}
               labelStyle={styles.buttonLabel}
-              color={Colors.accent}
             >
               Login
             </PaperButton>
           )}
           
           <View style={styles.signupContainer}>
-            <PaperText style={styles.signupPrompt}>Don't have an account? </PaperText>
+            <PaperText style={signupPromptStyle}>Don't have an account? </PaperText>
             <TouchableOpacity onPress={navigateToSignUp} disabled={loading}>
-              <PaperText style={styles.signupLink}>Sign Up</PaperText>
+              <PaperText style={signupLinkStyle}>Sign Up</PaperText>
             </TouchableOpacity>
           </View>
         </Surface>
@@ -116,7 +122,6 @@ const LoginScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: Colors.background,
   },
   container: {
     flex: 1,
@@ -127,29 +132,22 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     borderRadius: 12,
     elevation: 4,
-    backgroundColor: Colors.background,
   },
   title: {
     textAlign: 'center',
-    fontSize: 32,
-    fontWeight: 'bold',
     marginBottom: 8,
-    color: Colors.primary,
   },
   subtitle: {
     textAlign: 'center',
     marginBottom: 25,
-    color: Colors.grey,
   },
   errorText: {
     marginBottom: 10,
     textAlign: 'center',
     fontSize: 14,
-    color: Colors.error,
   },
   input: {
     marginBottom: 15,
-    backgroundColor: Colors.background,
   },
   button: {
     marginTop: 10,
@@ -170,11 +168,9 @@ const styles = StyleSheet.create({
     marginTop: 25,
   },
   signupPrompt: {
-    color: Colors.grey,
     fontSize: 15,
   },
   signupLink: {
-    color: Colors.accent,
     fontWeight: 'bold',
     fontSize: 15,
   },

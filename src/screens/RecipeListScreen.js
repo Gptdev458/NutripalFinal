@@ -6,25 +6,31 @@ import {
   RefreshControl,
   FlatList,
   TouchableOpacity,
+  ScrollView,
+  Text,
 } from 'react-native';
 import {
   ActivityIndicator,
   Button as PaperButton,
   Card,
   Paragraph,
-  Text as PaperText,
-  Title,
-  Caption,
   IconButton,
+  Portal,
+  Dialog,
+  Divider,
+  Subheading,
+  Text as PaperText,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import { useFocusEffect } from '@react-navigation/native';
-import { quickLogRecipe, fetchRecipeDetails } from '../utils/logUtils';
-import { Colors } from '../constants/colors';
+import { quickLogRecipe, fetchRecipeDetails, fetchUserGoals } from '../utils/logUtils';
+import useSafeTheme from '../hooks/useSafeTheme';
+import { getNutrientDetails } from '../constants/nutrients';
 
 const RecipeListScreen = () => {
+  const theme = useSafeTheme();
   const { user, session } = useAuth();
   const [recipes, setRecipes] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -33,63 +39,72 @@ const RecipeListScreen = () => {
   const [loggingRecipeId, setLoggingRecipeId] = useState(null);
   const [deletingRecipeId, setDeletingRecipeId] = useState(null);
 
-  // Fetch recipes on component mount
-  useEffect(() => {
-    fetchRecipes();
-  }, []);
+  // State for Modal
+  const [isRecipeModalVisible, setIsRecipeModalVisible] = useState(false);
+  const [selectedRecipeData, setSelectedRecipeData] = useState(null);
+  const [isModalLoading, setIsModalLoading] = useState(false);
+  const [modalError, setModalError] = useState(null);
+  const [userGoals, setUserGoals] = useState([]);
+  const [isLoadingGoals, setIsLoadingGoals] = useState(false);
 
-  // Fetch user's recipes from Supabase
-  const fetchRecipes = useCallback(async () => {
+  // Combined fetch function
+  const loadData = useCallback(async () => {
     if (!user) return;
 
-    // Set loading true at the start of fetching
     setLoading(true);
+    setIsLoadingGoals(true);
     setError(null);
     try {
-      const { data, error: fetchError } = await supabase
-        .from('user_recipes')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
+      // Fetch recipes and goals concurrently
+      const [recipesResponse, goalsResponse] = await Promise.all([
+        supabase
+          .from('user_recipes')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false }),
+        fetchUserGoals(user.id)
+      ]);
 
-      if (fetchError) throw fetchError;
+      if (recipesResponse.error) throw new Error(`Recipes fetch failed: ${recipesResponse.error.message}`);
+      setRecipes(recipesResponse.data || []);
 
-      setRecipes(data || []);
+      if (goalsResponse.error) {
+        console.warn('Failed to fetch user goals:', goalsResponse.error.message);
+        setUserGoals([]); // Proceed without goals if fetch fails
+      } else {
+        setUserGoals(goalsResponse.data || []);
+      }
+
     } catch (err) {
-      setError('Error fetching recipes: ' + err.message);
-      console.error('Error fetching recipes:', err);
-      setRecipes([]); // Clear recipes on error
+      setError('Error fetching data: ' + err.message);
+      console.error('Error fetching data:', err);
+      setRecipes([]);
+      setUserGoals([]);
     } finally {
       setLoading(false);
-      setRefreshing(false); // Ensure refreshing is also set to false
+      setRefreshing(false);
+      setIsLoadingGoals(false);
     }
   }, [user]);
 
-  // Use useFocusEffect to fetch data when the screen is focused
   useFocusEffect(
     useCallback(() => {
-      console.log('RecipeListScreen focused, fetching recipes...');
-      fetchRecipes();
-
-      // Optional cleanup function (runs when screen loses focus)
+      console.log('RecipeListScreen focused, loading data...');
+      loadData(); // Use combined fetch function
       return () => {
         console.log('RecipeListScreen unfocused');
-        // You could cancel ongoing fetches here if needed
       };
-    }, [fetchRecipes]) // Dependency: the memoized fetchRecipes function
+    }, [loadData]) // Depend on loadData
   );
 
-  // Updated Handle Log Recipe using the utility function
   const handleLogRecipe = async (recipeId, recipeName) => {
-    if (loggingRecipeId || deletingRecipeId) return; // Prevent double taps
+    if (loggingRecipeId || deletingRecipeId) return;
 
-    setLoggingRecipeId(recipeId); // Indicate logging started
+    setLoggingRecipeId(recipeId);
     try {
-      // Fetch full recipe details needed for logging
       const recipeDetails = await fetchRecipeDetails(recipeId);
       if (recipeDetails) {
         await quickLogRecipe(recipeDetails, user);
-        // Optionally refresh data after successful log
       } else {
         Alert.alert('Error', 'Could not fetch recipe details to log.');
       }
@@ -97,13 +112,12 @@ const RecipeListScreen = () => {
       console.error("Error during quick log process:", err);
       Alert.alert('Error', 'An unexpected error occurred during logging.');
     } finally {
-      setLoggingRecipeId(null); // Indicate logging finished
+      setLoggingRecipeId(null);
     }
   };
 
-  // 3. Implement Delete Handler Function (with confirmation)
   const handleDeleteRecipe = (recipeId, recipeName) => {
-    if (deletingRecipeId || loggingRecipeId) return; // Prevent actions while another is in progress
+    if (deletingRecipeId || loggingRecipeId) return;
 
     Alert.alert(
       "Confirm Delete",
@@ -113,7 +127,6 @@ const RecipeListScreen = () => {
         {
           text: "Delete",
           style: "destructive",
-          // Call the function that performs the actual deletion
           onPress: () => proceedWithDeletion(recipeId),
         },
       ],
@@ -121,7 +134,6 @@ const RecipeListScreen = () => {
     );
   };
 
-  // 4. API Call Logic (within helper)
   const proceedWithDeletion = async (recipeId) => {
     if (!session?.access_token) {
         Alert.alert('Error', 'Authentication token not found. Cannot delete recipe.');
@@ -132,11 +144,11 @@ const RecipeListScreen = () => {
         return;
     }
 
-    setDeletingRecipeId(recipeId); // Show loading state for the specific item
+    setDeletingRecipeId(recipeId);
 
     try {
         console.log(`Attempting to delete recipe ID: ${recipeId}`);
-        const url = `${supabase.supabaseUrl}/functions/v1/recipe-manager`; // Ensure this URL is correct
+        const url = `${supabase.supabaseUrl}/functions/v1/recipe-manager`;
 
         const response = await fetch(url, {
             method: 'DELETE',
@@ -150,14 +162,9 @@ const RecipeListScreen = () => {
         console.log('Delete response status:', response.status);
 
         if (response.ok) {
-            // Success (2xx status code)
             console.log(`Recipe ${recipeId} deleted successfully.`);
-            // Update local state
             setRecipes(currentRecipes => currentRecipes.filter(recipe => recipe.id !== recipeId));
-            // Optionally show a success toast/message
-            // Alert.alert('Success', 'Recipe deleted.'); // Alert might be too intrusive
         } else {
-            // Handle error response
             let errorData = { message: `HTTP error! Status: ${response.status}` };
             try {
                 errorData = await response.json();
@@ -171,101 +178,222 @@ const RecipeListScreen = () => {
         console.error('Error calling delete function:', error);
         Alert.alert('Error', `An error occurred while trying to delete the recipe: ${error.message}`);
     } finally {
-        setDeletingRecipeId(null); // Clear loading state
+        setDeletingRecipeId(null);
     }
   };
 
-  // Handle pull-to-refresh
   const handleRefresh = () => {
-    if (loggingRecipeId || deletingRecipeId) return; // Don't refresh during actions
+    if (loggingRecipeId || deletingRecipeId) return;
     setRefreshing(true);
-    fetchRecipes();
+    loadData();
   };
 
-  // Render function using Paper components
+  // Function to open the modal and fetch details
+  const handleRecipeItemPress = async (recipe) => {
+    if (deletingRecipeId || loggingRecipeId) return;
+    setSelectedRecipeData({ ...recipe, ingredients: null }); // Set basic data first
+    setIsRecipeModalVisible(true);
+    setIsModalLoading(true);
+    setModalError(null);
+
+    try {
+      const details = await fetchRecipeDetails(recipe.id);
+      if (details) {
+        // Ensure ingredients are handled (assuming fetchRecipeDetails returns them)
+        setSelectedRecipeData(details);
+      } else {
+        throw new Error('Could not fetch recipe details.');
+      }
+    } catch (err) {
+      console.error('Error fetching recipe details for modal:', err);
+      setModalError(`Failed to load details: ${err.message}`);
+    } finally {
+      setIsModalLoading(false);
+    }
+  };
+
+  // Function to close the modal
+  const handleCloseModal = () => {
+    setIsRecipeModalVisible(false);
+    setSelectedRecipeData(null);
+    setIsModalLoading(false);
+    setModalError(null);
+    // Reset delete/log state if needed, though handled elsewhere currently
+    setLoggingRecipeId(null);
+    setDeletingRecipeId(null);
+  };
+
   const renderRecipeItem = ({ item }) => (
-    <Card style={styles.recipeItem} elevation={2}>
-      <Card.Content style={styles.cardContent}>
-        <View style={styles.recipeInfo}>
-          <Title style={styles.recipeName}>{item.recipe_name}</Title>
-          {item.description && (
-            <Paragraph style={styles.recipeDescription} numberOfLines={2}>
-              {item.description}
-            </Paragraph>
-          )}
-        </View>
-        <View style={styles.actionButtons}>
-           <PaperButton
-             mode="contained"
-             onPress={() => handleLogRecipe(item.id, item.recipe_name)}
-             style={[styles.actionButton, styles.logButton]}
-             labelStyle={styles.logButtonText}
-             color={Colors.success}
-             icon="plus-circle-outline"
-             disabled={loggingRecipeId === item.id || !!deletingRecipeId}
-             loading={loggingRecipeId === item.id}
-           >
-             Log
-           </PaperButton>
-           <IconButton
-                icon="delete-outline"
-                color={Colors.error}
+    <TouchableOpacity onPress={() => handleRecipeItemPress(item)} disabled={!!deletingRecipeId || !!loggingRecipeId}>
+      <Card style={[styles.recipeItem, { backgroundColor: theme.colors.surface }]} elevation={2}>
+        <Card.Content style={styles.cardContent}>
+          <View style={styles.recipeInfo}>
+            <PaperText variant="titleMedium" style={[styles.recipeName, { color: theme.colors.text }]}>{item.recipe_name}</PaperText>
+          </View>
+          <View style={styles.actionButtons}>
+             <IconButton
+                icon="chevron-right" // Indicate tappable item
+                iconColor={theme.colors.textSecondary}
                 size={24}
-                onPress={() => handleDeleteRecipe(item.id, item.recipe_name)}
-                disabled={deletingRecipeId === item.id || !!loggingRecipeId}
-                style={styles.deleteButton}
-            />
-            {deletingRecipeId === item.id && (
-                <ActivityIndicator size="small" color={Colors.error} style={styles.deleteSpinner} />
-            )}
-        </View>
-      </Card.Content>
-    </Card>
+             />
+           </View>
+        </Card.Content>
+      </Card>
+    </TouchableOpacity>
   );
 
-  // Show loading indicator while fetching data
+  const renderEmptyListComponent = () => (
+    <View style={styles.emptyContainer}>
+      <PaperText style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
+        You haven't saved any recipes yet.
+      </PaperText>
+      <PaperText style={[styles.emptySubText, { color: theme.colors.textSecondary }]}>
+        You can save recipes from the Chat screen after analyzing them.
+      </PaperText>
+    </View>
+  );
+
+  // Add renderRecipeModal function
+  const renderRecipeModal = () => {
+    if (!selectedRecipeData) return null;
+
+    // Helper to render nutrient rows based on tracked goals
+    const renderTrackedNutrient = (goal) => {
+      const nutrientKey = goal.nutrient;
+      const value = selectedRecipeData[nutrientKey];
+
+      if (value !== null && value !== undefined && typeof value === 'number') {
+        const nutrientDetails = getNutrientDetails(nutrientKey);
+        const displayValue = value.toFixed(1);
+        const displayName = nutrientDetails?.name || nutrientKey;
+        const displayUnit = nutrientDetails?.unit || '';
+
+        return (
+          <View key={nutrientKey} style={styles.nutrientRow}>
+            <PaperText style={[styles.modalText, { color: theme.colors.text }]}>{displayName}:</PaperText>
+            <PaperText style={[styles.modalTextSecondary, { color: theme.colors.textSecondary }]}>{`${displayValue} ${displayUnit}`}</PaperText>
+          </View>
+        );
+      }
+      return null;
+    };
+
+    const recipeName = selectedRecipeData.recipe_name || 'Recipe Details';
+    // Use ingredients field OR description field as fallback
+    const ingredients = selectedRecipeData.ingredients || selectedRecipeData.description || 'No ingredients listed.';
+    const ingredientsDisplay = typeof ingredients === 'string' ? ingredients : ingredients.join(', '); // Basic display
+
+    return (
+      <Portal>
+        <Dialog visible={isRecipeModalVisible} onDismiss={handleCloseModal} style={{ borderRadius: 8 }}>
+          <Dialog.Title style={{ color: theme.colors.primary }}>{recipeName}</Dialog.Title>
+          <Dialog.Content>
+            {/* Restore original content logic */}
+            {isModalLoading ? (
+              <ActivityIndicator animating={true} color={theme.colors.primary} size="small" />
+            ) : modalError ? (
+              <PaperText style={[styles.errorText, { color: theme.colors.error }]}>{modalError}</PaperText>
+            ) : (
+              <ScrollView style={styles.modalScrollView}>
+                {/* Ingredients Section */}
+                <Subheading style={styles.modalSubheading}>Ingredients</Subheading>
+                <Paragraph style={[styles.modalTextSecondary, { color: theme.colors.textSecondary, marginBottom: 16 }]}>
+                    {ingredientsDisplay}
+                </Paragraph>
+                <Divider style={{ marginBottom: 16 }} />
+
+                {/* Tracked Nutrition Section */}
+                <Subheading style={styles.modalSubheading}>Tracked Nutrition</Subheading>
+                {userGoals.length > 0 ? (
+                    userGoals.map(renderTrackedNutrient)
+                ) : (
+                    <Paragraph style={[styles.modalTextSecondary, { color: theme.colors.textSecondary }]}>No nutrition goals set.</Paragraph>
+                )}
+                 {!userGoals.some(goal => selectedRecipeData[goal.nutrient] !== null && selectedRecipeData[goal.nutrient] !== undefined && typeof selectedRecipeData[goal.nutrient] === 'number') && userGoals.length > 0 &&
+                    <Paragraph style={[styles.modalTextSecondary, { color: theme.colors.textSecondary, marginTop: 8 }]}>
+                        (No tracked nutrients found in this recipe)
+                    </Paragraph>
+                 }
+              </ScrollView>
+            )}
+            {/* End original content logic */}
+          </Dialog.Content>
+          <Dialog.Actions style={styles.dialogActions}>
+            <View style={styles.dialogActionsLeft}>
+                <PaperButton
+                    onPress={() => handleDeleteRecipe(selectedRecipeData.id, recipeName)}
+                    disabled={deletingRecipeId === selectedRecipeData.id || loggingRecipeId === selectedRecipeData.id || isModalLoading}
+                    loading={deletingRecipeId === selectedRecipeData.id}
+                    textColor={theme.colors.error}
+                    style={styles.modalActionButton}
+                >
+                    Delete
+                </PaperButton>
+            </View>
+            <View style={styles.dialogActionsRight}>
+                <PaperButton
+                    mode="outlined"
+                    onPress={handleCloseModal}
+                    style={styles.modalActionButton}
+                    disabled={deletingRecipeId === selectedRecipeData.id || loggingRecipeId === selectedRecipeData.id}
+                >
+                    Close
+                </PaperButton>
+                <PaperButton
+                    mode="contained"
+                    onPress={() => {
+                         handleLogRecipe(selectedRecipeData.id, recipeName);
+                         handleCloseModal(); // Optionally close modal after starting log
+                    }}
+                    disabled={deletingRecipeId === selectedRecipeData.id || loggingRecipeId === selectedRecipeData.id || isModalLoading}
+                    loading={loggingRecipeId === selectedRecipeData.id}
+                    style={styles.modalActionButton}
+                    icon="plus"
+                >
+                    Log
+                </PaperButton>
+            </View>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
+    );
+  };
+
   if (loading && !refreshing) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <ActivityIndicator animating={true} color={Colors.accent} size="large" />
-        <PaperText style={styles.loadingText}>Loading Recipes...</PaperText>
+      <SafeAreaView style={[styles.centered, { backgroundColor: theme.colors.background }]}>
+        <ActivityIndicator animating={true} color={theme.colors.primary} size="large" />
+        <PaperText style={[styles.loadingText, { color: theme.colors.textSecondary }]}>Loading Recipes...</PaperText>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <View style={styles.header}>
-        <Title style={styles.title}>Your Saved Recipes</Title>
-        <Caption style={styles.subtitle}>Quickly log your frequent meals.</Caption>
+        <PaperText variant="headlineSmall" style={[styles.title, { color: theme.colors.primary }]}>Your Saved Recipes</PaperText>
+        <PaperText variant="bodyMedium" style={[styles.subtitle, { color: theme.colors.textSecondary }]}>Quickly log your frequent meals.</PaperText>
       </View>
 
-      {error && <PaperText style={styles.errorText}>{error}</PaperText>}
+      {error && <PaperText style={[styles.errorText, { color: theme.colors.error }]}>{error}</PaperText>}
 
       <FlatList
         data={recipes}
         renderItem={renderRecipeItem}
         keyExtractor={(item) => item.id.toString()}
         contentContainerStyle={styles.listContentContainer}
-        ListEmptyComponent={
-          !loading && (
-            <View style={styles.emptyContainer}>
-              <PaperText style={styles.emptyText}>No recipes saved yet.</PaperText>
-              <Caption style={styles.emptySubtext}>
-                Use the Chat screen to describe a recipe and save it.
-              </Caption>
-            </View>
-          )
-        }
+        ListEmptyComponent={renderEmptyListComponent}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            colors={[Colors.accent]}
-            tintColor={Colors.accent}
+            colors={[theme.colors.primary]}
+            tintColor={theme.colors.primary}
           />
         }
       />
+      {/* Conditionally render the modal */}
+      {isRecipeModalVisible && renderRecipeModal()}
     </SafeAreaView>
   );
 };
@@ -273,116 +401,118 @@ const RecipeListScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
   },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
-    backgroundColor: Colors.background,
+  },
+  header: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  title: {
+    marginBottom: 4,
+  },
+  subtitle: {
+  },
+  errorText: {
+    margin: 16,
+    textAlign: 'center',
   },
   loadingText: {
     marginTop: 10,
-    fontSize: 16,
-    color: Colors.grey,
-  },
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 15,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.lightGrey,
-    backgroundColor: Colors.background,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: Colors.primary,
-  },
-  subtitle: {
-    fontSize: 15,
-    color: Colors.grey,
-    marginTop: 4,
   },
   listContentContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
     flexGrow: 1,
   },
   recipeItem: {
-    marginBottom: 14,
-    backgroundColor: Colors.background,
-    borderRadius: 8,
+    marginVertical: 6,
+    marginHorizontal: 8,
+    borderRadius: 6,
   },
   cardContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
   },
   recipeInfo: {
     flex: 1,
-    marginRight: 10,
+    marginRight: 8,
   },
   recipeName: {
-    fontSize: 18,
-    fontWeight: '500',
-    color: Colors.primary,
     marginBottom: 4,
   },
   recipeDescription: {
-    fontSize: 14,
-    color: Colors.grey,
+    lineHeight: 18,
   },
   actionButtons: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  actionButton: {
-      borderRadius: 20,
-  },
-  logButton: {
-    borderRadius: 20,
-  },
-  logButtonText: {
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
   deleteButton: {
-      marginLeft: 8,
+    margin: 0,
   },
   deleteSpinner: {
-        marginLeft: 8,
-  },
-  errorText: {
-    color: Colors.error,
-    padding: 16,
-    textAlign: 'center',
-    fontSize: 16,
+    marginLeft: 4,
   },
   emptyContainer: {
-    flexGrow: 1,
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 30,
-    marginHorizontal: 16,
-    marginTop: 20,
-    backgroundColor: Colors.lightGrey,
-    borderRadius: 8,
+    padding: 20,
+    marginTop: 50,
   },
   emptyText: {
     fontSize: 18,
-    fontWeight: '500',
     textAlign: 'center',
-    marginBottom: 12,
-    color: Colors.primary,
+    marginBottom: 8,
   },
-  emptySubtext: {
+  emptySubText: {
     fontSize: 14,
-    color: Colors.grey,
     textAlign: 'center',
+  },
+  // Modal Styles
+  modalScrollView: {
+    maxHeight: 400, // Limit modal content height
+  },
+  modalSubheading: {
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  modalText: {
+    fontSize: 15,
+  },
+  modalTextSecondary: {
+    fontSize: 14,
+  },
+  nutrientRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    marginBottom: 2,
+  },
+  dialogActions: {
+    justifyContent: 'space-between',
+    flexDirection: 'row',
+    paddingHorizontal: 8, // Add padding
+    paddingVertical: 8,
+  },
+  dialogActionsLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+  },
+  dialogActionsRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+  },
+  modalActionButton: {
+      marginHorizontal: 4, // Space out buttons
   },
 });
 

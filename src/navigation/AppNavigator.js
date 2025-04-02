@@ -6,21 +6,26 @@ import ChatScreen from '../screens/ChatScreen';
 import RecipeListScreen from '../screens/RecipeListScreen';
 import DashboardStackNavigator from './DashboardStackNavigator';
 import SettingsStackNavigator from './SettingsStackNavigator';
-import { Colors } from '../constants/colors';
 
 const Tab = createBottomTabNavigator();
+
+// Define hex colors matching the theme
+const ACTIVE_TINT_COLOR = '#4CAF50'; // Corresponds to theme.colors.primary
+const INACTIVE_TINT_COLOR = '#666666'; // Corresponds to theme.colors.textSecondary
+const TAB_BAR_BACKGROUND = '#FFFFFF'; // Corresponds to theme.colors.surface
 
 // Main app navigator
 const AppNavigator = () => {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        tabBarActiveTintColor: Colors.accent,
-        tabBarInactiveTintColor: Colors.grey,
+        tabBarActiveTintColor: ACTIVE_TINT_COLOR,
+        tabBarInactiveTintColor: INACTIVE_TINT_COLOR,
         tabBarLabelStyle: {
           fontSize: 12,
         },
         tabBarStyle: {
+          backgroundColor: TAB_BAR_BACKGROUND,
           height: 60,
           paddingBottom: 5,
           paddingTop: 5,
@@ -38,7 +43,7 @@ const AppNavigator = () => {
             iconName = focused ? 'cog' : 'cog-outline';
           }
 
-          return <MaterialCommunityIcons name={iconName} size={size} color={focused ? Colors.accent : Colors.grey} />;
+          return <MaterialCommunityIcons name={iconName} size={size} color={focused ? ACTIVE_TINT_COLOR : INACTIVE_TINT_COLOR} />;
         },
       })}
     >

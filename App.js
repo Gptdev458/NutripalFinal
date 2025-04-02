@@ -6,6 +6,7 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@env';
 import AuthContext, { AuthProvider, useAuth } from './src/context/AuthContext';
 import { testEnvVars } from './src/lib/envTest';
 import { PaperProvider } from 'react-native-paper';
+import theme from './src/theme/index.js';
 import { verifySupabaseConnection } from './src/lib/supabaseClient';
 
 // Direct check for environment variables
@@ -59,7 +60,7 @@ const AppContent = () => {
 export default function App() {
   return (
     <AuthProvider>
-      <PaperProvider>
+      <PaperProvider theme={theme}>
         <AppContent />
       </PaperProvider>
       <StatusBar style="auto" />

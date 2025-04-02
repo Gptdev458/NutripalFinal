@@ -2,20 +2,24 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import DashboardScreen from '../screens/DashboardScreen';
 import LogScreen from '../screens/LogScreen';
-import { Colors } from '../constants/colors'; // Import Colors for styling consistency if needed
+// import { Colors } from '../constants/colors'; // Remove old Colors import
 
 const Stack = createNativeStackNavigator();
+
+// Define hex colors matching the theme
+const HEADER_BACKGROUND = '#FFFFFF'; // Corresponds to theme.colors.surface or background
+const HEADER_TINT_COLOR = '#4CAF50'; // Corresponds to theme.colors.primary
 
 const DashboardStackNavigator = () => {
   return (
     <Stack.Navigator
       initialRouteName="DashboardMain"
       screenOptions={{
-        headerShown: true, // Stack navigator header is shown by default
-        headerStyle: { backgroundColor: Colors.background }, // Example styling
-        headerTintColor: Colors.primary,
-        headerTitleStyle: { fontWeight: 'bold' },
-        headerBackTitleVisible: false, // Hide "Back" text on iOS
+        headerShown: true,
+        headerStyle: { backgroundColor: HEADER_BACKGROUND }, // Use defined hex color
+        headerTintColor: HEADER_TINT_COLOR, // Use defined hex color
+        headerTitleStyle: { fontWeight: 'bold' }, // Keep or adjust as needed
+        headerBackTitleVisible: false,
       }}
     >
       <Stack.Screen

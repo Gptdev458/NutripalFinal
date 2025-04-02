@@ -1,21 +1,20 @@
 import React, { useState } from 'react';
 import { View, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
-// Import Paper components and SafeAreaView
 import {
   TextInput as PaperTextInput,
   Button as PaperButton,
   Text as PaperText,
-  Title,
-  Subheading,
+  Text,
   HelperText,
   ActivityIndicator,
   Surface,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
-import { Colors } from '../constants/colors';
+import useSafeTheme from '../hooks/useSafeTheme';
 
 const SignUpScreen = ({ navigation }) => {
+  const theme = useSafeTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -46,15 +45,23 @@ const SignUpScreen = ({ navigation }) => {
     navigation.navigate('Login');
   };
 
+  const safeAreaStyle = [styles.safeArea, { backgroundColor: theme.colors.background }];
+  const contentStyle = [styles.content, { backgroundColor: theme.colors.surface }];
+  const titleStyle = [styles.title, { color: theme.colors.primary }];
+  const subtitleStyle = [styles.subtitle, { color: theme.colors.textSecondary }];
+  const loginPromptStyle = [styles.loginPrompt, { color: theme.colors.textSecondary }];
+  const loginLinkStyle = [styles.loginLink, { color: theme.colors.primary }];
+  const successTextStyle = [styles.successText, { color: theme.colors.success }];
+
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={safeAreaStyle}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.container}
       >
-        <Surface style={styles.content}>
-          <Title style={styles.title}>Create Account</Title>
-          <Subheading style={styles.subtitle}>Join NutriPal</Subheading>
+        <Surface style={contentStyle}>
+          <Text variant="headlineMedium" style={titleStyle}>Create Account</Text>
+          <Text variant="titleMedium" style={subtitleStyle}>Join NutriPal</Text>
 
           <HelperText type="error" visible={!!error} style={styles.errorText}>
             {error}
@@ -62,14 +69,13 @@ const SignUpScreen = ({ navigation }) => {
 
           {success ? (
             <View style={styles.successContainer}>
-              <PaperText style={styles.successText}>
+              <PaperText style={successTextStyle}>
                 Sign up successful! Please check your email for confirmation instructions.
               </PaperText>
               <PaperButton
                 mode="outlined"
                 onPress={navigateToLogin}
                 style={styles.button}
-                color={Colors.accent}
               >
                 Back to Login
               </PaperButton>
@@ -100,7 +106,7 @@ const SignUpScreen = ({ navigation }) => {
               />
 
               {loading ? (
-                <ActivityIndicator animating={true} color={Colors.accent} size="large" style={styles.loader} />
+                <ActivityIndicator animating={true} color={theme.colors.primary} size="large" style={styles.loader} />
               ) : (
                 <PaperButton
                   mode="contained"
@@ -108,16 +114,15 @@ const SignUpScreen = ({ navigation }) => {
                   disabled={loading}
                   style={styles.button}
                   labelStyle={styles.buttonLabel}
-                  color={Colors.accent}
                 >
                   Sign Up
                 </PaperButton>
               )}
 
               <View style={styles.loginContainer}>
-                <PaperText style={styles.loginPrompt}>Already have an account? </PaperText>
+                <PaperText style={loginPromptStyle}>Already have an account? </PaperText>
                 <TouchableOpacity onPress={navigateToLogin} disabled={loading}>
-                  <PaperText style={styles.loginLink}>Login</PaperText>
+                  <PaperText style={loginLinkStyle}>Login</PaperText>
                 </TouchableOpacity>
               </View>
             </>
@@ -131,7 +136,6 @@ const SignUpScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: Colors.background,
   },
   container: {
     flex: 1,
@@ -142,29 +146,22 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     borderRadius: 12,
     elevation: 4,
-    backgroundColor: Colors.background,
   },
   title: {
     textAlign: 'center',
-    fontSize: 32,
-    fontWeight: 'bold',
     marginBottom: 8,
-    color: Colors.primary,
   },
   subtitle: {
     textAlign: 'center',
     marginBottom: 25,
-    color: Colors.grey,
   },
   errorText: {
     marginBottom: 10,
     textAlign: 'center',
     fontSize: 14,
-    color: Colors.error,
   },
   input: {
     marginBottom: 15,
-    backgroundColor: Colors.background,
   },
   button: {
     marginTop: 10,
@@ -185,11 +182,9 @@ const styles = StyleSheet.create({
     marginTop: 25,
   },
   loginPrompt: {
-    color: Colors.grey,
     fontSize: 15,
   },
   loginLink: {
-    color: Colors.accent,
     fontWeight: 'bold',
     fontSize: 15,
   },
@@ -198,7 +193,6 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
   },
   successText: {
-    color: Colors.success,
     fontSize: 16,
     textAlign: 'center',
     marginBottom: 20,

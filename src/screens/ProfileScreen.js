@@ -11,7 +11,7 @@ import {
   TextInput as PaperTextInput,
   Button as PaperButton,
   ActivityIndicator,
-  Text as PaperText,
+  Text,
   Title,
   HelperText,
   Subheading,
@@ -23,8 +23,10 @@ import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { fetchUserProfile, updateUserProfile } from '../utils/profileUtils';
 import { Colors } from '../constants/colors';
+import useSafeTheme from '../hooks/useSafeTheme'; // Import useSafeTheme
 
 const ProfileScreen = () => {
+  const theme = useSafeTheme(); // Use the hook
   const { user } = useAuth();
   const navigation = useNavigation();
 
@@ -143,23 +145,23 @@ const ProfileScreen = () => {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <ActivityIndicator animating={true} color={Colors.primary} size="large" />
+      <SafeAreaView style={[styles.centered, { backgroundColor: theme.colors.background }]}>
+        <ActivityIndicator animating={true} color={theme.colors.primary} size="large" />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.background }]}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{ flex: 1 }}
+        style={styles.flex}
       >
         <ScrollView contentContainerStyle={styles.container}>
-          <Title style={styles.title}>Your Profile</Title>
-          <Subheading style={styles.subtitle}>
+          <Text variant="headlineSmall" style={[styles.title, { color: theme.colors.primary }]}>Your Profile</Text>
+          <Text variant="bodyMedium" style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
             This information helps in providing better recommendations.
-          </Subheading>
+          </Text>
 
           {error && <HelperText type="error" visible={!!error} style={styles.mainError}>{error}</HelperText>}
 
@@ -169,7 +171,7 @@ const ProfileScreen = () => {
             onChangeText={setAge}
             keyboardType="numeric"
             mode="outlined"
-            style={styles.input}
+            style={[styles.input, { backgroundColor: theme.colors.background }]}
             error={!!validationErrors.age}
           />
            <HelperText type="error" visible={!!validationErrors.age}>
@@ -182,7 +184,7 @@ const ProfileScreen = () => {
             onChangeText={setWeight}
             keyboardType="numeric"
             mode="outlined"
-            style={styles.input}
+            style={[styles.input, { backgroundColor: theme.colors.background }]}
              error={!!validationErrors.weight}
           />
             <HelperText type="error" visible={!!validationErrors.weight}>
@@ -195,27 +197,33 @@ const ProfileScreen = () => {
             onChangeText={setHeight}
             keyboardType="numeric"
             mode="outlined"
-            style={styles.input}
+            style={[styles.input, { backgroundColor: theme.colors.background }]}
             error={!!validationErrors.height}
           />
            <HelperText type="error" visible={!!validationErrors.height}>
              {validationErrors.height}
            </HelperText>
 
-          {/* Sex Picker */}
-          <PaperText style={styles.pickerLabel}>Sex</PaperText>
-           <Surface style={[styles.pickerSurface, validationErrors.sex ? styles.pickerErrorBorder : {}]} elevation={1}>
+          <Text style={[styles.pickerLabel, { color: theme.colors.textSecondary }]}>Sex</Text>
+           <Surface 
+             style={[
+               styles.pickerSurface, 
+               { backgroundColor: theme.colors.surfaceVariant },
+               validationErrors.sex ? { borderColor: theme.colors.error } : { borderColor: theme.colors.outline }
+             ]} 
+             elevation={1}
+           >
              <Picker
                 selectedValue={sex}
                 onValueChange={(itemValue) => setSex(itemValue)}
-                style={styles.picker}
-                prompt="Select Sex" // Android only prompt title
+                style={[styles.picker, { color: theme.colors.onSurfaceVariant }]}
+                dropdownIconColor={theme.colors.onSurfaceVariant}
+                prompt="Select Sex"
              >
-                <Picker.Item label="Select..." value="" enabled={false} style={styles.pickerPlaceholder} />
-                <Picker.Item label="Male" value="male" />
-                <Picker.Item label="Female" value="female" />
-                <Picker.Item label="Other" value="other" />
-                {/* <Picker.Item label="Prefer not to say" value="prefer_not_to_say" /> */}
+                <Picker.Item label="Select..." value="" enabled={false} style={[styles.pickerPlaceholder, { color: theme.colors.textSecondary }]} />
+                <Picker.Item label="Male" value="male" style={{ color: theme.colors.text }}/>
+                <Picker.Item label="Female" value="female" style={{ color: theme.colors.text }}/>
+                <Picker.Item label="Other" value="other" style={{ color: theme.colors.text }}/>
              </Picker>
             </Surface>
             <HelperText type="error" visible={!!validationErrors.sex}>
@@ -243,76 +251,59 @@ const ProfileScreen = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: Colors.background,
+  },
+  flex: {
+      flex: 1,
   },
   container: {
     flexGrow: 1,
     padding: 20,
-    justifyContent: 'center',
   },
-   centered: {
-     flex: 1,
-     justifyContent: 'center',
-     alignItems: 'center',
-     backgroundColor: Colors.background,
-   },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   title: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    marginBottom: 8,
     textAlign: 'center',
-    marginBottom: 10,
-    color: Colors.primary,
   },
   subtitle: {
+    marginBottom: 24,
     textAlign: 'center',
-    marginBottom: 20,
-    color: Colors.textSecondary,
   },
   input: {
-    marginBottom: 5, // Reduced margin as HelperText adds space
+    marginBottom: 4,
   },
   pickerLabel: {
-    fontSize: 16,
-    color: Colors.textSecondary, // Or Paper theme color
-    marginTop: 10,
-    marginBottom: 5,
-    marginLeft: 5,
+    fontSize: 14,
+    marginBottom: 4,
+    marginLeft: 4,
   },
   pickerSurface: {
-     borderRadius: 4, // Match TextInput border radius
-     borderWidth: 1,
-     borderColor: 'rgba(0, 0, 0, 0.2)', // Match inactive TextInput border
-     marginBottom: 5, // Reduced margin
-     backgroundColor: Colors.surface, // Match Paper background
-  },
-  pickerErrorBorder: {
-     borderColor: Colors.error, // Highlight border on error
+    borderWidth: 1,
+    borderRadius: 4,
+    marginBottom: 4,
   },
   picker: {
-    height: 50,
-    width: '100%',
-    // Add platform-specific styling if needed
-    color: Colors.text, // Ensure text color matches theme
+      height: 50,
+      width: '100%',
   },
   pickerPlaceholder: {
-      color: Colors.textSecondary, // Style placeholder differently
-      // fontSize: ... // Adjust if needed
   },
   saveButton: {
-    marginTop: 20,
+    marginTop: 24,
+  },
+  buttonContent: {
     paddingVertical: 8,
   },
-   buttonContent: {
-     height: 50, // Ensure consistent button height
-   },
-   buttonLabel: {
-     fontSize: 16,
-     fontWeight: 'bold',
-   },
+  buttonLabel: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
   mainError: {
+      marginBottom: 16,
       textAlign: 'center',
-      marginBottom: 15,
-      fontSize: 14,
   }
 });
 
