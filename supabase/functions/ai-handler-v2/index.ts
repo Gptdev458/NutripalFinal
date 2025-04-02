@@ -16,10 +16,10 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Define AI Persona
-const AI_PERSONA = "You are NutriPal, an encouraging, knowledgeable, and friendly AI nutrition coach. Be supportive, conversational, and concise in your responses.";
+// Define AI Persona with updated instructions for follow-ups
+const AI_PERSONA = "You are NutriPal, an encouraging, knowledgeable, and friendly AI nutrition coach. Be supportive, conversational, and concise in your responses. When completing a successful logging action or answering a question helpfully, end your response with a brief, encouraging, natural-sounding follow-up like 'Keep up the great work!' or 'Anything else today?'.";
 
-// Define Master Nutrient Keys
+// Define Master Nutrient Keys Directly
 const MASTER_NUTRIENT_KEYS = [
   "calories", "water_g", "protein_g", "fat_total_g", "carbs_g",
   "fat_saturated_g", "fat_polyunsaturated_g", "fat_monounsaturated_g", "fat_trans_g",
@@ -29,6 +29,120 @@ const MASTER_NUTRIENT_KEYS = [
   "vitamin_d_mcg", "vitamin_e_mg", "vitamin_k_mcg", "vitamin_c_mg", "thiamin_mg",
   "riboflavin_mg", "niacin_mg", "pantothenic_acid_mg", "vitamin_b6_mg",
   "biotin_mcg", "folate_mcg_dfe", "vitamin_b12_mcg"
+];
+
+// Define available tools for OpenAI function calling
+const availableTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+    {
+        type: 'function',
+        function: {
+            name: 'logGenericFoodItem',
+            description: "Logs a single, simple food item (e.g., 'an apple', 'coffee with milk', 'slice of cheese') or a pre-packaged/standard meal where ingredients aren't needed (e.g., 'McDonalds Big Mac', 'Amy's frozen burrito' IF specified like that). Use this ONLY when the item is clearly simple OR explicitly stated as standard/pre-packaged. **DO NOT use** for dishes that typically require multiple ingredients (like 'fried rice', 'soup', 'salad', 'pasta', 'smoothie', 'casserole') UNLESS the user provides specific context indicating it's standard/pre-made OR you are explicitly told to log it as a generic item after asking for clarification." ,
+            parameters: {
+                type: 'object',
+                properties: {
+                    food_description: {
+                        type: 'string',
+                        description: "The user's description of the food they ate, including quantity if provided. E.g., 'a bowl of oatmeal with berries', '2 slices of toast with peanut butter'."
+                    }
+                },
+                required: ['food_description']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'findSavedRecipeByName',
+            description: "Searches the user's saved recipes based on a name or description provided by the user. Use this if the user mentions logging something they might have saved previously (e.g., 'log my morning smoothie', 'add the chili recipe').",
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: {
+                        type: 'string',
+                        description: "The name or keywords from the user's message to search for in their saved recipes. E.g., 'morning smoothie', 'chili'."
+                    }
+                },
+                required: ['query']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'analyzeRecipeIngredients',
+            description: "Analyzes the ingredients of a recipe to estimate nutrition. Use this tool when: 1) The user explicitly provides ingredients for a dish. 2) The user mentions making a dish themselves (e.g., 'my homemade soup'). 3) The user confirms they want to analyze a dish that typically requires multiple ingredients (like 'fried rice', 'soup', 'salad', 'pasta', 'smoothie') after being asked for clarification. Requires the recipe name and the list of ingredients." ,
+            parameters: {
+                type: 'object',
+                properties: {
+                    recipe_name: {
+                        type: 'string',
+                        description: "The name the user gives the recipe, or a suggested name like 'Custom Recipe' if they don't provide one."
+                    },
+                    ingredients_list: {
+                        type: 'string',
+                        description: "The full list of ingredients provided by the user. E.g., '1 tbsp olive oil, 1 onion chopped...'."
+                    }
+                },
+                required: ['recipe_name', 'ingredients_list']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'clarifyDishType',
+            description: "Use this function when the user mentions a dish name that typically involves multiple ingredients (e.g., 'fried rice', 'soup', 'salad', 'pasta', 'smoothie', 'curry') BUT **does not** provide ingredients or specify if it's homemade/standard/pre-packaged. This tool asks the user for clarification.",
+            parameters: {
+                type: 'object',
+                properties: {
+                    dish_name: {
+                        type: 'string',
+                        description: "The ambiguous dish name mentioned by the user (e.g., 'fried rice', 'vegetable soup').",
+                    },
+                },
+                required: ['dish_name'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'logExistingSavedRecipe',
+            description: "Logs a specific saved recipe identified by its ID to the user's food diary. This function is typically called *after* `findSavedRecipeByName` has confirmed a specific recipe and the user agrees to log it.",
+            parameters: {
+                type: 'object',
+                properties: {
+                    recipe_id: {
+                        type: 'string', // Assuming UUIDs are handled as strings here
+                        description: "The unique identifier (UUID) of the user's saved recipe."
+                    },
+                    recipe_name: {
+                        type: 'string',
+                        description: "The name of the saved recipe being logged, used for confirmation messages."
+                    }
+                },
+                required: ['recipe_id', 'recipe_name']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'answerGeneralQuestion',
+            description: "Provides information or answers general health, nutrition, or app usage questions not related to logging specific foods or recipes. Use for queries like 'how much protein should I eat?', 'is avocado healthy?', 'how do I set goals?'.",
+            parameters: {
+                type: 'object',
+                properties: {
+                    question: {
+                        type: 'string',
+                        description: "The user's question."
+                    }
+                },
+                required: ['question']
+            }
+        }
+    }
 ];
 
 // Recipe detection constants
@@ -48,830 +162,940 @@ const recipeDishNames = [
   'eggs benedict', 'shakshuka', 'parfait', 'oatmeal with toppings',
   'pancakes', 'waffles', 'french toast', 'cake', 'muffins', 'cookies',
   'brownies', 'scones', 'bread'
-  // Add ~10 more diverse examples (e.g., specific salads, soups, international dishes)
 ];
 
-// Helper function to check if a message likely refers to a complex dish
-function isPotentiallyComplex(message: string, potentialName: string): boolean {
-    const lowerMessage = message.toLowerCase();
-    // Ensure potentialName is a string before calling toLowerCase
-    const lowerName = typeof potentialName === 'string' ? potentialName.toLowerCase() : '';
+// --- HELPER FUNCTIONS & TOOL EXECUTION ---
 
-    // Check 1: Look for keywords in the full original message
-    if (recipeKeywords.some(keyword => lowerMessage.includes(keyword))) {
-        console.log(`isPotentiallyComplex: Found keyword match in message: "${lowerMessage}"`);
-        return true;
-    }
-
-    // Check 2: Look for complex dish names within the extracted potential name
-    if (recipeDishNames.some(dishName => lowerName.includes(dishName))) {
-         console.log(`isPotentiallyComplex: Found dish name match for name: "${lowerName}"`);
-         return true;
-    }
-
-    console.log(`isPotentiallyComplex: No keyword or dish name match for message: "${lowerMessage}", name: "${lowerName}"`);
-    return false;
+// Define a more specific return type for tool execution results
+type ToolResult = {
+    status: 'success' | 'error';
+    message?: string; // Optional error message or success confirmation message
+    [key: string]: any; // Allow other properties like logged_recipe_name, analysis, etc.
 }
 
+/** Filters nutrition data based on user's tracked goals */
+async function filterNutritionDataForUserGoals(nutritionData: Record<string, any>, userId: string, supabaseClient: SupabaseClient): Promise<Record<string, any>> {
+    console.log(`Filtering nutrition data for user ${userId}`);
+    try {
+        const { data: goalsData, error: goalsError } = await supabaseClient
+          .from('user_goals')
+          .select('nutrient')
+          .eq('user_id', userId);
 
-// Helper function for random follow-up prompts
-const getRandomFollowUp = (): string => {
-  const followUps = [
-    " Anything else I can help you log?",
-    " How are you feeling about your nutrition goals today?",
-    " What else did you eat?",
-    " Keep up the great work!",
-    ""
-  ];
-  return followUps[Math.floor(Math.random() * followUps.length)];
-};
+        if (goalsError) {
+            console.warn(`Error fetching user goals for filtering: ${goalsError.message}`);
+            return { ...nutritionData }; // Return original on error
+        }
+        if (!goalsData || goalsData.length === 0) {
+            console.log(`No goals found for user ${userId}, returning primary nutrients.`);
+            // Return only essential nutrients if no goals set
+            const essentialKeys = ['calories', 'protein_g', 'fat_total_g', 'carbs_g', 'fiber_g', 'sugar_g', 'sodium_mg'];
+            const filtered: Record<string, any> = {};
+             essentialKeys.forEach(key => {
+                // Check if key exists and value is not null/undefined before adding
+                if (nutritionData[key] !== null && nutritionData[key] !== undefined) {
+                    filtered[key] = nutritionData[key];
+                }
+            });
+            return filtered;
+        }
 
-// Helper Function for OpenAI Recommendations
-async function getOpenAiRecommendations(profileData: any, openai: OpenAI): Promise<any> {
-  const { age, weight_kg, height_cm, sex } = profileData;
-  const recommendationPrompt = `Calculate recommended daily nutritional goals based on the following user profile:\n- Age: ${age} years\n- Weight: ${weight_kg} kg\n- Height: ${height_cm} cm\n- Sex: ${sex}\n\nProvide recommendations for the following nutrients: ${MASTER_NUTRIENT_KEYS.join(", ")}.\n\nRespond ONLY with a single JSON object where keys are the exact nutrient identifiers provided (e.g., "calories", "protein_g") and values are the recommended daily amounts as numbers. If a recommendation cannot be determined, use null. Do not include any other text, explanation, or units in the JSON values or keys.`;
+        const trackedNutrientKeys = new Set(goalsData.map(goal => goal.nutrient));
+        trackedNutrientKeys.add('calories'); // Always include calories
 
-  const openaiResponse = await openai.chat.completions.create({
-    model: "gpt-3.5-turbo",
-    messages: [{ role: "system", content: recommendationPrompt }],
-    temperature: 0.2,
-    response_format: { type: "json_object" }
-  });
+        const filteredNutritionData: Record<string, any> = {};
+        trackedNutrientKeys.forEach(key => {
+            // Check if key exists and value is not null/undefined before adding
+            if (nutritionData[key] !== null && nutritionData[key] !== undefined) {
+                 filteredNutritionData[key] = nutritionData[key];
+            }
+        });
+        console.log(`Filtered to ${Object.keys(filteredNutritionData).length} nutrients based on goals.`);
+        return filteredNutritionData;
 
-  const aiResponseContent = openaiResponse.choices[0].message?.content || '{}';
-  let recommendations;
-  try {
-    recommendations = JSON.parse(aiResponseContent);
-    if (typeof recommendations !== 'object' || recommendations === null) throw new Error("Invalid format from AI.");
-    MASTER_NUTRIENT_KEYS.forEach(key => {
-      if (!(key in recommendations)) {
-        console.warn(`Nutrient key ${key} missing from AI recommendation response, setting to null.`);
-        recommendations[key] = null;
-      } else if (typeof recommendations[key] !== 'number' && recommendations[key] !== null) {
-        console.warn(`Nutrient key ${key} has non-numeric value ${recommendations[key]} in recommendation, setting to null.`);
-        recommendations[key] = null;
-      }
-    });
-  } catch (jsonError) {
-    console.error("Failed to parse recommendations JSON:", jsonError, "Raw content:", aiResponseContent);
-    throw new Error(`Failed to parse nutrition recommendations: ${jsonError.message}`);
-  }
-  return recommendations;
+    } catch (error) {
+        console.error(`Unexpected error in filterNutritionDataForUserGoals: ${error instanceof Error ? error.message : String(error)}`);
+        return { ...nutritionData }; // Return original on unexpected error
+    }
 }
 
+/** Logs a recipe already saved by the user (Tool: logExistingSavedRecipe) */
+async function executeLogExistingSavedRecipe(recipeId: string, recipeName: string, userId: string, supabaseClient: SupabaseClient): Promise<ToolResult> {
+    console.log(`Executing tool: logExistingSavedRecipe for recipe ID ${recipeId} ('${recipeName}') for user ${userId}`);
+    try {
+        // Fetch recipe details including nutrient columns
+        const selectColumns = 'recipe_name, ' + MASTER_NUTRIENT_KEYS.join(', ');
+        const { data: recipeDetails, error: fetchError } = await supabaseClient
+            .from('user_recipes')
+            .select(selectColumns)
+            .eq('id', recipeId)
+            .eq('user_id', userId) // Ensure user owns recipe
+            .single();
 
-// Main request handler
+        if (fetchError || !recipeDetails) {
+            console.error("Error fetching recipe details for logging:", fetchError?.message);
+            return { status: 'error', message: `Could not find your saved recipe details for '${recipeName}' (ID: ${recipeId}). Maybe it was deleted?` };
+        }
+
+        // Prepare nutrition data from fetched details
+        const nutritionEstimateFromRecipe = { ...recipeDetails };
+        const actualRecipeName = nutritionEstimateFromRecipe.recipe_name; // Use the name from DB for logging consistency
+        delete nutritionEstimateFromRecipe.recipe_name; // Remove non-nutrient field before filtering
+
+        // Filter nutrients based on user goals
+        const nutritionToLog = await filterNutritionDataForUserGoals(nutritionEstimateFromRecipe, userId, supabaseClient);
+
+        // Prepare the food log entry using the actual name from the database
+        const foodLogEntry = {
+            user_id: userId,
+            food_name: actualRecipeName, // Use name from DB
+            timestamp: new Date().toISOString(),
+            source: 'ai_tool_recipe_saved', // Updated source
+            recipe_id: recipeId,
+            ...nutritionToLog, // Spread filtered nutrient values
+            created_at: new Date().toISOString()
+        };
+
+        // Insert into food_log
+        const { error: logError } = await supabaseClient.from('food_log').insert(foodLogEntry);
+        if (logError) {
+            console.error(`DB Error logging saved recipe ${recipeId}:`, logError.message);
+            throw new Error(`Failed to log saved recipe in database: ${logError.message}`);
+        }
+
+        console.log(`Successfully logged saved recipe: '${actualRecipeName}' (requested as '${recipeName}')`);
+        // Return the name provided in the tool call for OpenAI's confirmation message
+        return { status: 'success', logged_recipe_name: recipeName };
+
+    } catch (error) {
+        console.error(`Error in executeLogExistingSavedRecipe for recipe ID ${recipeId}:`, error);
+        // Use the recipeName provided by the tool call in the error message
+        return { status: 'error', message: `Sorry, I couldn't log the saved recipe '${recipeName}'. ${error instanceof Error ? error.message : String(error)}` };
+    }
+}
+
+/** Estimates nutrition for a generic item and logs it (Tool: logGenericFoodItem) */
+async function executeLogGenericFoodItem(foodDescription: string, userId: string, supabaseClient: SupabaseClient, openai: OpenAI): Promise<ToolResult> {
+    console.log(`Executing tool: logGenericFoodItem for '${foodDescription}' for user ${userId}`);
+    const cleanedFoodDescription = (foodDescription || "Food item").trim();
+    if (!cleanedFoodDescription) {
+         return { status: 'error', message: 'Food description cannot be empty.' };
+    }
+
+    try {
+        // 1. Call OpenAI for nutrition estimate ONLY
+        console.log(`Calling OpenAI for nutrition estimation of: "${cleanedFoodDescription}"`);
+        // Simplified prompt focusing only on nutrition JSON based on description
+        const foodPrompt = `Estimate nutritional content for "${cleanedFoodDescription}". Respond ONLY with JSON: { ${MASTER_NUTRIENT_KEYS.map(k => `"${k}": number|null`).join(", ")} }. Use null if unknown. No extra text.`;
+        const foodResponse = await openai.chat.completions.create({
+            model: "gpt-4o-mini", // Use cheaper/faster model for estimation
+            messages: [{ role: "system", content: foodPrompt }],
+            temperature: 0.2, // Lower temperature for more deterministic nutrition estimates
+            response_format: { type: "json_object" }
+        });
+        const foodResponseContent = foodResponse.choices[0].message?.content || '';
+        console.log("Raw OpenAI nutrition response:", foodResponseContent);
+
+        let parsedNutrition: Record<string, any> = {};
+        try {
+            parsedNutrition = JSON.parse(foodResponseContent);
+        } catch (parseError) {
+            console.error("Failed to parse JSON from OpenAI nutrition response:", foodResponseContent, parseError);
+            throw new Error("AI response for nutrition was not valid JSON.");
+        }
+
+        // 2. Filter Nutrition Data
+        const nutritionToLog = await filterNutritionDataForUserGoals(parsedNutrition, userId, supabaseClient);
+
+        // 3. Prepare Log Entry - Use the cleaned foodDescription as the primary name
+        const foodLogEntry = {
+          user_id: userId,
+          food_name: cleanedFoodDescription, // Use the description provided to the tool
+          timestamp: new Date().toISOString(),
+          source: 'ai_tool_item', // Updated source
+          recipe_id: null,
+          ...nutritionToLog,
+          created_at: new Date().toISOString()
+        };
+
+        // 4. Insert into food_log
+        console.log(`Attempting to insert generic food log entry for: "${cleanedFoodDescription}"`);
+        const { data: newLogEntry, error: logError } = await supabaseClient
+          .from('food_log')
+          .insert(foodLogEntry)
+          .select('id') // Select only ID back
+          .single();
+
+        if (logError || !newLogEntry) {
+          console.error("Supabase DB insert error or no data returned for generic item:", logError?.message);
+          throw new Error(`DB Error: ${logError?.message || 'Failed to retrieve log ID after insert'}`);
+        }
+
+        console.log(`Generic food log entry inserted successfully. ID: ${newLogEntry.id}`);
+        // Return success status and the original description logged
+        return { status: 'success', logged_item_description: cleanedFoodDescription };
+
+     } catch (error) {
+          console.error(`Error in executeLogGenericFoodItem for "${cleanedFoodDescription}":`, error);
+           // Return error status and message
+           return { status: 'error', message: `Sorry, I had trouble logging '${cleanedFoodDescription}'. ${error instanceof Error ? error.message : String(error)}` };
+     }
+}
+
+/** Stores the conversation turn in the database */
+async function storeConversation(userId: string, userMessage: string | null, aiResponse: any, supabaseClient: SupabaseClient) {
+    // Define types that should NOT be stored as final turns
+    const intermediateResponseTypes = ['recipe_analysis_prompt', 'saved_recipe_confirmation_prompt', 'clarification_needed_recipe'];
+
+    const isFinalResponseType = aiResponse?.response_type && !intermediateResponseTypes.includes(aiResponse.response_type);
+
+    // Skip storage if conditions aren't met
+    if (!userMessage || !aiResponse?.message || aiResponse.status !== 'success' || !isFinalResponseType) {
+        console.log(`Skipping conversation storage (No user msg: ${!userMessage}, No AI msg: ${!aiResponse?.message}, AI Status: ${aiResponse?.status}, Response Type: ${aiResponse.response_type})`);
+        return;
+    }
+    console.log("Storing final conversation turn.");
+    try {
+        const timestamp = new Date().toISOString();
+        const inserts = [
+            { user_id: userId, message: userMessage, sender: 'user', created_at: timestamp },
+            {
+                user_id: userId,
+                message: aiResponse.message,
+                sender: 'ai',
+                // Ensure response_metadata exists, default to null if response_type is missing
+                response_metadata: { response_type: aiResponse.response_type || null },
+                created_at: timestamp
+            }
+        ];
+        // Ensure table name 'chat_messages' is correct
+        const { error } = await supabaseClient.from('chat_messages').insert(inserts);
+        if (error) {
+            // --- MODIFIED ERROR LOGGING ---
+            console.error("DB Error storing conversation turn (Full Error Object):", JSON.stringify(error, null, 2));
+            // console.error("DB Error storing conversation turn:", error.message); // <-- Original line
+        } else {
+            console.log("Conversation turn stored successfully.");
+        }
+    } catch (dbError) {
+        // Log the caught exception as well
+        console.error("Exception during conversation storage:", JSON.stringify(dbError, null, 2));
+    }
+}
+
+/** Finds saved recipes by name (Tool: findSavedRecipeByName) */
+async function executeFindSavedRecipeByName(query: string, userId: string, supabaseClient: SupabaseClient): Promise<ToolResult> {
+    console.log(`Executing tool: findSavedRecipeByName for query '${query}' for user ${userId}`);
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) {
+        return { status: 'error', message: 'Search query cannot be empty.' };
+    }
+
+    try {
+        const { data: matches, error: fetchError } = await supabaseClient
+            .from('user_recipes')
+            .select('id, recipe_name') // Only select necessary fields
+            .eq('user_id', userId)
+            .ilike('recipe_name', `%${trimmedQuery}%`) // Case-insensitive fuzzy search
+            .limit(5); // Limit the number of results
+
+        if (fetchError) {
+            console.error(`DB Error searching recipes for query '${trimmedQuery}':`, fetchError.message);
+            throw new Error(`Database error during recipe search: ${fetchError.message}`);
+        }
+
+        if (!matches || matches.length === 0) {
+            console.log(`No saved recipes found matching '${trimmedQuery}'.`);
+            return { status: 'success', found: false, matches: [] };
+        }
+
+        console.log(`Found ${matches.length} recipe(s) matching '${trimmedQuery}'.`);
+        return {
+            status: 'success',
+            found: true,
+            count: matches.length,
+            matches: matches // Array of {id, recipe_name}
+        };
+
+    } catch (error) {
+        console.error(`Error in executeFindSavedRecipeByName for query '${trimmedQuery}':`, error);
+        return { status: 'error', message: `Sorry, I couldn't search your recipes right now. ${error instanceof Error ? error.message : String(error)}` };
+    }
+}
+
+/** Analyzes ingredients to estimate nutrition (Tool: analyzeRecipeIngredients) */
+async function executeAnalyzeRecipeIngredients(recipeName: string, ingredientsList: string, userId: string, supabaseClient: SupabaseClient, openai: OpenAI): Promise<ToolResult> {
+    console.log(`Executing tool: analyzeRecipeIngredients for recipe '${recipeName}' by user ${userId}`);
+    const cleanedRecipeName = (recipeName || 'Custom Recipe').trim();
+    const cleanedIngredients = (ingredientsList || '').trim();
+
+    if (!cleanedIngredients) {
+        return { status: 'error', message: 'Ingredients list cannot be empty for analysis.' };
+    }
+
+    try {
+        // 1. Call OpenAI for nutrition estimate
+        console.log(`Calling OpenAI for recipe analysis: "${cleanedRecipeName}", Ingredients: "${cleanedIngredients.substring(0, 100)}..."`); // Log truncated ingredients
+        const nutrientPrompt = `User recipe name: "${cleanedRecipeName}", Ingredients: "${cleanedIngredients}". Estimate nutritional content. Respond ONLY with valid JSON format like this: {"recipe_name": "${cleanedRecipeName}", "description": "User provided ingredients: ${cleanedIngredients.substring(0, 50)}...", ${MASTER_NUTRIENT_KEYS.map(k => `"${k}": number|null`).join(", ")}}. Use null for unknown values. Ensure the output is strictly JSON, with no surrounding text or explanations.`;
+
+        const nutrientResponse = await openai.chat.completions.create({
+            model: "gpt-4o-mini", // Use a capable model for analysis
+            messages: [{ role: "system", content: nutrientPrompt }],
+            temperature: 0.2,
+            response_format: { type: "json_object" }
+        });
+
+        const nutritionContent = nutrientResponse.choices[0].message?.content || '';
+        console.log("Raw OpenAI recipe analysis response:", nutritionContent);
+
+        let parsedNutrition: Record<string, any> = {};
+        try {
+            parsedNutrition = JSON.parse(nutritionContent);
+        } catch (parseError) {
+            console.error("Failed to parse JSON from OpenAI recipe analysis:", nutritionContent, parseError);
+            throw new Error("AI response for recipe analysis was not valid JSON.");
+        }
+
+        // Ensure essential keys exist, even if null
+        const finalNutritionEstimate: Record<string, any> = {};
+        MASTER_NUTRIENT_KEYS.forEach(key => {
+             finalNutritionEstimate[key] = parsedNutrition[key] === undefined || parsedNutrition[key] === null ? null : parsedNutrition[key];
+        });
+
+        // 2. Return success with analysis data, requiring confirmation
+        const analysisResult = {
+            recipe_name: parsedNutrition.recipe_name || cleanedRecipeName, // Prefer AI's interpreted name or fall back
+            description: parsedNutrition.description || `Ingredients: ${cleanedIngredients.substring(0, 100)}...`, // Prefer AI description or fall back
+            nutrition_estimate: finalNutritionEstimate // The processed nutrition object
+        };
+
+        console.log(`Recipe analysis successful for '${cleanedRecipeName}'. Ready for user confirmation.`);
+        return {
+            status: 'success',
+            confirmation_needed: true, // Signal to OpenAI to ask user to save/log
+            analysis: analysisResult
+        };
+
+    } catch (error) {
+        console.error(`Error in executeAnalyzeRecipeIngredients for recipe '${cleanedRecipeName}':`, error);
+        return { status: 'error', message: `Sorry, I couldn't analyze the recipe '${cleanedRecipeName}'. ${error instanceof Error ? error.message : String(error)}` };
+    }
+}
+
+/** Answers a general question (Tool: answerGeneralQuestion) */
+async function executeAnswerGeneralQuestion(question: string, userId: string, supabaseClient: SupabaseClient, openai: OpenAI): Promise<ToolResult> {
+    console.log(`Executing tool: answerGeneralQuestion for user ${userId}. Question: "${question}"`);
+    const cleanedQuestion = (question || '').trim();
+
+    if (!cleanedQuestion) {
+        return { status: 'error', message: 'Question cannot be empty.' };
+    }
+
+    try {
+        // 1. (Optional) Fetch context - e.g., User Goals
+        let contextMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+        try {
+            const { data: goals, error: goalsError } = await supabaseClient
+                .from('user_goals')
+                .select('nutrient, target_value, unit')
+                .eq('user_id', userId);
+
+            if (goalsError) {
+                console.warn("Could not fetch user goals for context:", goalsError.message);
+            } else if (goals && goals.length > 0) {
+                const goalSummary = goals.map(g => `${g.nutrient}: ${g.target_value}${g.unit || ''}`).join(', ');
+                contextMessages.push({
+                    role: 'system',
+                    content: `User's current goals (for context, if relevant): ${goalSummary}`
+                });
+                console.log("Added user goals context to prompt.");
+            }
+        } catch (contextError) {
+            console.warn("Error fetching context for question:", contextError);
+        }
+
+        // 2. Construct messages for OpenAI
+        const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+            { role: "system", content: AI_PERSONA },
+            ...contextMessages, // Add context if fetched
+            { role: "user", content: cleanedQuestion }
+        ];
+
+        // 3. Call OpenAI for a direct answer (no tools needed here)
+        console.log("Calling OpenAI for general question answer...");
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o-mini", // Good balance of cost and capability
+            messages: messages,
+            temperature: 0.7, // Allow more conversational creativity
+            // No 'tools' or 'tool_choice' specified
+        });
+
+        const answerContent = response.choices[0].message?.content || "Sorry, I couldn't formulate a response to that question.";
+        console.log("Received answer from OpenAI.");
+
+        return { status: 'success', answer: answerContent };
+
+    } catch (error) {
+        console.error(`Error in executeAnswerGeneralQuestion for question "${cleanedQuestion}":`, error);
+        return { status: 'error', message: `Sorry, I encountered an error trying to answer your question. ${error instanceof Error ? error.message : String(error)}` };
+    }
+}
+
+/** Saves a newly analyzed recipe and logs it (Internal Helper) */
+async function saveAndLogRecipe(analysisData: any, userId: string, supabaseClient: SupabaseClient): Promise<ToolResult> {
+    console.log(`Internal Helper: saveAndLogRecipe for '${analysisData?.recipe_name}' by user ${userId}`);
+    if (!analysisData || !analysisData.recipe_name || !analysisData.nutrition_estimate) {
+        console.error("SaveAndLog: Invalid analysisData provided.");
+        return { status: 'error', message: 'Missing required recipe data for saving and logging.' };
+    }
+
+    const { recipe_name, description, nutrition_estimate } = analysisData;
+    const cleanedRecipeName = recipe_name.trim();
+    let newRecipeId: string | null = null;
+
+    try {
+        // 1. Save to user_recipes
+        const recipeToSave: Record<string, any> = {
+            user_id: userId,
+            recipe_name: cleanedRecipeName,
+            description: description || '', // Use provided description or empty string
+            created_at: new Date().toISOString(),
+        };
+        // Add all nutrient keys from the estimate
+        MASTER_NUTRIENT_KEYS.forEach(key => {
+             recipeToSave[key] = nutrition_estimate[key] === undefined ? null : nutrition_estimate[key];
+        });
+
+        console.log(`Saving recipe '${cleanedRecipeName}' to user_recipes.`);
+        const { data: savedRecipe, error: saveError } = await supabaseClient
+            .from('user_recipes')
+            .insert(recipeToSave)
+            .select('id') // Select the ID of the newly inserted row
+            .single();
+
+        if (saveError || !savedRecipe?.id) {
+            console.error(`DB Error saving recipe '${cleanedRecipeName}':`, saveError?.message);
+            throw new Error(`Failed to save recipe to database: ${saveError?.message || 'No ID returned'}`);
+        }
+        newRecipeId = savedRecipe.id;
+        console.log(`Recipe saved successfully. ID: ${newRecipeId}`);
+
+        // 2. Filter nutrition for logging
+        const nutritionToLog = await filterNutritionDataForUserGoals(nutrition_estimate, userId, supabaseClient);
+
+        // 3. Log to food_log
+        const foodLogEntry = {
+            user_id: userId,
+            food_name: cleanedRecipeName,
+            timestamp: new Date().toISOString(),
+            source: 'ai_tool_recipe_saved', // Source indicating AI tool -> saved recipe -> logged
+            recipe_id: newRecipeId, // Link to the newly saved recipe
+            ...nutritionToLog,
+            created_at: new Date().toISOString()
+        };
+
+        console.log(`Logging saved recipe '${cleanedRecipeName}' (ID: ${newRecipeId}) to food_log.`);
+        const { error: logError } = await supabaseClient.from('food_log').insert(foodLogEntry);
+
+        if (logError) {
+            console.error(`DB Error logging recipe '${cleanedRecipeName}' after saving:`, logError.message);
+            // Consider if we should attempt to roll back the recipe save? For now, report failure.
+            throw new Error(`Recipe saved (ID: ${newRecipeId}) but failed to log it: ${logError.message}`);
+        }
+
+        console.log(`Recipe '${cleanedRecipeName}' saved and logged successfully.`);
+        return { status: 'success', message: `Okay, I've saved the recipe "${cleanedRecipeName}" and logged it for you.` };
+
+    } catch (error) {
+        console.error(`Error in saveAndLogRecipe for '${cleanedRecipeName}':`, error);
+        // Provide a more specific error message if possible
+        const errorMessage = newRecipeId
+            ? `I managed to save the recipe "${cleanedRecipeName}" (ID: ${newRecipeId}), but couldn't log it. ${error instanceof Error ? error.message : String(error)}`
+            : `Sorry, I couldn't save and log the recipe "${cleanedRecipeName}". ${error instanceof Error ? error.message : String(error)}`;
+        return { status: 'error', message: errorMessage };
+    }
+}
+
+/** Logs a newly analyzed recipe without saving it (Internal Helper) */
+async function logOnlyAnalyzedRecipe(analysisData: any, userId: string, supabaseClient: SupabaseClient): Promise<ToolResult> {
+    console.log(`Internal Helper: logOnlyAnalyzedRecipe for '${analysisData?.recipe_name}' by user ${userId}`);
+     if (!analysisData || !analysisData.recipe_name || !analysisData.nutrition_estimate) {
+        console.error("LogOnly: Invalid analysisData provided.");
+        return { status: 'error', message: 'Missing required recipe data for logging.' };
+    }
+
+    const { recipe_name, nutrition_estimate } = analysisData;
+    const cleanedRecipeName = recipe_name.trim();
+
+    try {
+        // 1. Filter nutrition for logging
+        const nutritionToLog = await filterNutritionDataForUserGoals(nutrition_estimate, userId, supabaseClient);
+
+        // 2. Prepare food_log entry
+        const foodLogEntry = {
+            user_id: userId,
+            food_name: cleanedRecipeName,
+            timestamp: new Date().toISOString(),
+            source: 'ai_tool_recipe_logged', // Source indicating AI tool -> logged only
+            recipe_id: null, // Not linked to a saved recipe
+            ...nutritionToLog,
+            created_at: new Date().toISOString()
+        };
+
+        // 3. Insert into food_log
+        console.log(`Logging analyzed recipe '${cleanedRecipeName}' (not saved) to food_log.`);
+        const { error: logError } = await supabaseClient.from('food_log').insert(foodLogEntry);
+
+        if (logError) {
+            console.error(`DB Error logging analyzed recipe '${cleanedRecipeName}':`, logError.message);
+            throw new Error(`Failed to log recipe in database: ${logError.message}`);
+        }
+
+        console.log(`Analyzed recipe '${cleanedRecipeName}' logged successfully (without saving).`);
+        return { status: 'success', message: `Okay, I've logged "${cleanedRecipeName}" for today without saving it to your recipes.` };
+
+    } catch (error) {
+        console.error(`Error in logOnlyAnalyzedRecipe for '${cleanedRecipeName}':`, error);
+        return { status: 'error', message: `Sorry, I couldn't log the recipe "${cleanedRecipeName}". ${error instanceof Error ? error.message : String(error)}` };
+    }
+}
+
+// --- End Helper Functions & Tool Execution ---
+
+// --- Frontend Guidance Comments ---
+/*
+Response Structure:
+{
+  status: 'success' | 'error',
+  message: string,                  // The primary text to display to the user in the chat.
+  response_type: string,            // Helps the frontend decide UI actions (see list below).
+  pending_action?: { ... },         // Included when AI needs user confirmation.
+  context_for_reply?: { ... }       // Included for saved recipe confirmation prompt.
+}
+
+Possible `response_type` values:
+- item_logged: Generic item logged successfully.
+- saved_recipe_found_multiple: Multiple saved recipes found, asking user to clarify.
+- saved_recipe_confirmation_prompt: Exactly one saved recipe found, asking user to confirm logging. (Includes `context_for_reply: { recipe_id, recipe_name }`)
+- saved_recipe_logged: User confirmed logging a found saved recipe.
+- recipe_analysis_prompt: Recipe analyzed, asking user to Save&Log/LogOnly/Cancel. (Includes `pending_action: { type: 'log_analyzed_recipe', analysis: {...} }`)
+- recipe_saved_logged: User confirmed Save&Log for analyzed recipe.
+- recipe_logged_only: User confirmed LogOnly for analyzed recipe.
+- answer_provided: AI answered a general question.
+- clarification_needed_recipe: AI needs user to clarify if a dish is homemade/standard. (Includes `context_for_reply: { awaiting_clarification_for: dish_name }`)
+- clarification_needed: General AI request for more information.
+- action_cancelled: User cancelled a multi-step action.
+- error_database, error_openai, error_tool_execution, error_unknown, error_parsing_args, error_auth, error_config, error_request: Various error types.
+
+Client Handling:
+- `saved_recipe_confirmation_prompt`: Show `message`. Provide button/action to send next request with `action: 'confirm_log_saved_recipe'` and the received `context_for_reply` data included in the *new* request's `context` field.
+- `recipe_analysis_prompt`: Show `message`. Provide buttons/actions for 'Save & Log', 'Log Only', 'Cancel'. Send user choice as next `message`, including the original `pending_action` object in the *new* request's `context.pending_action` field.
+- `clarification_needed_recipe`: Show `message`. User response will be sent as the next `message`. Include the received `context_for_reply` in the *new* request's `context` field to give OpenAI context about what was being clarified.
+- Other success types: Display `message`.
+- Error types: Display `message` as an error.
+*/
+// --- End Frontend Guidance ---
+
+// =================================================================
+// --- Main Request Handler ---
+// =================================================================
 Deno.serve(async (req: Request) => {
+  // -----------------------------------------------------------------
+  // --- 1. Initialization & Request Parsing ---
+  // -----------------------------------------------------------------
   // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: CORS_HEADERS }); // Semicolon already present
+    return new Response("ok", { headers: CORS_HEADERS });
   }
 
   let userId: string;
   let supabaseClient: SupabaseClient;
-  let responseData: any; // Initialize responseData
+  let responseData: any = null; // Holds the final response object
+  let userMessageForStorage: string | null = null; // To store the triggering user message
+  let requestHandled = false; // Flag to indicate if the request was handled without OpenAI main loop
+
+  const MAX_HISTORY_MESSAGES = 8; // Limit conversation history length
 
   try {
     // --- Authorization Header Check ---
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return new Response( JSON.stringify({ status: 'error', message: 'Unauthorized', detail: 'No authorization header provided' }), { status: 401, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } ); // Semicolon already present
-    }
+    if (!authHeader) return new Response(JSON.stringify({ status: 'error', message: 'Unauthorized' }), { status: 401, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
 
     // --- Initialize Supabase Client ---
+    // (Error handling included)
     try {
-      const supabaseUrl = Deno.env.get("SUPABASE_URL");
-      const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
-      if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase configuration');
-      supabaseClient = createClient(supabaseUrl, supabaseAnonKey, { global: { headers: { Authorization: authHeader } } });
+        const supabaseUrl = Deno.env.get("SUPABASE_URL");
+        const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+        if (!supabaseUrl || !supabaseAnonKey) throw new Error('Missing Supabase ENV variables');
+        supabaseClient = createClient(supabaseUrl, supabaseAnonKey, { global: { headers: { Authorization: authHeader } } });
     } catch (error) {
-      console.error('Critical Error: Initializing Supabase client failed:', error);
-      return new Response( JSON.stringify({ status: 'error', message: 'Sorry, there was a server configuration issue. Please try again later.' }), { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } ); // Semicolon already present
+        console.error('Critical Error: Initializing Supabase client failed:', error);
+        return new Response( JSON.stringify({ status: 'error', message: 'Server configuration issue.' }), { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } );
     }
 
     // --- Verify User Authentication ---
+    // (Error handling included)
     try {
-      const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
-      if (userError) throw userError;
-      if (!user) throw new Error('No user found');
-      userId = user.id;
+        const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
+        if (userError) throw userError;
+        if (!user) throw new Error('User not found for the provided token.');
+        userId = user.id;
+        console.log(`Authenticated user: ${userId}`);
     } catch (error) {
-      console.error('Authentication error:', error);
-      return new Response( JSON.stringify({ status: 'error', message: 'Authentication failed. Please try logging in again.' }), { status: 401, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } ); // Semicolon already present
+        console.error('Authentication error:', error);
+        return new Response( JSON.stringify({ status: 'error', message: 'Authentication failed.' }), { status: 401, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
     }
 
     // --- Parse Request Body ---
+    // (Error handling included)
     let message: string | undefined;
-    let context: any;
-    let action: string | undefined;
-    let recipe_data: any;
+    let context: any; // Now used for direct action context & pending_action container
+    let action: string | undefined; // Legacy action / Direct action trigger
+    let conversation_history: any[] = []; // Optional from client
+    let pending_action: any = null; // Specifically for multi-turn actions like recipe confirm
+
     try {
-      const requestData = await req.json();
-      ({ message, context, action, recipe_data } = requestData);
-      if (!action && !message) throw new Error('Either message or action is required');
-      if (action === 'get_recommendations') {
-          if (!recipe_data || typeof recipe_data !== 'object' || recipe_data === null) throw new Error('Recipe data required for recommendations');
-          const { name, ingredients, nutrition_estimate } = recipe_data;
-          if (typeof name !== 'string' || name.length === 0) throw new Error('Valid recipe name required');
-          if (typeof ingredients !== 'string' || ingredients.length === 0) throw new Error('Valid ingredients required');
-          if (typeof nutrition_estimate !== 'object' || nutrition_estimate === null) throw new Error('Valid nutrition estimate required');
-          if (typeof nutrition_estimate.calories !== 'number' || nutrition_estimate.calories <= 0) throw new Error('Valid calories required');
-          if (typeof nutrition_estimate.water_g !== 'number' || nutrition_estimate.water_g <= 0) throw new Error('Valid water required');
-          if (typeof nutrition_estimate.protein_g !== 'number' || nutrition_estimate.protein_g <= 0) throw new Error('Valid protein required');
-          if (typeof nutrition_estimate.fat_total_g !== 'number' || nutrition_estimate.fat_total_g <= 0) throw new Error('Valid fat total required');
-          if (typeof nutrition_estimate.carbs_g !== 'number' || nutrition_estimate.carbs_g <= 0) throw new Error('Valid carbs required');
-          if (typeof nutrition_estimate.fat_saturated_g !== 'number' || nutrition_estimate.fat_saturated_g < 0) throw new Error('Valid fat saturated required');
-          if (typeof nutrition_estimate.fat_polyunsaturated_g !== 'number' || nutrition_estimate.fat_polyunsaturated_g < 0) throw new Error('Valid fat polyunsaturated required');
-          if (typeof nutrition_estimate.fat_monounsaturated_g !== 'number' || nutrition_estimate.fat_monounsaturated_g < 0) throw new Error('Valid fat monounsaturated required');
-          if (typeof nutrition_estimate.fat_trans_g !== 'number' || nutrition_estimate.fat_trans_g < 0) throw new Error('Valid fat trans required');
-          if (typeof nutrition_estimate.fiber_g !== 'number' || nutrition_estimate.fiber_g < 0) throw new Error('Valid fiber required');
-          if (typeof nutrition_estimate.sugar_g !== 'number' || nutrition_estimate.sugar_g < 0) throw new Error('Valid sugar required');
-          if (typeof nutrition_estimate.sugar_added_g !== 'number' || nutrition_estimate.sugar_added_g < 0) throw new Error('Valid sugar added required');
-          if (typeof nutrition_estimate.cholesterol_mg !== 'number' || nutrition_estimate.cholesterol_mg < 0) throw new Error('Valid cholesterol required');
-          if (typeof nutrition_estimate.sodium_mg !== 'number' || nutrition_estimate.sodium_mg < 0) throw new Error('Valid sodium required');
-          if (typeof nutrition_estimate.potassium_mg !== 'number' || nutrition_estimate.potassium_mg < 0) throw new Error('Valid potassium required');
-          if (typeof nutrition_estimate.calcium_mg !== 'number' || nutrition_estimate.calcium_mg < 0) throw new Error('Valid calcium required');
-          if (typeof nutrition_estimate.iron_mg !== 'number' || nutrition_estimate.iron_mg < 0) throw new Error('Valid iron required');
-          if (typeof nutrition_estimate.magnesium_mg !== 'number' || nutrition_estimate.magnesium_mg < 0) throw new Error('Valid magnesium required');
-          if (typeof nutrition_estimate.phosphorus_mg !== 'number' || nutrition_estimate.phosphorus_mg < 0) throw new Error('Valid phosphorus required');
-          if (typeof nutrition_estimate.zinc_mg !== 'number' || nutrition_estimate.zinc_mg < 0) throw new Error('Valid zinc required');
-          if (typeof nutrition_estimate.copper_mg !== 'number' || nutrition_estimate.copper_mg < 0) throw new Error('Valid copper required');
-          if (typeof nutrition_estimate.manganese_mg !== 'number' || nutrition_estimate.manganese_mg < 0) throw new Error('Valid manganese required');
-          if (typeof nutrition_estimate.selenium_mcg !== 'number' || nutrition_estimate.selenium_mcg < 0) throw new Error('Valid selenium required');
-          if (typeof nutrition_estimate.vitamin_a_mcg_rae !== 'number' || nutrition_estimate.vitamin_a_mcg_rae < 0) throw new Error('Valid vitamin A required');
-          if (typeof nutrition_estimate.vitamin_d_mcg !== 'number' || nutrition_estimate.vitamin_d_mcg < 0) throw new Error('Valid vitamin D required');
-          if (typeof nutrition_estimate.vitamin_e_mg !== 'number' || nutrition_estimate.vitamin_e_mg < 0) throw new Error('Valid vitamin E required');
-          if (typeof nutrition_estimate.vitamin_k_mcg !== 'number' || nutrition_estimate.vitamin_k_mcg < 0) throw new Error('Valid vitamin K required');
-          if (typeof nutrition_estimate.vitamin_c_mg !== 'number' || nutrition_estimate.vitamin_c_mg < 0) throw new Error('Valid vitamin C required');
-          if (typeof nutrition_estimate.thiamin_mg !== 'number' || nutrition_estimate.thiamin_mg < 0) throw new Error('Valid thiamin required');
-          if (typeof nutrition_estimate.riboflavin_mg !== 'number' || nutrition_estimate.riboflavin_mg < 0) throw new Error('Valid riboflavin required');
-          if (typeof nutrition_estimate.niacin_mg !== 'number' || nutrition_estimate.niacin_mg < 0) throw new Error('Valid niacin required');
-          if (typeof nutrition_estimate.pantothenic_acid_mg !== 'number' || nutrition_estimate.pantothenic_acid_mg < 0) throw new Error('Valid pantothenic acid required');
-          if (typeof nutrition_estimate.vitamin_b6_mg !== 'number' || nutrition_estimate.vitamin_b6_mg < 0) throw new Error('Valid vitamin B6 required');
-          if (typeof nutrition_estimate.biotin_mcg !== 'number' || nutrition_estimate.biotin_mcg < 0) throw new Error('Valid biotin required');
-          if (typeof nutrition_estimate.folate_mcg_dfe !== 'number' || nutrition_estimate.folate_mcg_dfe < 0) throw new Error('Valid folate required');
-          if (typeof nutrition_estimate.vitamin_b12_mcg !== 'number' || nutrition_estimate.vitamin_b12_mcg < 0) throw new Error('Valid vitamin B12 required');
-      }
+        const requestData = await req.json();
+        message = requestData?.message; // The primary user input for V2
+        action = requestData?.action; // Kept for bridge compatibility/direct actions
+        context = requestData?.context; // Container for pending_action or direct action data
+        conversation_history = Array.isArray(requestData?.conversation_history) ? requestData.conversation_history : [];
+        // Extract pending_action from the context if present
+        pending_action = context?.pending_action;
+
+        userMessageForStorage = message ?? action ?? 'No message/action provided'; // Store user input for logging
+
+        // Pass previous clarification context along if present
+        const previousContext = context?.awaiting_clarification_for ? ` (User was asked to clarify: ${context.awaiting_clarification_for})` : '';
+        if (!message && typeof action !== 'string' && !pending_action) {
+             throw new Error('Request must include a message, action, or pending_action.');
+        }
+        console.log(`Request received - Message: "${message}", Action: ${action}, Pending Action Type: ${pending_action?.type}, Previous Context: ${previousContext}`);
+
     } catch (error) {
-      console.error('Error parsing request body:', error);
-      return new Response( JSON.stringify({ status: 'error', message: 'There was a problem understanding your request.' }), { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } ); // Semicolon already present
+        console.error('Error parsing request body:', error);
+        return new Response( JSON.stringify({ status: 'error', message: `Invalid request: ${error.message}`, response_type: 'error_request' }), { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } );
     }
 
     // --- Initialize OpenAI Client ---
     const openaiApiKey = Deno.env.get("OPENAI_API_KEY");
     if (!openaiApiKey) {
-      console.error("Critical Error: OpenAI API key is missing");
-      return new Response( JSON.stringify({ status: 'error', message: 'Sorry, the AI service is not configured correctly. Please contact support.' }), { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } ); // Semicolon already present
+        console.error("Critical Error: OPENAI_API_KEY missing");
+        return new Response( JSON.stringify({ status: 'error', message: 'AI service configuration error.', response_type: 'error_config' }), { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } );
     }
     const openai = new OpenAI({ apiKey: openaiApiKey });
 
-    // --- Handle Recipe Save and Log Confirmation ---
-    if (action === 'confirm_save_and_log_recipe' && recipe_data) {
-      console.log("Handling confirmed recipe save and log action");
-      try {
-        // Clean up recipe name if it still has prefixes
-        const cleanRecipeName = recipe_data.name
-          .replace(/^i (just |)ate /i, '')
-          .replace(/^i had /i, '')
-          .replace(/^log /i, '')
-          .trim();
-        
-        // Check schema of user_recipes table to confirm column names
-        const { data: tableInfo, error: tableError } = await supabaseClient
-          .from('user_recipes')
-          .select('*')
-          .limit(1);
-        
-        if (!tableError) {
-          console.log("Available columns in user_recipes:", tableInfo && tableInfo.length > 0 ? Object.keys(tableInfo[0]) : "No sample rows available");
-        } else {
-          console.warn("Unable to fetch schema info:", tableError.message);
+    // -----------------------------------------------------------------
+    // --- 2. Handle Pre-OpenAI Actions (Confirmations, Direct Actions) ---
+    // -----------------------------------------------------------------
+
+    // --- Handle Pending Recipe Confirmation ---
+    if (pending_action?.type === 'log_analyzed_recipe' && pending_action.analysis && message) {
+        console.log("Handling pending action: log_analyzed_recipe");
+        const userResponse = message.toLowerCase();
+        if (/(save and log|save it|yes|confirm|sounds good|do it)/i.test(userResponse)) {
+            console.log("User confirmed SAVE and log.");
+            responseData = await saveAndLogRecipe(pending_action.analysis, userId, supabaseClient);
+            // Set specific response type on success/error within the helper or here
+            if (responseData.status === 'success') responseData.response_type = 'recipe_saved_logged';
+            else responseData.response_type = responseData.response_type || 'error_database'; // Default error type
+        } else if (/(just log|log only|don't save|only log)/i.test(userResponse)) {
+            console.log("User confirmed LOG ONLY.");
+            responseData = await logOnlyAnalyzedRecipe(pending_action.analysis, userId, supabaseClient);
+            if (responseData.status === 'success') responseData.response_type = 'recipe_logged_only';
+            else responseData.response_type = responseData.response_type || 'error_database';
+        } else { // Assume cancellation or unclear response
+            console.log("User cancelled or gave unclear response.");
+            responseData = { status: 'success', message: "Okay, cancelling that. What else can I help with?", response_type: 'action_cancelled' };
         }
+        requestHandled = true; // Mark as handled, skip OpenAI calls
+    }
 
-        // Prepare recipe data for insertion - ensure field names match DB schema
-        const recipeToSave = {
-          user_id: userId,
-          recipe_name: cleanRecipeName, // Use cleaned name
-          description: recipe_data.ingredients,
-          ...recipe_data.nutrition_estimate, // Spread nutrition values directly
-          created_at: new Date().toISOString()
-        };
+    // --- Handle Direct Action: Confirm Log Saved Recipe (From saved_recipe_confirmation_prompt) ---
+    else if (!requestHandled && action === 'confirm_log_saved_recipe' && context?.recipe_id && context?.recipe_name) {
+        console.log(`Handling direct action: confirm_log_saved_recipe ID: ${context.recipe_id}`);
+        const toolResult = await executeLogExistingSavedRecipe(context.recipe_id, context.recipe_name, userId, supabaseClient);
+        // Convert tool result object into a final responseData object
+        if (toolResult.status === 'success') {
+            responseData = {
+                status: 'success',
+                message: `Okay, logged your saved recipe '${toolResult.logged_recipe_name}'.`, // Follow-up added by OpenAI persona instruction now
+                response_type: 'saved_recipe_logged' // Specific type for FE
+            };
+                        } else {
+            responseData = {
+                status: 'error',
+                message: toolResult.message || 'Sorry, could not log that saved recipe.',
+                response_type: 'error_tool_execution' // More specific error
+            };
+        }
+        requestHandled = true;
+    }
+    // --- Add other 'else if (action === ...)' blocks here for legacy actions if needed ---
 
-        console.log("Attempting to save recipe with data:", {
-          name: cleanRecipeName,
-          userId: userId,
-          // Log only a few sample fields to avoid overwhelming the console
-          nutritionSample: {
-            calories: recipe_data.nutrition_estimate.calories,
-            protein_g: recipe_data.nutrition_estimate.protein_g
+    // -----------------------------------------------------------------
+    // --- 3. Main OpenAI Tool Calling Flow ---
+    // -----------------------------------------------------------------
+    if (!requestHandled && message) { // Only proceed if not handled and there's a user message
+      console.log("Starting main OpenAI tool calling flow.");
+      // --- Prepare messages array ---
+      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+          { role: "system", content: AI_PERSONA },
+      ];
+
+      // Append conversation history (limited)
+      const historyToAppend = conversation_history.slice(-MAX_HISTORY_MESSAGES);
+      historyToAppend.forEach(msg => {
+          if (msg.sender === 'user' && msg.text) {
+              messages.push({ role: 'user', content: msg.text });
+          } else if (msg.sender === 'ai' && msg.text) {
+              // Map 'ai' to 'assistant'. Ignore tool calls in history for simplicity now.
+              messages.push({ role: 'assistant', content: msg.text });
           }
-        });
+      });
 
-        // Insert into user_recipes table and get the ID
-        const { data: savedRecipe, error: saveError } = await supabaseClient
-          .from('user_recipes')
-          .insert(recipeToSave)
-          .select('id')
-          .single();
-
-        if (saveError) {
-          console.error("Recipe save error details:", saveError);
-          throw new Error(`Failed to save recipe: ${saveError.message}`);
-        }
-
-        if (!savedRecipe) {
-          throw new Error('No recipe data returned after saving');
-        }
-
-        const newRecipeId = savedRecipe.id;
-
-        // Filter nutrition data for user goals
-        const nutritionToLog = await filterNutritionDataForUserGoals(
-          recipe_data.nutrition_estimate, 
-          userId, 
-          supabaseClient
-        );
-
-        // Prepare food log entry
-        const foodLogEntry = {
-          user_id: userId,
-          food_name: recipe_data.name,
-          timestamp: new Date().toISOString(),
-          source: 'ai_chat_recipe_confirmed',
-          recipe_id: newRecipeId,
-          ...nutritionToLog, // Use filtered nutrition data
-          created_at: new Date().toISOString()
-        };
-
-        // Insert into food_log table
-        const { error: logError } = await supabaseClient
-          .from('food_log')
-          .insert(foodLogEntry);
-
-        if (logError) {
-          throw new Error(`Failed to log recipe: ${logError.message}`);
-        }
-
-        responseData = {
-          status: 'success',
-          message: `Great! I've saved "${cleanRecipeName}" to your recipes and logged it for today.`
-        };
-        
-        // Add this return statement to ensure proper response
-        return new Response(
-          JSON.stringify(responseData),
-          { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-        );
-        
-      } catch (error) {
-        console.error("Error in recipe save and log:", error);
-        responseData = {
-          status: 'error',
-          message: `Sorry, I encountered an error: ${error.message}`,
-          response_type: 'recipe_save_log_error'
-        };
-        
-        // Add this return statement for error case
-        return new Response(
-          JSON.stringify(responseData),
-          { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-        );
+      // Add context if clarifying a previous dish
+      if (context?.awaiting_clarification_for) {
+          messages.push({ role: 'system', content: `Context: The user is responding to a request to clarify the dish "${context.awaiting_clarification_for}".` });
       }
-    }
-    // --- Handle Log-Only Recipe Confirmation ---
-    else if (action === 'confirm_log_only_recipe' && recipe_data) {
-      console.log("Handling confirmed recipe log-only action");
+
+      // Append current user message
+      messages.push({ role: "user", content: message });
+
       try {
-        // Filter nutrition data for user goals
-        const nutritionToLog = await filterNutritionDataForUserGoals(
-          recipe_data.nutrition_estimate, 
-          userId, 
-          supabaseClient
-        );
+          // --- First OpenAI Call (Intent/Tool Detection) ---
+          console.log("Making first OpenAI call with tools...");
+          const response = await openai.chat.completions.create({
+              model: "gpt-4o-mini", // Balance cost and capability
+              messages: messages,
+              tools: availableTools,
+              tool_choice: "auto", // Let OpenAI decide if a tool is needed
+          });
 
-        // Prepare food log entry (no recipe saving)
-        const foodLogEntry = {
-          user_id: userId,
-          food_name: recipe_data.name,
-          timestamp: new Date().toISOString(),
-          source: 'ai_chat_recipe_log_only',
-          recipe_id: null, // No saved recipe
-          ...nutritionToLog, // Use filtered nutrition data
-          created_at: new Date().toISOString()
-        };
+          const responseMessage = response.choices[0].message;
+          messages.push(responseMessage); // Add AI's response (potentially with tool calls) to history
 
-        // Insert into food_log table
-        const { error: logError } = await supabaseClient
-          .from('food_log')
-          .insert(foodLogEntry);
+          // --- Process Response: Check for Tool Calls ---
+          if (responseMessage.tool_calls) {
+              console.log(`OpenAI requested tool call(s): ${responseMessage.tool_calls.map(tc => tc.function.name).join(', ')}`);
 
-        if (logError) {
-          throw new Error(`Failed to log recipe: ${logError.message}`);
-        }
-
-        responseData = {
-          status: 'success',
-          message: `I've logged "${recipe_data.name}" for today without saving it to your recipes.`
-        };
-        
-        // Add this return statement to ensure proper response
-        return new Response(
-          JSON.stringify(responseData),
-          { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-        );
-        
-      } catch (error) {
-        console.error("Error in recipe log only:", error);
-        responseData = {
-          status: 'error',
-          message: `Sorry, I encountered an error: ${error.message}`,
-          response_type: 'recipe_log_error'
-        };
-        
-        // Add this return statement for error case
-        return new Response(
-          JSON.stringify(responseData),
-          { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-        );
-      }
-    }
-    // --- Branch 2: Recipe Logging via explicit context ---
-    else if (context?.type === 'ingredients' && context?.recipeName) {
-      console.log("Branch 2: Handling recipe logging via context.");
-      const nutrientKeys = MASTER_NUTRIENT_KEYS;
-      const prompt = `User wants to log a recipe named "${context.recipeName}" with ingredients: "${message}". Estimate nutritional content for the *entire* recipe. Respond ONLY with a single JSON object: {"recipe_name": "${context.recipeName}", "description": "${message}", ${nutrientKeys.map(k => `"${k}": number|null`).join(", ")}}. Use null if unknown. No extra text.`;
-      try {
-        const openaiResponse = await openai.chat.completions.create({ 
-          model: "gpt-3.5-turbo", 
-          messages: [ { role: "system", content: prompt }, { role: "user", content: message! } ], 
-          temperature: 0.3, 
-          response_format: { type: "json_object" } 
-        });
-        
-        const aiResponseContent = openaiResponse.choices[0].message?.content || '';
-        let nutritionData;
-        
-        try { 
-          nutritionData = JSON.parse(aiResponseContent); 
-        } catch (jsonError) { 
-          throw new Error(`Failed to parse recipe nutrition data: ${jsonError.message}`); 
-        }
-
-        // Package the necessary details for confirmation
-        const recipeDataToSave = {
-          name: context.recipeName,
-          ingredients: message,
-          nutrition_estimate: nutritionData
-        };
-        
-        // Return confirmation prompt with the recipe data
-        responseData = {
-          status: 'success',
-          response_type: "recipe_save_confirmation_prompt",
-          message: `I've analyzed '${context.recipeName}' with the ingredients you provided. Shall I save this to your recipes and log it for today?`,
-          recipe_data_to_save: recipeDataToSave
-        };
-
-        // After parsing the nutrition data (around line 570-580)
-        console.log("Parsed nutrition data structure:", Object.keys(nutritionData));
-        console.log("Sample nutrition values:", {
-          calories: nutritionData.calories,
-          protein: nutritionData.protein_g,
-          carbs: nutritionData.carbs_g
-        });
-      } catch (error) {
-        console.error("Error in recipe ingredient analysis:", error);
-        responseData = {
-          status: 'error',
-          message: "Sorry, I encountered an issue analyzing the ingredients. Please try again with more specific information.",
-          response_type: 'recipe_analysis_error'
-        };
-      }
-    }
-    // --- Branch 3: Handle General Chat / Intent Recognition ---
-    else if (message) {
-      // --- Correction Handling START ---
-      let isCorrection = false;
-      if (context?.correction_for_log_id && typeof context.correction_for_log_id === 'string') {
-        const correctiveKeywords = ['no', 'nope', 'wrong', 'incorrect', 'not right', 'that was a recipe', 'needs ingredients', 'that\'s not it', 'actually it was'];
-        if (correctiveKeywords.some(keyword => message.toLowerCase().includes(keyword))) {
-          isCorrection = true;
-          console.log(`Handling correction request for log ID: ${context.correction_for_log_id}`);
-          try {
-            const logIdToDelete = context.correction_for_log_id;
-            const loggedItemName = context.item_name || 'that item';
-            console.log(`Attempting to delete log entry: ${logIdToDelete} for user ${userId}`);
-            const { error: deleteError } = await supabaseClient.from('food_log').delete().eq('user_id', userId).eq('id', logIdToDelete);
-
-            if (deleteError) {
-              console.error(`Failed to delete log entry ${logIdToDelete}:`, deleteError);
-              responseData = { status: 'error', message: `Sorry, I couldn't remove the previous incorrect entry for '${loggedItemName}', but please tell me the ingredients so I can log it correctly as a recipe.`, response_type: 'prompt_recipe_ingredients_after_correction_failed_delete' };
-            } else {
-              console.log(`Successfully deleted incorrect log entry ${logIdToDelete}.`);
-              responseData = { status: 'success', message: `My mistake! I've removed the previous entry for '${loggedItemName}'. To log it correctly as a recipe, please list the ingredients.`, response_type: 'prompt_recipe_ingredients_after_correction', recipe_context: { name_suggestion: loggedItemName } };
-            }
-            console.log(`Correction handled for log ${logIdToDelete}. Returning response.`);
-            return new Response(JSON.stringify(responseData), { status: responseData.status === 'success' ? 200 : 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } ); // Added Semicolon
-          } catch (correctionError) {
-            console.error("Unexpected error handling correction:", correctionError);
-            responseData = { status: 'error', message: 'Sorry, something went wrong while trying to correct that entry. Please try again or start over with logging your recipe.', response_type: 'correction_error' };
-            return new Response(JSON.stringify(responseData), { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } ); // Added Semicolon
-          }
-        } // End if corrective keyword found
-      } // End if correction_for_log_id exists
-      // --- Correction Handling END ---
-
-      // --- Normal Intent Processing START (only if not correction) ---
-      if (!isCorrection) {
-        console.log("Branch 3: Handling general chat message for intent recognition.");
-        let determinedIntent = 'unknown';
-        let profileData = null;
-        let hasCompleteProfile = false;
-
-        try { // Intent Recognition Try block
-          // Fetch profile status
-          try {
-            const { data: fetchedProfile, error: profileError } = await supabaseClient.from('user_profiles').select('age, weight_kg, height_cm, sex').eq('user_id', userId).maybeSingle();
-            if (profileError) console.warn("Could not fetch profile status for intent check:", profileError.message);
-            else if (fetchedProfile) { profileData = fetchedProfile; hasCompleteProfile = !!(fetchedProfile.age && fetchedProfile.weight_kg && fetchedProfile.height_cm && fetchedProfile.sex); }
-          } catch (profileFetchError) { console.warn("Error fetching profile status:", profileFetchError.message); }
-
-          // Intent prompt
-          const intentSystemPrompt = `Your role: Classify the user's primary intent. Respond ONLY with ONE keyword: 'log_food', 'request_meal_suggestion', or 'ask_general_question'.\n\nExamples:\n- "Log an apple", "I had chicken soup", "Add 2 eggs" -> log_food\n- "What can I eat for lunch?", "Suggest a healthy breakfast", "Ideas for dinner", "Recommend meals for my goals", "what should I eat today?", "give me breakfast ideas" -> request_meal_suggestion\n- "How much protein?", "Why are carbs important?", "Hello", nutrient goal questions, requests for nutrient recommendations -> ask_general_question\n\nUser profile status: ${hasCompleteProfile ? 'Complete' : 'Incomplete'}.\nUser Message: "${message}"\n\nOutput ONLY the keyword.`;
-          const intentResponse = await openai.chat.completions.create({ model: "gpt-3.5-turbo", messages: [{ role: "system", content: intentSystemPrompt }], temperature: 0.1, max_tokens: 10 });
-          const rawIntent = intentResponse.choices[0].message?.content?.trim().toLowerCase() || 'unknown';
-
-          if (rawIntent.includes('log_food')) determinedIntent = 'log_food';
-          else if (rawIntent.includes('request_meal_suggestion')) determinedIntent = 'request_meal_suggestion';
-          else determinedIntent = 'ask_general_question';
-          console.log("Determined Intent:", determinedIntent);
-
-        } catch (error) { // Intent Recognition Catch block
-          console.error("Error in Intent Recognition processing:", error);
-          responseData = { status: 'error', message: 'Sorry, I encountered an issue processing your message. Please try again.' };
-          return new Response( JSON.stringify(responseData), { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } ); // Semicolon already present
-        } // End Intent Recognition Try/Catch
-
-        // --- Handle Based on Determined Intent ---
-        if (determinedIntent === 'log_food') {
-          console.log("Processing log_food intent...");
-          // --- Saved Recipe Check START ---
-          let potentialRecipeName = message.toLowerCase().replace(/^log\s+|^add\s+|^i\s+had\s+|^i\s+ate\s+|^my\s+|^a\s+|^an\s+|^the\s+|^some\s+/,'').trim();
-          let savedRecipeCheckCompleted = false;
-
-          console.log(`Checking saved recipes for: "${potentialRecipeName}"`);
-          const { data: matchingRecipes, error: recipeSearchError } = await supabaseClient.from('user_recipes').select('id, recipe_name').eq('user_id', userId).ilike('recipe_name', `%${potentialRecipeName}%`);
-
-          if (recipeSearchError) { console.error("Error searching user recipes:", recipeSearchError); savedRecipeCheckCompleted = false; }
-          else if (matchingRecipes && matchingRecipes.length === 1) {
-            console.log("Found single matching saved recipe."); const theRecipe = matchingRecipes[0];
-            responseData = { status: 'success', message: `Did you have your saved recipe: '${theRecipe.recipe_name}'?`, response_type: 'confirmation_needed_saved_recipe', recipe_match: { id: theRecipe.id, name: theRecipe.recipe_name } };
-            savedRecipeCheckCompleted = true;
-          } else if (matchingRecipes && matchingRecipes.length > 1) {
-            console.log("Found multiple matching saved recipes.");
-            responseData = { status: 'success', message: `I found a few saved recipes similar to that: ${matchingRecipes.map(r => `'${r.recipe_name}'`).join(', ')}. Which one did you mean?`, response_type: 'clarification_needed_multiple_saved_recipes', recipe_matches: matchingRecipes.map(r => ({ id: r.id, name: r.recipe_name })) };
-            savedRecipeCheckCompleted = true;
-          } else { console.log("No matching saved recipes found."); savedRecipeCheckCompleted = false; }
-          // --- Saved Recipe Check END ---
-
-          if (!savedRecipeCheckCompleted) {
-            console.log("Proceeding to check if input is potentially a new complex recipe...");
-            // --- Ambiguity Check START ---
-            const looksComplex = isPotentiallyComplex(message, potentialRecipeName);
-
-            // --- Add the ingredient detection logic here ---
-            // Check if this is a response to a recipe clarification with ingredients
-            if (message.toLowerCase().includes('its made of') || 
-                message.toLowerCase().includes('made with') ||
-                message.toLowerCase().includes('ingredients are') ||
-                message.toLowerCase().includes('i just provided you with recipe') ||
-                message.toLowerCase().includes('one mushroom') ||
-                message.toLowerCase().includes('cup of')
-            ) {
-              console.log("Detected user providing ingredients for a recipe");
-              
-              // Extract recipe name from previous context or messages
-              let recipe_name = "Custom recipe";
-              // Look through previous conversations to try to find the recipe name
-              const { data: prevConvo, error: convoError } = await supabaseClient
-                .from('conversations')
-                .select('message, response')
-                .eq('user_id', userId)
-                .order('timestamp', { ascending: false })
-                .limit(5);
-              
-              if (!convoError && prevConvo && prevConvo.length > 0) {
-                // Look for the most recent recipe name mention in previous messages
-                for (const convo of prevConvo) {
-                  if (convo.response && convo.response.includes('might be a specific recipe')) {
-                    const match = convo.response.match(/'([^']+)'/);
-                    if (match && match[1]) {
-                      // Clean up recipe name from previous conversation
-                      recipe_name = match[1].trim()
-                        .replace(/^i (just |)ate /i, '')
-                        .replace(/^i had /i, '')
-                        .replace(/^log /i, '');
-                      console.log(`Found recipe name from previous conversation: ${recipe_name}`);
-                      break;
-                    }
+              for (const toolCall of responseMessage.tool_calls) {
+                  const functionName = toolCall.function.name;
+                  let functionArgs: any;
+                  try {
+                      functionArgs = JSON.parse(toolCall.function.arguments);
+                  } catch (parseError) {
+                      console.error(`Error parsing arguments for tool ${functionName}:`, toolCall.function.arguments, parseError);
+                       const toolResultContent = JSON.stringify({ status: 'error', message: `Invalid arguments provided for ${functionName}.` });
+                       messages.push({
+                           tool_call_id: toolCall.id,
+                           role: "tool",
+                           content: toolResultContent,
+                       });
+                      continue;
                   }
-                  // Also check user messages for recipe names
-                  if (convo.message && !convo.message.toLowerCase().includes('made of') && 
-                      !convo.message.toLowerCase().includes('ingredients are')) {
-                    // Apply more thorough cleanup of recipe name from user messages
-                    recipe_name = convo.message
-                      .replace(/^i (just |)ate /i, '')
-                      .replace(/^i just had /i, '')
-                      .replace(/^i had /i, '')
-                      .replace(/^log /i, '')
-                      .replace(/^add /i, '')
-                      .trim();
-                    console.log(`Using previous user message as recipe name: ${recipe_name}`);
-                    break;
+
+                  let toolResult: ToolResult | null = null;
+                  console.log(`Executing tool: ${functionName} with args:`, functionArgs);
+
+                  // --- Execute the appropriate function OR handle clarification ---
+                  if (functionName === 'clarifyDishType') {
+                      // ** Special Handling for Clarification Request **
+                      console.log(`Handling tool call: ${functionName}`);
+                      responseData = {
+                          status: 'success', // Successful interaction, pending clarification
+                          message: `Okay, for "${functionArgs.dish_name}", is that a recipe you made or a standard item? If you made it, please list the ingredients so I can analyze it accurately. Otherwise, tell me it's a standard item.`,
+                          response_type: 'clarification_needed_recipe', // Specific type
+                          context_for_reply: { // Provide context for the next turn
+                              awaiting_clarification_for: functionArgs.dish_name
+                          }
+                      };
+                      requestHandled = true; // Mark as handled for this turn
+                      break; // Exit the tool call loop, skip second OpenAI call
+                  } else {
+                      // --- Execute actual tool function ---
+                      switch (functionName) {
+                          case 'logGenericFoodItem':
+                              toolResult = await executeLogGenericFoodItem(functionArgs.food_description, userId, supabaseClient, openai);
+                              break;
+                          case 'findSavedRecipeByName':
+                              toolResult = await executeFindSavedRecipeByName(functionArgs.query, userId, supabaseClient);
+                              break;
+                          case 'analyzeRecipeIngredients':
+                              toolResult = await executeAnalyzeRecipeIngredients(functionArgs.recipe_name, functionArgs.ingredients_list, userId, supabaseClient, openai);
+                              break;
+                          case 'logExistingSavedRecipe':
+                              toolResult = await executeLogExistingSavedRecipe(functionArgs.recipe_id, functionArgs.recipe_name, userId, supabaseClient);
+                              break;
+                          case 'answerGeneralQuestion':
+                              toolResult = await executeAnswerGeneralQuestion(functionArgs.question, userId, supabaseClient, openai);
+                              break;
+                          default:
+                              console.error(`Unknown tool called: ${functionName}`);
+                              toolResult = { status: 'error', message: `Internal error: Unknown tool requested (${functionName}).` };
+                      }
                   }
-                }
+
+                  // --- Handle specific tool results IF NOT CLARIFICATION ---
+                  if (toolResult) { // Only process if a tool other than clarifyDishType was executed
+                      // ** Special Handling for Single Saved Recipe Found **
+                      if (functionName === 'findSavedRecipeByName' && toolResult?.status === 'success' && toolResult.found && toolResult.count === 1) {
+                          console.log("Found single saved recipe. Prompting user for confirmation.");
+                          const matchedRecipe = toolResult.matches[0];
+                          responseData = {
+                              status: 'success',
+                              message: `I found your saved recipe '${matchedRecipe.recipe_name}'. Should I log it for you?`,
+                              response_type: 'saved_recipe_confirmation_prompt', // Specific type
+                              context_for_reply: {
+                                  recipe_id: matchedRecipe.id,
+                                  recipe_name: matchedRecipe.recipe_name
+                              }
+                          };
+                          requestHandled = true;
+                          break;
+                      }
+
+                      // ** Special Handling for Recipe Analysis Confirmation **
+                      else if (functionName === 'analyzeRecipeIngredients' && toolResult?.status === 'success' && toolResult.confirmation_needed) {
+                          console.log("Recipe analysis requires user confirmation. Preparing response.");
+                          const preliminaryMessage = responseMessage.content || "I've analyzed the recipe. What would you like to do? (Save and Log / Log Only / Cancel)";
+                          responseData = {
+                              status: 'success',
+                              message: preliminaryMessage,
+                              response_type: 'recipe_analysis_prompt', // Specific type
+                              pending_action: { type: 'log_analyzed_recipe', analysis: toolResult.analysis } // Send analysis data back
+                          };
+                          requestHandled = true;
+                          break;
+                      }
+
+                      // --- Append general tool result for the second OpenAI call ---
+                      const toolResultContent = JSON.stringify(toolResult);
+                      messages.push({
+                          tool_call_id: toolCall.id,
+                          role: "tool",
+                          content: toolResultContent,
+                      });
+                  }
+
+              } // End of for loop through tool calls
+
+              // --- Second OpenAI Call (if not handled by confirmation/clarification prompts) ---
+              if (!requestHandled) {
+                  console.log("Making second OpenAI call with tool results...");
+                  const finalResponse = await openai.chat.completions.create({
+                      model: "gpt-4o-mini", // Use the same model
+                      messages: messages, // Send full history including tool results
+                  });
+                  const finalMessageContent = finalResponse.choices[0].message.content;
+
+                  // Determine more specific response_type based on the tool result that led here
+                  let finalResponseType = 'tool_response'; // Default
+                  const lastToolResultMsg = messages[messages.length - 1];
+                  if(lastToolResultMsg.role === 'tool') {
+                      try {
+                          const lastToolResultData = JSON.parse(lastToolResultMsg.content || '{}');
+                          const lastToolCallMsg = messages[messages.length - 2];
+                          const lastToolName = lastToolCallMsg.role === 'assistant' && lastToolCallMsg.tool_calls ? lastToolCallMsg.tool_calls[0]?.function?.name : null;
+
+                          if (lastToolResultData.status === 'success') {
+                             switch(lastToolName) {
+                                 case 'logGenericFoodItem': finalResponseType = 'item_logged'; break;
+                                 case 'findSavedRecipeByName':
+                                     // Count > 1 case (single match handled above)
+                                     if(lastToolResultData.count > 1) finalResponseType = 'saved_recipe_found_multiple';
+                                     // Count === 0 case
+                                     else if (lastToolResultData.count === 0) finalResponseType = 'saved_recipe_not_found'; // Added type
+                                     break;
+                                 case 'logExistingSavedRecipe': finalResponseType = 'saved_recipe_logged'; break; // If OpenAI calls it directly
+                                 case 'answerGeneralQuestion': finalResponseType = 'answer_provided'; break;
+                                // analyzeRecipeIngredients success without confirmation is unlikely but handle defensively
+                                 case 'analyzeRecipeIngredients': finalResponseType = 'recipe_analysis_complete'; break; // Added type
+                             }
+                          } else {
+                              // Map tool errors to specific types
+                               finalResponseType = 'error_tool_execution';
+                          }
+                      } catch(e) { console.error("Error parsing last tool result for type setting", e); }
+                  }
+
+                  responseData = {
+                      status: 'success', // Assume success if OpenAI gives a final response
+                      message: finalMessageContent || "Okay.", // Fallback message
+                      response_type: finalResponseType
+                  };
+                  console.log("Received final response from OpenAI after tool execution.");
               }
-              
-              // Clean up ingredients text from common prefixes
-              const ingredients = message
-                .replace(/its made of /i, '')
-                .replace(/made with /i, '')
-                .replace(/ingredients are /i, '')
-                .replace(/i just provided you with recipe/i, '')
-                .trim();
-              
-              console.log(`Processing recipe: ${recipe_name} with ingredients: ${ingredients}`);
-              
-              try {
-                // Get nutritional estimate from OpenAI for the recipe
-                const nutrientKeys = MASTER_NUTRIENT_KEYS;
-                const prompt = `User wants to log a recipe named "${recipe_name}" with ingredients: "${ingredients}". Estimate nutritional content for the *entire* recipe. Respond ONLY with a single JSON object: {"recipe_name": "${recipe_name}", "description": "${ingredients}", ${nutrientKeys.map(k => `"${k}": number|null`).join(", ")}}. Use null if unknown. No extra text.`;
-                
-                const openaiResponse = await openai.chat.completions.create({ 
-                  model: "gpt-3.5-turbo", 
-                  messages: [ { role: "system", content: prompt } ], 
-                  temperature: 0.3, 
-                  response_format: { type: "json_object" } 
-                });
-                
-                const aiResponseContent = openaiResponse.choices[0].message?.content || '';
-                let nutritionData;
-                
-                try { 
-                  nutritionData = JSON.parse(aiResponseContent); 
-                } catch (jsonError) { 
-                  throw new Error(`Failed to parse recipe nutrition data: ${jsonError.message}`); 
-                }
 
-                // Package the necessary details for confirmation
-                const recipeDataToSave = {
-                  name: recipe_name,
-                  ingredients: ingredients,
-                  nutrition_estimate: nutritionData
-                };
-                
-                // Return confirmation prompt with the recipe data
-                responseData = {
+          } else { // --- No tool calls requested ---
+              console.log("No tool calls requested by OpenAI. Using direct response.");
+              responseData = {
                   status: 'success',
-                  response_type: "recipe_save_confirmation_prompt",
-                  message: `I've analyzed '${recipe_name}' with the ingredients you provided. Would you like me to save this to your recipes and log it for today?`,
-                  recipe_data_to_save: recipeDataToSave
-                };
-                
-                // Return early to prevent further processing
-                return new Response(
-                  JSON.stringify(responseData),
-                  { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-                );
-              } catch (error) {
-                console.error("Error in recipe ingredient analysis:", error);
-                responseData = {
-                  status: 'error',
-                  message: "Sorry, I encountered an issue analyzing the ingredients. Please try again with more specific information.",
-                  response_type: 'recipe_analysis_error'
-                };
-                
-                // Return early to prevent further processing
-                return new Response(
-                  JSON.stringify(responseData),
-                  { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-                );
-              }
-            }
-            // --- End of ingredient detection logic ---
-            
-            else if (looksComplex) {
-              console.log("Item detected as potentially complex (and not saved). Asking for clarification.");
-              responseData = { 
-                status: 'success', 
-                message: `It sounds like '${potentialRecipeName || message}' might be a specific recipe you haven't saved yet. Would you like to provide the ingredients to log it accurately, or should I log it as a standard item?`, 
-                response_type: 'clarification_needed_recipe' 
+                  message: responseMessage.content || "Got it.", // Fallback message
+                  response_type: message?.includes('?') || responseMessage.content?.includes('?') ? 'answer_provided' : 'clarification_needed' // Refined heuristic
               };
-            } else {
-              // --- Generic Logging START ---
-              console.log("Item detected as simple (and not saved). Proceeding with standard logging.");
-              try { // Wrap generic logging in try/catch
-                const foodPrompt = `The user said they ate "${message}". As a nutrition AI, estimate the nutritional content for this single food item. Format response as a single JSON object: { "food_name": "user-friendly name of the food", "calories": number, "protein_g": number, ... other nutrients ...}. Include ONLY numerical values (use null for unknown) for these keys: ${MASTER_NUTRIENT_KEYS.join(', ')}. No extra text or explanation.`;
-                const foodResponse = await openai.chat.completions.create({ model: "gpt-3.5-turbo", messages: [{ role: "system", content: foodPrompt }], temperature: 0.3, response_format: { type: "json_object" } });
-                const foodResponseContent = foodResponse.choices[0].message?.content || '';
-                let parsedNutrition: Record<string, any> = {};
-                try { parsedNutrition = JSON.parse(foodResponseContent); } catch (parseError) { console.error("Failed to parse JSON from OpenAI food response:", foodResponseContent, parseError); throw new Error("AI response was not valid JSON."); }
-
-                const foodName = parsedNutrition.food_name || potentialRecipeName || "Food item"; // Use AI name or fallback
-                const nutritionToLog = await filterNutritionDataForUserGoals(
-                  parsedNutrition, 
-                  userId, 
-                  supabaseClient
-                );
-
-                const foodLogEntry = { 
-                  user_id: userId, 
-                  food_name: foodName, 
-                  timestamp: new Date().toISOString(), 
-                  source: 'ai_chat_item', 
-                  recipe_id: null, 
-                  ...nutritionToLog, // Now using the filtered nutrition data
-                  created_at: new Date().toISOString() 
-                };
-
-                console.log("Attempting to insert generic food log entry...");
-                const { data: newLogEntry, error: logError } = await supabaseClient
-                  .from('food_log')
-                  .insert(foodLogEntry)
-                  .select('id, food_name')
-                  .single();
-                if (logError || !newLogEntry) { console.error("Supabase DB insert error or no data returned:", logError); throw new Error(`DB Error: ${logError?.message || 'Failed to retrieve log ID after insert'}`); }
-
-                console.log("Generic food log entry inserted successfully.");
-                responseData = { status: 'success', message: `Alright, logged '${newLogEntry.food_name}' for you.${getRandomFollowUp()}`, response_type: 'item_logged', log_entry_id: newLogEntry.id, logged_item_name: newLogEntry.food_name };
-
-              } catch (foodLogError) { // Catch errors from generic logging (OpenAI call, JSON parsing, DB insert)
-                  console.error("Error processing food item logging:", foodLogError);
-                  // Ensure responseData is set even on error before returning
-                  responseData = { status: 'error', message: `Sorry, I encountered an issue logging '${message}'. Please try again. (${foodLogError instanceof Error ? foodLogError.message : String(foodLogError)})`, response_type: 'log_error'};
-                   // Return 500 error response immediately for generic log failure
-                   // Ensure responseData is defined before stringifying
-                   return new Response( JSON.stringify(responseData || {status: 'error', message: 'Unknown error during food logging.'}), { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } ); // Added check and Semicolon
-              } // End Generic Logging Try/Catch
-              // --- Generic Logging END ---
-            } // End else (not complex)
-            // --- Ambiguity Check END ---
-          } // End if (!savedRecipeCheckCompleted)
-        } // End if (determinedIntent === 'log_food')
-
-        else if (determinedIntent === 'request_meal_suggestion') {
-          console.log("Handling 'request_meal_suggestion' intent.");
-          let mealSuggestionContext = ""; let goalsSummary = "No specific goals set."; let profileSummary = "Profile information not available.";
-          try {
-            // Fetch Goals
-            const { data: goalsData, error: goalsError } = await supabaseClient.from('user_goals').select('nutrient, target_value, unit').eq('user_id', userId);
-            if (goalsError) { console.warn("Could not fetch goals context:", goalsError.message); }
-            else if (goalsData && goalsData.length > 0) { /* Summarize goals */ const calorieGoal = goalsData.find(g => g.nutrient === 'calories'); const proteinGoal = goalsData.find(g => g.nutrient === 'protein_g'); let summaryParts = []; if (calorieGoal) summaryParts.push(`Calories: ~${calorieGoal.target_value} kcal`); if (proteinGoal) summaryParts.push(`Protein: ~${proteinGoal.target_value}g`); if (summaryParts.length > 0) goalsSummary = `Key Goals: ${summaryParts.join(', ')}.`; else goalsSummary = `${goalsData.length} goals set (details unspecified).`; }
-            // Use profile fetched earlier
-            if (profileData) { profileSummary = `User Profile: Age ${profileData.age}, Weight ${profileData.weight_kg}kg, Height ${profileData.height_cm}cm, Sex ${profileData.sex}.`; } else { console.log("Profile data not available for suggestion."); }
-            mealSuggestionContext = `${profileSummary}\n${goalsSummary}`;
-
-            // Suggestion Prompt
-            const suggestionPrompt = `${AI_PERSONA}\nYour task is to suggest simple, practical meal or snack ideas.\n\nUser Request: "${message}"\n\nContext:\n${mealSuggestionContext}\n\nInstructions:\n1. Based on the user request and context (profile/goals), suggest 2-3 concise meal or snack ideas.\n2. Keep suggestions practical and easy to prepare.\n3. Do NOT estimate nutrition unless specifically asked.\n4. Respond directly with the suggestions in a friendly, conversational tone. Do not repeat the context.`;
-            const suggestionResponse = await openai.chat.completions.create({ model: "gpt-3.5-turbo", messages: [{ role: "system", content: suggestionPrompt }], temperature: 0.7, max_tokens: 150 });
-            const mealSuggestionsFromAI = suggestionResponse.choices[0].message?.content || 'Sorry, I couldn\'t think of any suggestions right now.';
-            responseData = { status: 'success', message: mealSuggestionsFromAI, response_type: 'meal_suggestion_provided' };
-          } catch (suggestionError) {
-            console.error("Error generating meal suggestion:", suggestionError);
-            responseData = { status: 'error', message: `Sorry, I had trouble coming up with meal suggestions. Please try asking again shortly.`, response_type: 'suggestion_error' };
-            return new Response( JSON.stringify(responseData), { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } ); // Semicolon already present
           }
-        } // End if (determinedIntent === 'request_meal_suggestion')
-
-        else { // Assumed 'ask_general_question' or fallback
-          console.log("Handling 'ask_general_question' intent (fetching context).");
-          let goalsData: any[] = []; let logsData: any[] = []; let fetchContextError = null; let nutrientKeysFromGoals: string[] = [];
-          try {
-            const today = new Date(); const startOfDay = new Date(today.setHours(0, 0, 0, 0)).toISOString(); const endOfDay = new Date(today.setHours(23, 59, 59, 999)).toISOString();
-            // Fetch Goals
-            const goalsResult = await supabaseClient.from('user_goals').select('nutrient, target_value, unit').eq('user_id', userId);
-            if (goalsResult.error) { throw new Error(`Goals fetch failed: ${goalsResult.error.message}`); }
-            goalsData = goalsResult.data || []; nutrientKeysFromGoals = goalsData.map(goal => goal.nutrient);
-            // Fetch Logs (conditional)
-            if (nutrientKeysFromGoals.length > 0) {
-              const logSelectColumns = ['timestamp', ...nutrientKeysFromGoals].join(',');
-              const logsResult = await supabaseClient.from('food_log').select(logSelectColumns).eq('user_id', userId).gte('timestamp', startOfDay).lte('timestamp', endOfDay);
-              if (logsResult.error) { throw new Error(`Logs fetch failed: ${logsResult.error.message}`); } logsData = logsResult.data || [];
-            } else { logsData = []; }
-          } catch (contextError) { console.warn("Failed to fetch context for general question:", contextError.message); fetchContextError = contextError.message; }
-
-          // Calculate totals
-          const dailyTotals: Record<string, number> = {}; const trackedNutrients: string[] = [];
-          if (goalsData.length > 0) {
-             goalsData.forEach(goal => { dailyTotals[goal.nutrient] = 0; });
-             if (logsData.length > 0) { logsData.forEach(log => { goalsData.forEach(goal => { const nutrientKey = goal.nutrient; if (log[nutrientKey] !== undefined && log[nutrientKey] !== null) { try { const value = parseFloat(log[nutrientKey]); if (!isNaN(value)) { dailyTotals[nutrientKey] += value; } } catch (e) { console.warn(`Error parsing log value for ${nutrientKey}: ${log[nutrientKey]}`, e); } } }); }); }
-             goalsData.forEach(goal => { const nutrientKey = goal.nutrient; const nutrientDetails = nutrientKey.split('_'); const nutrientName = nutrientDetails[0].charAt(0).toUpperCase() + nutrientDetails[0].slice(1); const unit = goal.unit || nutrientDetails[1] || ''; const targetValue = goal.target_value; const currentValue = (dailyTotals[nutrientKey] ?? 0).toFixed(1); trackedNutrients.push(`${nutrientName} (Goal: ${targetValue}${unit}, Current: ${currentValue}${unit})`); });
-          }
-
-          // Answer Prompt
-          let answerSystemPrompt = `${AI_PERSONA} Your primary goal is to answer the user's question clearly and concisely.\n\nUser Question: "${message}"\n\nContext (Use subtly if relevant, do not just list it):`;
-          if (trackedNutrients.length > 0) answerSystemPrompt += `\n- User's Tracked Goals/Progress Today: ${trackedNutrients.join(', ')}`; else answerSystemPrompt += `\n- User has no specific goals set yet.`;
-          if (fetchContextError) answerSystemPrompt += `\n- Note: Error fetching full context: ${fetchContextError}`;
-          answerSystemPrompt += `\n\nInstructions:\n1. Directly answer the User Question. Be supportive and conversational.\n2. If context (goals/progress) is relevant, weave it in naturally & encouragingly.\n3. After answering, if appropriate, add ONE concise, relevant suggestion OR follow-up question. Keep it natural. If none fits, just answer.`;
-
-          const answerResponse = await openai.chat.completions.create({ model: "gpt-3.5-turbo", messages: [{ role: "system", content: answerSystemPrompt }, { role: "user", content: message }], temperature: 0.6 });
-          const finalAnswer = answerResponse.choices[0].message?.content || 'Sorry, I couldn\'t quite generate an answer for that.';
-          responseData = { status: 'success', message: finalAnswer, response_type: 'answer' };
-        } // End else (ask_general_question)
-
-        // Store conversation in database (common to all non-correction paths in Branch 3)
-        if (responseData && responseData.status === 'success') {
-          try {
-            const { error: insertError } = await supabaseClient.from('conversations').insert({ user_id: userId, message: message || `Action: ${action}`, response: responseData.message, response_type: responseData.response_type || 'unknown', timestamp: new Date().toISOString() });
-            if (insertError) { console.error(`Database error storing conversation: ${insertError.message || JSON.stringify(insertError)}`); }
-          } catch (dbError) { console.error("Exception during conversation storage:", dbError); }
-        } else { console.log("Skipping conversation storage due to non-success responseData status:", responseData?.status); }
-
-        // Return final response for non-correction path
-        // Ensure responseData is defined before trying to access status
-         const finalStatus = responseData?.status === 'success' ? 200 : (responseData?.status === 'error' ? 500 : 400);
-        return new Response( JSON.stringify(responseData || {status: 'error', message: 'Internal processing error.'}), { status: finalStatus, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } ); // Added check and Semicolon
-
-      } // --- Normal Intent Processing END ---
-    } // End else if (message)
-
-    // --- Branch 4: Handle Unknown Request Types ---
-    else {
-      console.warn("Unknown request type received:", { message, context, action, recipe_data });
-      responseData = { status: 'error', message: 'Unknown request type. Please provide a message, recipe context, or recommendation action.' };
-      return new Response( JSON.stringify(responseData), { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } ); // Semicolon already present
-    }
-
-  } catch (error) { // Outermost Catch block
-    console.error('Unhandled error in edge function:', error);
-    // Define the error response object separately for clarity
-    const errorResponse = {
-        status: 'error',
-        message: 'An unexpected server error occurred. Please try again later.'
-    };
-    return new Response(JSON.stringify(errorResponse), {
-        status: 500,
-        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-    }); // Semicolon Added
-  } // End Outermost Catch block
-}); // End Deno.serve
-
-/**
- * Filters nutrition data based on user goals
- * @param fullNutritionData Object containing all nutrition values from OpenAI
- * @param userId User ID for querying their tracked nutrients
- * @param supabaseClient Supabase client instance
- * @returns Filtered nutrition data containing only tracked nutrients
- */
-async function filterNutritionDataForUserGoals(
-  fullNutritionData: Record<string, any>,
-  userId: string,
-  supabaseClient: SupabaseClient
-): Promise<Record<string, any>> {
-  try {
-    // Query the user_goals table to get the nutrients the user is tracking
-    const { data: goalsData, error: goalsError } = await supabaseClient
-      .from('user_goals')
-      .select('nutrient')
-      .eq('user_id', userId);
-    
-    // If query fails or returns no goals, log warning and return original data
-    if (goalsError) {
-      console.warn(`Error fetching user goals for filtering nutrition data: ${goalsError.message}`);
-      return { ...fullNutritionData }; // Return copy of original data
-    }
-    
-    if (!goalsData || goalsData.length === 0) {
-      console.log(`No goals found for user ${userId}, returning all nutrition data`);
-      return { ...fullNutritionData }; // Return copy of original data
-    }
-    
-    // Extract unique nutrient keys from goals
-    const trackedNutrientKeys = [...new Set(goalsData.map(goal => goal.nutrient))];
-    console.log(`User ${userId} is tracking ${trackedNutrientKeys.length} nutrients: ${trackedNutrientKeys.join(', ')}`);
-    
-    // Create filtered nutrition data object with only tracked nutrients
-    const filteredNutritionData: Record<string, any> = {};
-    
-    // Copy only the tracked nutrient values from full data to filtered data
-    trackedNutrientKeys.forEach(key => {
-      if (key in fullNutritionData) {
-        filteredNutritionData[key] = fullNutritionData[key];
+      } catch (error) { // Catch errors during OpenAI calls or tool execution
+           console.error("Error during OpenAI processing or tool execution:", error);
+           responseData = { status: 'error', message: `Sorry, I encountered an issue processing that: ${error instanceof Error ? error.message : String(error)}`, response_type: 'error_openai' }; // More specific error
+           requestHandled = false; // Ensure it proceeds to error response formatting
       }
-    });
-    
-    // Always include calories even if not explicitly tracked
-    if ('calories' in fullNutritionData && !('calories' in filteredNutritionData)) {
-      filteredNutritionData['calories'] = fullNutritionData['calories'];
+    } else if (!requestHandled && !message) {
+        // Handle cases where only an action or context was sent without a message
+        console.warn("Request not handled and no message provided for OpenAI flow.");
+        responseData = { status: 'error', message: 'Unclear request. Please provide a message.', response_type: 'error_request' };
     }
-    
-    console.log(`Filtered nutrition data from ${Object.keys(fullNutritionData).length} to ${Object.keys(filteredNutritionData).length} nutrients`);
-    return filteredNutritionData;
-    
-  } catch (error) {
-    // Handle any unexpected errors
-    console.error(`Unexpected error in filterNutritionDataForUserGoals: ${error instanceof Error ? error.message : String(error)}`);
-    // Return original data as fallback
-    return { ...fullNutritionData };
+
+    // -----------------------------------------------------------------
+    // --- 4. Final Response Formatting and Return ---
+    // -----------------------------------------------------------------
+
+    // Fallback if no responseData was generated
+    if (!responseData) {
+      console.error("Execution Error: Reached response stage without generating responseData.");
+      responseData = { status: 'error', message: 'Internal server error: Could not process request.', response_type: 'error_unknown' };
+    }
+
+    // Ensure necessary fields exist in the final response object
+    if (!responseData.status) responseData.status = 'error';
+    if (!responseData.message) responseData.message = responseData.status === 'success' ? 'Okay.' : 'An unknown error occurred.';
+    if (!responseData.response_type) responseData.response_type = responseData.status === 'error' ? 'error_unknown' : 'generic_success'; // Assign error type if status is error
+
+    // Clear pending_action unless it was specifically set in *this* turn (recipe analysis prompt)
+    if (responseData.response_type !== 'recipe_analysis_prompt') {
+      responseData.pending_action = null;
+    }
+
+    // Ensure context_for_reply only exists for specific prompt types
+    if (!['saved_recipe_confirmation_prompt', 'clarification_needed_recipe'].includes(responseData.response_type)) {
+        delete responseData.context_for_reply;
+    }
+
+    // --- Store Final Conversation Turn ---
+    const intermediateResponseTypes = ['recipe_analysis_prompt', 'saved_recipe_confirmation_prompt', 'clarification_needed_recipe']; // Added clarification
+    if (userMessageForStorage && responseData.message && responseData.status === 'success' && !intermediateResponseTypes.includes(responseData.response_type)) {
+                    await storeConversation(userId, userMessageForStorage, responseData, supabaseClient);
+                } else {
+        console.log("Skipping final conversation storage for this turn (intermediate step or error).");
+    }
+
+    // --- Determine final HTTP status and Return Response ---
+    const finalStatus = responseData.status === 'success' ? 200 : 500; // Use 500 for internal errors
+
+    console.log(`Responding with status: ${finalStatus}, type: ${responseData.response_type}`);
+    // Return using the final responseData object
+    return new Response(
+        JSON.stringify(responseData),
+        {
+            status: finalStatus,
+            headers: { ...CORS_HEADERS, "Content-Type": "application/json" }
+        }
+    );
+
+  } catch (error) { // Catch Top-Level Errors (Auth, Init, Parsing, etc.)
+    console.error('--- Unhandled Top-Level Error ---:', error);
+    // Ensure a response is always sent
+    const errorResponse = { status: 'error', message: `Server error: ${error instanceof Error ? error.message : String(error)}`, response_type: 'error_unknown' }; // Generic server error
+    return new Response(JSON.stringify(errorResponse), { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
   }
-}
+}); // End Deno.serve

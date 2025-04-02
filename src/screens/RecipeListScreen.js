@@ -5,6 +5,7 @@ import {
   Alert,
   RefreshControl,
   FlatList,
+  TouchableOpacity,
 } from 'react-native';
 import {
   ActivityIndicator,
@@ -14,6 +15,7 @@ import {
   Text as PaperText,
   Title,
   Caption,
+  IconButton,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
@@ -23,12 +25,13 @@ import { quickLogRecipe, fetchRecipeDetails } from '../utils/logUtils';
 import { Colors } from '../constants/colors';
 
 const RecipeListScreen = () => {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const [recipes, setRecipes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [loggingRecipeId, setLoggingRecipeId] = useState(null);
+  const [deletingRecipeId, setDeletingRecipeId] = useState(null);
 
   // Fetch recipes on component mount
   useEffect(() => {
@@ -78,7 +81,7 @@ const RecipeListScreen = () => {
 
   // Updated Handle Log Recipe using the utility function
   const handleLogRecipe = async (recipeId, recipeName) => {
-    if (loggingRecipeId) return; // Prevent double taps
+    if (loggingRecipeId || deletingRecipeId) return; // Prevent double taps
 
     setLoggingRecipeId(recipeId); // Indicate logging started
     try {
@@ -98,8 +101,83 @@ const RecipeListScreen = () => {
     }
   };
 
+  // 3. Implement Delete Handler Function (with confirmation)
+  const handleDeleteRecipe = (recipeId, recipeName) => {
+    if (deletingRecipeId || loggingRecipeId) return; // Prevent actions while another is in progress
+
+    Alert.alert(
+      "Confirm Delete",
+      `Are you sure you want to delete the recipe "${recipeName}"? This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel", onPress: () => console.log("Deletion cancelled") },
+        {
+          text: "Delete",
+          style: "destructive",
+          // Call the function that performs the actual deletion
+          onPress: () => proceedWithDeletion(recipeId),
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
+  // 4. API Call Logic (within helper)
+  const proceedWithDeletion = async (recipeId) => {
+    if (!session?.access_token) {
+        Alert.alert('Error', 'Authentication token not found. Cannot delete recipe.');
+        return;
+    }
+    if (!recipeId) {
+        Alert.alert('Error', 'Recipe ID missing. Cannot delete.');
+        return;
+    }
+
+    setDeletingRecipeId(recipeId); // Show loading state for the specific item
+
+    try {
+        console.log(`Attempting to delete recipe ID: ${recipeId}`);
+        const url = `${supabase.supabaseUrl}/functions/v1/recipe-manager`; // Ensure this URL is correct
+
+        const response = await fetch(url, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({ recipe_id: recipeId }),
+        });
+
+        console.log('Delete response status:', response.status);
+
+        if (response.ok) {
+            // Success (2xx status code)
+            console.log(`Recipe ${recipeId} deleted successfully.`);
+            // Update local state
+            setRecipes(currentRecipes => currentRecipes.filter(recipe => recipe.id !== recipeId));
+            // Optionally show a success toast/message
+            // Alert.alert('Success', 'Recipe deleted.'); // Alert might be too intrusive
+        } else {
+            // Handle error response
+            let errorData = { message: `HTTP error! Status: ${response.status}` };
+            try {
+                errorData = await response.json();
+            } catch (e) {
+                console.log("Could not parse error JSON, using status text.");
+            }
+            console.error('Failed to delete recipe:', errorData);
+            Alert.alert('Deletion Failed', `Could not delete recipe: ${errorData.message || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Error calling delete function:', error);
+        Alert.alert('Error', `An error occurred while trying to delete the recipe: ${error.message}`);
+    } finally {
+        setDeletingRecipeId(null); // Clear loading state
+    }
+  };
+
   // Handle pull-to-refresh
   const handleRefresh = () => {
+    if (loggingRecipeId || deletingRecipeId) return; // Don't refresh during actions
     setRefreshing(true);
     fetchRecipes();
   };
@@ -116,18 +194,31 @@ const RecipeListScreen = () => {
             </Paragraph>
           )}
         </View>
-        <PaperButton
-          mode="contained"
-          onPress={() => handleLogRecipe(item.id, item.recipe_name)}
-          style={styles.logButton}
-          labelStyle={styles.logButtonText}
-          color={Colors.success}
-          icon="plus-circle-outline"
-          disabled={loggingRecipeId === item.id}
-          loading={loggingRecipeId === item.id}
-        >
-          Log
-        </PaperButton>
+        <View style={styles.actionButtons}>
+           <PaperButton
+             mode="contained"
+             onPress={() => handleLogRecipe(item.id, item.recipe_name)}
+             style={[styles.actionButton, styles.logButton]}
+             labelStyle={styles.logButtonText}
+             color={Colors.success}
+             icon="plus-circle-outline"
+             disabled={loggingRecipeId === item.id || !!deletingRecipeId}
+             loading={loggingRecipeId === item.id}
+           >
+             Log
+           </PaperButton>
+           <IconButton
+                icon="delete-outline"
+                color={Colors.error}
+                size={24}
+                onPress={() => handleDeleteRecipe(item.id, item.recipe_name)}
+                disabled={deletingRecipeId === item.id || !!loggingRecipeId}
+                style={styles.deleteButton}
+            />
+            {deletingRecipeId === item.id && (
+                <ActivityIndicator size="small" color={Colors.error} style={styles.deleteSpinner} />
+            )}
+        </View>
       </Card.Content>
     </Card>
   );
@@ -222,6 +313,7 @@ const styles = StyleSheet.create({
   recipeItem: {
     marginBottom: 14,
     backgroundColor: Colors.background,
+    borderRadius: 8,
   },
   cardContent: {
     flexDirection: 'row',
@@ -244,13 +336,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.grey,
   },
+  actionButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  actionButton: {
+      borderRadius: 20,
+  },
   logButton: {
     borderRadius: 20,
-    marginLeft: 10,
   },
   logButtonText: {
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  deleteButton: {
+      marginLeft: 8,
+  },
+  deleteSpinner: {
+        marginLeft: 8,
   },
   errorText: {
     color: Colors.error,

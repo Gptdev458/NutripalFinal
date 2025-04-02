@@ -30,11 +30,11 @@ const ChatScreen = () => {
   const { user, session } = useAuth();
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [isAiThinking, setIsAiThinking] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [isFetchingRecommendations, setIsFetchingRecommendations] = useState(false);
-  const [pendingRecipeData, setPendingRecipeData] = useState(null);
-  const [isSavingRecipe, setIsSavingRecipe] = useState(false);
+  const [pendingAction, setPendingAction] = useState(null);
+  const [isSending, setIsSending] = useState(false);
 
   const flatListRef = useRef(null);
   const netInfo = useNetInfo();
@@ -124,7 +124,7 @@ const ChatScreen = () => {
   };
 
   const handleSend = useCallback(async () => {
-    if (!inputText.trim() || loading || isOffline || isFetchingRecommendations) {
+    if (!inputText.trim() || isSending || isFetchingRecommendations || isAiThinking) {
       if (isOffline) {
           Alert.alert("Offline", "Cannot send messages while offline.");
       }
@@ -137,24 +137,17 @@ const ChatScreen = () => {
       hasToken: !!session?.access_token,
     });
 
+    const userMessageText = inputText.trim();
     const userMessage = {
       id: Date.now().toString(),
-      text: inputText,
+      text: userMessageText,
       sender: 'user',
     };
 
     setMessages(prevMessages => [...prevMessages, userMessage]);
     setInputText('');
-    setLoading(true);
-
-    const thinkingMessageId = (Date.now() + 1).toString();
-    const thinkingMessage = {
-      id: thinkingMessageId,
-      text: '...',
-      sender: 'ai',
-      isLoading: true,
-    };
-    setMessages(prevMessages => [...prevMessages, thinkingMessage]);
+    setIsAiThinking(true);
+    setIsSending(true);
 
     try {
       if (!session?.access_token) {
@@ -164,251 +157,100 @@ const ChatScreen = () => {
       const url = `${supabase.supabaseUrl}/functions/v1/ai-handler-v2`;
       console.log('Attempting fetch to:', url);
 
-      const response = await fetch(
-        url,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({ message: userMessage.text }),
-        }
-      );
+      const requestBody = {
+        message: userMessageText,
+      };
 
-      console.log('Response status:', response.status);
-
-      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== thinkingMessageId));
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      // Check for recipe save confirmation prompt
-      if (data.response_type === 'recipe_save_confirmation_prompt' && data.recipe_data_to_save) {
-        // Store the recipe data in state for later use
-        setPendingRecipeData(data.recipe_data_to_save);
+      if (pendingAction) {
+        requestBody.context = {
+            pending_action: pendingAction
+        };
+        console.log("Sending request with pending action:", pendingAction);
       } else {
-        // Clear any pending recipe data if a different response type is received
-        setPendingRecipeData(null);
+         console.log("Sending request without pending action.");
       }
 
-      const aiMessage = {
-        id: (Date.now() + 2).toString(),
-        text: data.message || "Sorry, I couldn't process that.",
-        sender: 'ai',
-        responseType: data.response_type, // Store the response type in the message
-      };
-      setMessages(prevMessages => [...prevMessages, aiMessage]);
+      let responseOk = false;
+      let responseData = null;
 
-      if (data.response_type === 'needs_recommendation_trigger') {
-        console.log("Received needs_recommendation_trigger signal from backend.");
-        triggerRecommendationFetch();
-      }
-
-    } catch (error) {
-        console.error('Detailed fetch error:', {
-          message: error.message,
-          stack: error.stack,
-          name: error.name,
-          type: error.type
-        });
-        setMessages(prevMessages => prevMessages.filter(msg => msg.id !== thinkingMessageId));
-      console.error('Error sending message:', error);
-      const errorMessage = {
-        id: (Date.now() + 2).toString(),
-        text: `Error: ${error.message || 'Could not get response.'}`,
-        sender: 'ai',
-        isError: true,
-      };
-      setMessages(prevMessages => [...prevMessages, errorMessage]);
-      Alert.alert('Error', `Failed to send message: ${error.message}`);
-    } finally {
-      setLoading(false);
-    }
-  }, [inputText, loading, session, isOffline, user, isFetchingRecommendations, setPendingRecipeData]);
-
-  // Function to handle saving and logging the recipe
-  const handleSaveAndLogRecipe = async () => {
-    if (!pendingRecipeData || !user || !session?.access_token) return;
-    
-    setIsSavingRecipe(true);
-    
-    // Add a temporary "Saving..." message
-    const savingMessageId = Date.now().toString();
-    const savingMessage = {
-      id: savingMessageId,
-      text: "Saving and logging recipe...",
-      sender: 'ai',
-      isLoading: true,
-    };
-    setMessages(prevMessages => [...prevMessages, savingMessage]);
-    
-    try {
-      console.log('Sending save and log request for:', pendingRecipeData.name);
-      
-      // Construct the payload for the backend
-      const payload = {
-        action: "confirm_save_and_log_recipe",
-        recipe_data: pendingRecipeData
-      };
-      
-      // Send the request to the backend
-      const url = `${supabase.supabaseUrl}/functions/v1/ai-handler-v2`;
-      const response = await fetch(
-        url,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify(payload),
-        }
-      );
-      
-      // Remove the temporary saving message
-      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== savingMessageId));
-      
-      if (!response.ok) {
-        const errorText = await response.text(); // Get the raw response
-        let errorMessage = `HTTP error! status: ${response.status}`;
-        
-        try {
-          // Try to parse as JSON
-          const errorData = JSON.parse(errorText);
-          errorMessage = errorData.error || errorData.message || errorMessage;
-        } catch (parseError) {
-          // If parsing fails, use the raw text
-          console.error('Failed to parse error response:', parseError);
-          errorMessage = errorText || errorMessage;
-        }
-        
-        throw new Error(errorMessage);
-      }
-      
-      let data;
       try {
-        const responseText = await response.text();
-        data = JSON.parse(responseText);
-      } catch (parseError) {
-        console.error('Error parsing response:', parseError);
-        throw new Error('Error parsing response from server');
-      }
-      
-      // Add the response message to the chat
-      const confirmationMessage = {
-        id: Date.now().toString(),
-        text: data?.message || `Great! I've saved "${pendingRecipeData.name}" to your recipes and logged it for today.`,
-        sender: 'ai',
-      };
-      setMessages(prevMessages => [...prevMessages, confirmationMessage]);
-      
-      // Clear the pending recipe data
-      setPendingRecipeData(null);
-    } catch (error) {
-      console.error('Error saving/logging recipe:', error);
-      
-      // Remove the temporary saving message
-      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== savingMessageId));
-      
-      // Add error message to the chat
-      const errorMessage = {
-        id: Date.now().toString(),
-        text: `Sorry, I encountered an error saving the recipe: ${error.message}`,
-        sender: 'ai',
-        isError: true,
-      };
-      setMessages(prevMessages => [...prevMessages, errorMessage]);
-      
-      Alert.alert('Error', `Failed to save and log recipe: ${error.message}`);
-    } finally {
-      setIsSavingRecipe(false);
-    }
-  };
+          const response = await fetch(
+            url,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${session.access_token}`,
+              },
+              body: JSON.stringify(requestBody),
+            }
+          );
 
-  // Function to handle just logging the recipe without saving
-  const handleJustLogRecipe = async () => {
-    if (!pendingRecipeData || !user || !session?.access_token) return;
-    
-    setIsSavingRecipe(true);
-    
-    // Add a temporary "Logging..." message
-    const loggingMessageId = Date.now().toString();
-    const loggingMessage = {
-      id: loggingMessageId,
-      text: "Logging recipe...",
-      sender: 'ai',
-      isLoading: true,
-    };
-    setMessages(prevMessages => [...prevMessages, loggingMessage]);
-    
-    try {
-      console.log('Sending log-only request for:', pendingRecipeData.name);
-      
-      // Construct the payload for the backend
-      const payload = {
-        action: "confirm_log_only_recipe",
-        recipe_data: pendingRecipeData
-      };
-      
-      // Send the request to the backend
-      const url = `${supabase.supabaseUrl}/functions/v1/ai-handler-v2`;
-      const response = await fetch(
-        url,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify(payload),
-        }
-      );
-      
-      // Remove the temporary logging message
-      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== loggingMessageId));
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+          console.log('Response status:', response.status);
+          responseOk = response.ok;
+
+          if (!responseOk) {
+              let errorData;
+              try {
+                  errorData = await response.json();
+              } catch (e) {
+                  errorData = { message: await response.text() };
+              }
+              console.error("Backend Error Data:", errorData);
+              throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+          }
+
+          responseData = await response.json();
+          console.log("Received data:", responseData);
+
+      } catch (fetchError) {
+          console.error('Fetch Error:', fetchError);
+          throw fetchError;
+      } finally {
+          setIsAiThinking(false);
+          setIsSending(false);
       }
-      
-      const data = await response.json();
-      
-      // Add the response message to the chat
-      const confirmationMessage = {
-        id: Date.now().toString(),
-        text: data.message || `I've logged "${pendingRecipeData.name}" for today without saving it to your recipes.`,
-        sender: 'ai',
-      };
-      setMessages(prevMessages => [...prevMessages, confirmationMessage]);
-      
-      // Clear the pending recipe data
-      setPendingRecipeData(null);
+
+      if (responseData && responseData.message) {
+          const aiMessage = {
+            id: (Date.now() + 2).toString(),
+            text: responseData.message,
+            sender: 'ai',
+            responseType: responseData.response_type,
+            contextForReply: responseData.context_for_reply || null,
+            newPendingAction: responseData.pending_action || null
+          };
+          setMessages(prevMessages => [...prevMessages, aiMessage]);
+
+          if (responseData.pending_action) {
+            setPendingAction(responseData.pending_action);
+            console.log("Stored NEW pending action for next turn:", responseData.pending_action);
+          } else {
+            setPendingAction(null);
+            console.log("Cleared pending action state.");
+          }
+
+          if (responseData.response_type === 'needs_recommendation_trigger') {
+            console.log("Received needs_recommendation_trigger signal from backend.");
+            triggerRecommendationFetch();
+          }
+      } else {
+          console.error("Invalid response structure received from backend:", responseData);
+          throw new Error("Received an invalid response from the server.");
+      }
+
     } catch (error) {
-      console.error('Error logging recipe:', error);
-      
-      // Remove the temporary logging message
-      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== loggingMessageId));
-      
-      // Add error message to the chat
-      const errorMessage = {
-        id: Date.now().toString(),
-        text: `Sorry, I encountered an error logging the recipe: ${error.message}`,
-        sender: 'ai',
-        isError: true,
-      };
-      setMessages(prevMessages => [...prevMessages, errorMessage]);
-      
-      Alert.alert('Error', `Failed to log recipe: ${error.message}`);
-    } finally {
-      setIsSavingRecipe(false);
+      console.error('Error in handleSend:', error);
+       const errorMessage = {
+         id: (Date.now() + 3).toString(),
+         text: `Sorry, something went wrong: ${error.message}`,
+         sender: 'ai',
+         isError: true,
+       };
+       setMessages(prevMessages => [...prevMessages, errorMessage]);
+       setPendingAction(null);
     }
-  };
+  }, [inputText, isSending, isFetchingRecommendations, isAiThinking, session, pendingAction, isOffline]);
 
   const renderMessageItem = ({ item }) => {
     const isUser = item.sender === 'user';
@@ -417,22 +259,81 @@ const ChatScreen = () => {
     const errorStyle = item.isError ? styles.errorText : {};
 
     const isRecipeConfirmation = 
-      item.responseType === 'recipe_save_confirmation_prompt' && pendingRecipeData;
+      item.responseType === 'recipe_save_confirmation_prompt' && pendingAction;
     
+    const showRecipeAnalysisButtons =
+      item.sender === 'ai' && item.responseType === 'recipe_analysis_prompt' && pendingAction?.type === 'log_analyzed_recipe';
+
+    const showSavedRecipeConfirmButton =
+      item.sender === 'ai' && item.responseType === 'saved_recipe_confirmation_prompt' && item.contextForReply?.recipe_id;
+
+    const handleConfirmation = (confirmationMessage) => {
+        setInputText(confirmationMessage);
+        requestAnimationFrame(() => {
+            handleSend();
+        });
+    };
+
+    const handleDirectAction = async (actionName, contextPayload) => {
+        if (isSending || isAiThinking) return;
+         setIsAiThinking(true);
+         setIsSending(true);
+
+         try {
+             const url = `${supabase.supabaseUrl}/functions/v1/ai-handler-v2`;
+             const requestBody = { action: actionName, context: contextPayload };
+
+             const response = await fetch(url, {
+                 method: 'POST',
+                 headers: {
+                     'Content-Type': 'application/json',
+                     'Authorization': `Bearer ${session.access_token}`,
+                 },
+                 body: JSON.stringify(requestBody),
+             });
+
+             if (!response.ok) {
+                 const errorData = await response.json();
+                 throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+             }
+             const data = await response.json();
+             const aiMessage = {
+                 id: (Date.now() + 2).toString(),
+                 text: data.message,
+                 sender: 'ai',
+                 responseType: data.response_type,
+             };
+             setMessages(prevMessages => [...prevMessages, aiMessage]);
+             setPendingAction(null);
+
+         } catch (error) {
+             console.error('Error sending direct action:', error);
+             const errorMessage = { id: (Date.now() + 3).toString(), text: `Action failed: ${error.message}`, sender: 'ai', isError: true };
+             setMessages(prevMessages => [...prevMessages, errorMessage]);
+         } finally {
+             setIsAiThinking(false);
+             setIsSending(false);
+         }
+     };
+
     return (
       <View style={[styles.messageContainer, isUser ? styles.userMessage : styles.aiMessage]}>
         <View style={styles.textContainer}>
-          <PaperText style={[textStyle, thinkingStyle, errorStyle]}>
-            {item.text}
-          </PaperText>
+          {item.isLoading ? (
+            <ActivityIndicator size="small" color={isUser ? Colors.white : Colors.primary} />
+          ) : (
+            <PaperText style={[textStyle, thinkingStyle, errorStyle]}>
+              {item.text}
+            </PaperText>
+          )}
         </View>
         
         {isRecipeConfirmation && (
           <View style={styles.actionButtonsContainer}>
             <Button
               mode="contained"
-              onPress={handleSaveAndLogRecipe}
-              disabled={isSavingRecipe}
+              onPress={() => handleConfirmation("Save and log")}
+              disabled={isFetchingRecommendations}
               style={styles.actionButton}
               labelStyle={styles.buttonLabel}
             >
@@ -440,14 +341,41 @@ const ChatScreen = () => {
             </Button>
             <Button
               mode="outlined"
-              onPress={handleJustLogRecipe}
-              disabled={isSavingRecipe}
+              onPress={() => handleConfirmation("Log only")}
+              disabled={isFetchingRecommendations}
               style={[styles.actionButton, styles.secondaryButton]}
               labelStyle={styles.secondaryButtonLabel}
             >
               No, just log (don't save)
             </Button>
-            {isSavingRecipe && <ActivityIndicator size="small" style={styles.loader} />}
+            {isFetchingRecommendations && <ActivityIndicator size="small" style={styles.loader} />}
+          </View>
+        )}
+
+        {showRecipeAnalysisButtons && (
+          <View style={styles.buttonContainer}>
+            <Button mode="contained" onPress={() => handleConfirmation("Save and log")} style={styles.confirmButton}>Save & Log</Button>
+            <Button mode="outlined" onPress={() => handleConfirmation("Log only")} style={styles.confirmButton}>Log Only</Button>
+            <Button mode="text" onPress={() => handleConfirmation("Cancel")} style={styles.cancelButton}>Cancel</Button>
+          </View>
+        )}
+
+        {showSavedRecipeConfirmButton && (
+          <View style={styles.buttonContainer}>
+            <Button
+              mode="contained"
+              onPress={() => handleDirectAction('confirm_log_saved_recipe', item.contextForReply)}
+              style={styles.confirmButton}
+            >
+              Log '{item.contextForReply.recipe_name}'
+            </Button>
+            <Button
+                mode="text"
+                onPress={() => handleConfirmation("No, don't log it")}
+                style={styles.cancelButton}
+            >
+                Cancel
+            </Button>
           </View>
         )}
       </View>
@@ -475,6 +403,13 @@ const ChatScreen = () => {
               <Caption style={styles.fetchingStatus}>Fetching recommendations...</Caption>
         )}
 
+        {isAiThinking && (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="small" color={Colors.primary} />
+            <Caption style={styles.loadingText}>NutriPal is thinking...</Caption>
+          </View>
+        )}
+
         <Surface style={styles.inputSurface} elevation={4}>
           <PaperTextInput
             style={styles.input}
@@ -484,9 +419,9 @@ const ChatScreen = () => {
             mode="outlined"
             dense
             multiline
-            editable={!loading && !isOffline && !isFetchingRecommendations}
+            editable={!isAiThinking && !isSending && !isOffline && !isFetchingRecommendations}
           />
-          {loading ? (
+          {(isAiThinking || isSending) ? (
               <ActivityIndicator animating={true} color={Colors.accent} style={styles.sendButtonContainer}/>
           ) : (
              <IconButton
@@ -494,7 +429,7 @@ const ChatScreen = () => {
                color={Colors.accent}
                size={28}
                onPress={handleSend}
-               disabled={!inputText.trim() || loading || isOffline || isFetchingRecommendations}
+               disabled={!inputText.trim() || isAiThinking || isSending || isOffline || isFetchingRecommendations}
                style={styles.sendButtonContainer}
              />
           )}
@@ -595,6 +530,10 @@ const styles = StyleSheet.create({
   },
   sendButtonContainer: {
       margin: 0,
+      width: 48,
+      height: 48,
+      alignItems: 'center',
+      justifyContent: 'center',
   },
   fetchingStatus: {
     textAlign: 'center',
@@ -628,6 +567,34 @@ const styles = StyleSheet.create({
   loader: {
     marginTop: 8,
     alignSelf: 'center',
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    marginTop: 10,
+    marginHorizontal: -5,
+  },
+  confirmButton: {
+    marginHorizontal: 5,
+    marginVertical: 4,
+    flexGrow: 1,
+    minWidth: 100,
+  },
+  cancelButton: {
+      marginHorizontal: 5,
+      marginVertical: 4,
+  },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    backgroundColor: Colors.background,
+  },
+  loadingText: {
+    marginLeft: 8,
+    color: Colors.textSecondary,
   },
 });
 
