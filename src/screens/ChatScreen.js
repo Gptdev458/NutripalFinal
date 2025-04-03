@@ -35,6 +35,7 @@ const ChatScreen = () => {
   const [isOffline, setIsOffline] = useState(false);
   const [isFetchingRecommendations, setIsFetchingRecommendations] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
+  const [contextForNextRequest, setContextForNextRequest] = useState(null);
   const [isSending, setIsSending] = useState(false);
 
   const flatListRef = useRef(null);
@@ -138,6 +139,11 @@ const ChatScreen = () => {
       hasToken: !!session?.access_token,
     });
 
+    // Store context *before* clearing inputText or setting loading states
+    const currentContextToSend = contextForNextRequest;
+    // Clear the context state immediately so it's only used for this message
+    setContextForNextRequest(null); 
+
     const userMessageText = inputText.trim();
     const userMessage = {
       id: Date.now().toString(),
@@ -158,17 +164,32 @@ const ChatScreen = () => {
       const url = `${supabase.supabaseUrl}/functions/v1/ai-handler-v2`;
       console.log('Attempting fetch to:', url);
 
+      // Construct request body with potential context
       const requestBody = {
         message: userMessageText,
+        context: null // Initialize context field
       };
 
+      let combinedContext = {};
+      let contextWasSet = false;
+
       if (pendingAction) {
-        requestBody.context = {
-            pending_action: pendingAction
-        };
-        console.log("Sending request with pending action:", pendingAction);
+        combinedContext.pending_action = pendingAction;
+        contextWasSet = true;
+        console.log("Including pending action in context:", pendingAction);
+      }
+
+      if (currentContextToSend) { // Use the variable captured at the start
+        combinedContext = { ...combinedContext, ...currentContextToSend }; // Merge properties
+        contextWasSet = true;
+        console.log("Including stored context_for_reply in context:", currentContextToSend);
+      }
+
+      if (contextWasSet) {
+        requestBody.context = combinedContext;
       } else {
-         console.log("Sending request without pending action.");
+        delete requestBody.context; // Don't send null context
+        console.log("Sending request without pending action or stored context.");
       }
 
       let responseOk = false;
@@ -231,6 +252,13 @@ const ChatScreen = () => {
             console.log("Cleared pending action state.");
           }
 
+          if (responseData.context_for_reply) {
+             setContextForNextRequest(responseData.context_for_reply);
+             console.log("Stored context_for_reply for next turn:", responseData.context_for_reply);
+          } else {
+             setContextForNextRequest(null);
+          }
+
           if (responseData.response_type === 'needs_recommendation_trigger') {
             console.log("Received needs_recommendation_trigger signal from backend.");
             triggerRecommendationFetch();
@@ -254,7 +282,7 @@ const ChatScreen = () => {
         setIsAiThinking(false);
         setIsSending(false);
     }
-  }, [inputText, isSending, isFetchingRecommendations, isAiThinking, session, pendingAction, isOffline]);
+  }, [inputText, isSending, isFetchingRecommendations, isAiThinking, session, pendingAction, contextForNextRequest, isOffline]);
 
   const renderMessageItem = ({ item }) => {
     const isUser = item.sender === 'user';
@@ -286,6 +314,22 @@ const ChatScreen = () => {
     const isRecipeConfirmation = item.responseType === 'recipe_save_confirmation_prompt' && pendingAction;
     const showRecipeAnalysisButtons = item.sender === 'ai' && item.responseType === 'recipe_analysis_prompt' && pendingAction?.type === 'log_analyzed_recipe';
     const showSavedRecipeConfirmButton = item.sender === 'ai' && item.responseType === 'saved_recipe_confirmation_prompt' && item.contextForReply?.recipe_id;
+    
+    // --- Add Flags for Proactive Recipe Buttons ---
+    const showProactiveSingleConfirm = item.sender === 'ai' && item.responseType === 'saved_recipe_proactive_confirm' && item.contextForReply?.recipe_id;
+    const showProactiveMultipleChoice = item.sender === 'ai' && item.responseType === 'saved_recipe_proactive_multiple' && Array.isArray(item.contextForReply?.matches) && item.contextForReply.matches.length > 0;
+    // --- End Flags ---
+
+    // --- Add console logs for debugging button conditions ---
+    if (item.sender === 'ai') {
+      console.log(`Rendering AI Msg ID: ${item.id}`);
+      console.log(`  Response Type: ${item.responseType}`);
+      console.log(`  ContextForReply: ${JSON.stringify(item.contextForReply)}`);
+      console.log(`  Show Proactive Single Confirm? ${showProactiveSingleConfirm}`);
+      console.log(`  Show Proactive Multiple Choice? ${showProactiveMultipleChoice}`);
+      console.log(`  Show Standard Saved Confirm? ${showSavedRecipeConfirmButton}`);
+    }
+    // --- End console logs ---
 
     const handleConfirmation = (confirmationMessage) => {
         setInputText(confirmationMessage);
@@ -398,6 +442,68 @@ const ChatScreen = () => {
             </Button>
           </View>
         )}
+
+        {/* --- Add Buttons for Proactive Single Confirm --- */}
+        {showProactiveSingleConfirm && (
+          <View style={styles.buttonContainer}>
+            <Button
+              mode="contained"
+              onPress={() => {
+                // Add debug log here
+                console.log(`[Action Button Press] Proactive Single Confirm: Logging recipe ID ${item.contextForReply?.recipe_id}`);
+                handleDirectAction('confirm_log_saved_recipe', item.contextForReply);
+              }}
+              style={styles.confirmButton}
+            >
+              {`Yes, Log '${item.contextForReply.recipe_name}'`}
+            </Button>
+            <Button
+                mode="text"
+                onPress={() => {
+                  // Add debug log here
+                  console.log("[Action Button Press] Proactive Single Confirm: Something else");
+                  handleConfirmation("No, something else");
+                }}
+                style={styles.cancelButton}
+            >
+                Something else
+            </Button>
+          </View>
+        )}
+        {/* --- End Buttons for Proactive Single Confirm --- */}
+
+        {/* --- Add Buttons for Proactive Multiple Choice --- */}
+        {showProactiveMultipleChoice && (
+          <View style={styles.buttonContainerMulti}>
+            {item.contextForReply.matches.map((match) => (
+              <Button
+                key={match.id}
+                mode="outlined"
+                onPress={() => {
+                   // Add debug log here
+                  console.log(`[Action Button Press] Proactive Multi Choice: Logging recipe ID ${match.id}`);
+                  handleDirectAction('confirm_log_saved_recipe', { recipe_id: match.id, recipe_name: match.recipe_name });
+                }}
+                style={[styles.multiChoiceButton, { borderColor: theme.colors.primary }]}
+                labelStyle={[styles.multiChoiceButtonLabel, { color: theme.colors.primary }]}
+              >
+                {`Log '${match.recipe_name}'`}
+              </Button>
+            ))}
+            <Button
+              mode="text"
+              onPress={() => {
+                // Add debug log here
+                console.log("[Action Button Press] Proactive Multi Choice: Something else");
+                handleConfirmation("Something else");
+              }}
+              style={[styles.cancelButton, { marginTop: 5 }]}
+            >
+              Something else
+            </Button>
+          </View>
+        )}
+        {/* --- End Buttons for Proactive Multiple Choice --- */}
       </View>
     );
   };
@@ -571,15 +677,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingBottom: 8,
   },
+  buttonContainerMulti: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    marginTop: 10,
+    paddingHorizontal: 10,
+  },
   confirmButton: {
     marginHorizontal: 5,
-    marginVertical: 4,
-    flexGrow: 1,
-    minWidth: 100,
   },
   cancelButton: {
-      marginHorizontal: 5,
-      marginVertical: 4,
+    marginHorizontal: 5,
+  },
+  multiChoiceButton: {
+    marginVertical: 4,
+  },
+  multiChoiceButtonLabel: {
   },
   loadingContainer: {
     flexDirection: 'row',
