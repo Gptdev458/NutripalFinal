@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, FlatList, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, ScrollView } from 'react-native';
-import { useRoute, useNavigation } from '@react-navigation/native';
+import { useRoute, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
-import { fetchFoodLogsByDateRange, deleteFoodLogEntry } from '../utils/logUtils';
+import { fetchFoodLogsByDateRange, deleteFoodLogEntry, fetchUserGoals } from '../utils/logUtils';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Paragraph, Button as PaperButton, List, Divider, IconButton, Text, Portal, Dialog } from 'react-native-paper';
 import { getNutrientDetails, MASTER_NUTRIENT_LIST } from '../constants/nutrients';
@@ -41,9 +41,10 @@ const LogScreen = () => {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [selectedLogItem, setSelectedLogItem] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [userGoals, setUserGoals] = useState([]);
 
-  // Fetch logs for the current date
-  const fetchLogs = useCallback(async () => {
+  // Fetch logs and goals for the current date
+  const fetchLogsAndGoals = useCallback(async () => {
     if (!user) {
         setIsLoading(false);
         setError('User not authenticated.');
@@ -58,30 +59,45 @@ const LogScreen = () => {
     setIsLoading(true);
     setError(null); // Clear previous errors
     setLogEntries([]); // Clear previous logs
+    setUserGoals([]); // Clear previous goals
 
     try {
       const dateString = formatDate(currentDate);
-      const { data, error: fetchError } = await fetchFoodLogsByDateRange(user.id, dateString, dateString);
+      // Fetch logs and goals concurrently
+      const [logsResponse, goalsResponse] = await Promise.all([
+        fetchFoodLogsByDateRange(user.id, dateString, dateString),
+        fetchUserGoals(user.id)
+      ]);
 
-      if (fetchError) {
-        throw fetchError;
+      if (logsResponse.error) {
+        throw new Error(`Failed to load logs: ${logsResponse.error.message}`);
       }
+       if (goalsResponse.error) {
+           // Don't throw, but log the error and proceed without goals
+           console.warn(`Failed to fetch goals: ${goalsResponse.error.message}`);
+           setError(prev => prev ? `${prev}\nFailed to load goals.` : 'Failed to load goals.');
+       }
 
-      setLogEntries(data || []);
+      setLogEntries(logsResponse.data || []);
+      setUserGoals(goalsResponse.data || []); // Set goals, even if empty
+
     } catch (err) {
-      console.error("Error fetching log entries:", err);
-      setError(`Failed to load logs: ${err.message}`);
-      Alert.alert('Error', `Failed to load logs: ${err.message}`);
+      console.error("Error fetching data:", err);
+      setError(err.message); // Use the combined error message
+      Alert.alert('Error', err.message);
     } finally {
       setIsLoading(false);
     }
   }, [user, currentDate]);
 
-  // Fetch logs when the component mounts or currentDate changes
-  useEffect(() => {
-    fetchLogs();
-    navigation.setOptions({ title: `Log for ${formatDate(currentDate)}` });
-  }, [fetchLogs, navigation, currentDate, theme.colors.primary]);
+  // Use useFocusEffect to refetch when the screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      console.log('LogScreen focused, fetching data...');
+      fetchLogsAndGoals(); // Use the combined fetch function
+      navigation.setOptions({ title: `Log for ${formatDate(currentDate)}` });
+    }, [fetchLogsAndGoals, navigation, currentDate, theme.colors.primary]) // Dependencies for focus effect
+  );
 
   // Function to handle changing the date
   const handleDateChange = (daysToAdd) => {
@@ -205,7 +221,18 @@ const LogScreen = () => {
                   Logged at: {new Date(selectedLogItem.timestamp).toLocaleString()}
                 </Text>
                 <Divider style={{ marginBottom: 16 }} />
-                {MASTER_NUTRIENT_LIST.map(item => renderNutrientDetail(item.key))}
+                {/* Iterate through tracked goals and display if present in the log item */}
+                {userGoals.length > 0 ? (
+                  userGoals.map(goal => renderNutrientDetail(goal.nutrient))
+                ) : (
+                   // Show all nutrients if no goals are set, or a message?
+                   // For now, let's show a message if no goals are tracked.
+                   <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                       No nutrient goals are currently being tracked. Set goals in Settings to see them here.
+                   </Text>
+                   // Alternatively, show all nutrients if no goals are set:
+                   // MASTER_NUTRIENT_LIST.map(item => renderNutrientDetail(item.key))
+                )}
               </>
             )}
           </ScrollView>
@@ -257,7 +284,7 @@ const LogScreen = () => {
         ) : error ? (
           <View style={styles.centered}>
             <Text style={[styles.errorText, { color: theme.colors.error }]}>{error}</Text>
-            <PaperButton mode="contained" onPress={fetchLogs}>Retry</PaperButton>
+            <PaperButton mode="contained" onPress={fetchLogsAndGoals}>Retry</PaperButton>
           </View>
         ) : (
           <FlatList

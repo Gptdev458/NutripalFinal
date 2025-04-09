@@ -54,13 +54,13 @@ const availableTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         type: 'function',
         function: {
             name: 'findSavedRecipeByName',
-            description: "Searches the user's saved recipes based on a name or description provided by the user. Use this if the user mentions logging something they might have saved previously (e.g., 'log my morning smoothie', 'add the chili recipe').",
+            description: "Searches the user's saved recipes by name. **Use this FIRST** whenever the user asks to log a specific named item (e.g., 'log my morning smoothie', 'add the chili recipe', 'log post workout shake') as they might have saved it before. Only use other tools if this search finds nothing or the user confirms it's not saved.",
             parameters: {
                 type: 'object',
                 properties: {
                     query: {
                         type: 'string',
-                        description: "The name or keywords from the user's message to search for in their saved recipes. E.g., 'morning smoothie', 'chili'."
+                        description: "The name or keywords from the user's message to search for in their saved recipes. E.g., 'morning smoothie', 'chili', 'post workout shake'."
                     }
                 },
                 required: ['query']
@@ -92,7 +92,7 @@ const availableTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         type: 'function',
         function: {
             name: 'clarifyDishType',
-            description: "Use this function when the user mentions a dish name that typically involves multiple ingredients (e.g., 'fried rice', 'soup', 'salad', 'pasta', 'smoothie', 'curry') BUT **does not** provide ingredients or specify if it's homemade/standard/pre-packaged. This tool asks the user for clarification.",
+            description: "Use this function ONLY when the user mentions a general dish name that usually requires multiple ingredients (e.g., 'fried rice', 'soup', 'salad', 'pasta', 'curry') AND **does not** provide ingredients or specify if it's homemade/standard/pre-packaged, AND a search for a saved recipe with that name is unlikely to succeed or has already failed. This tool asks the user for clarification. **Do not use** for items like 'smoothie' or 'shake' initially; try `findSavedRecipeByName` first for those.",
             parameters: {
                 type: 'object',
                 properties: {
@@ -417,22 +417,24 @@ async function storeConversation(userId: string, userMessage: string | null, aiR
 /** Finds saved recipes by name (Tool: findSavedRecipeByName) */
 async function executeFindSavedRecipeByName(query: string, userId: string, supabaseClient: SupabaseClient): Promise<ToolResult> {
     console.log(`Executing tool: findSavedRecipeByName for query '${query}' for user ${userId}`);
-    const trimmedQuery = query.trim();
+    const trimmedQuery = (query || '').trim();
     if (!trimmedQuery) {
-        return { status: 'error', message: 'Search query cannot be empty.' };
+        return { status: 'error', message: 'Recipe name cannot be empty.', found: false };
     }
 
     try {
         const { data: matches, error: fetchError } = await supabaseClient
             .from('user_recipes')
-            .select('id, recipe_name') // Only select necessary fields
+            .select('id, recipe_name, description')
             .eq('user_id', userId)
-            .ilike('recipe_name', `%${trimmedQuery}%`) // Case-insensitive fuzzy search
-            .limit(5); // Limit the number of results
+            .ilike('recipe_name', `%${trimmedQuery}%`)
+            .limit(5);
 
         if (fetchError) {
             console.error(`DB Error searching recipes for query '${trimmedQuery}':`, fetchError.message);
             throw new Error(`Database error during recipe search: ${fetchError.message}`);
+        } else {
+            console.log(`Query successful. Found ${matches?.length ?? 0} recipes matching '${trimmedQuery}'.`);
         }
 
         if (!matches || matches.length === 0) {
@@ -445,7 +447,7 @@ async function executeFindSavedRecipeByName(query: string, userId: string, supab
             status: 'success',
             found: true,
             count: matches.length,
-            matches: matches // Array of {id, recipe_name}
+            matches: matches // Now includes {id, recipe_name, description}
         };
 
     } catch (error) {
@@ -819,10 +821,6 @@ Deno.serve(async (req: Request) => {
     }
     const openai = new OpenAI({ apiKey: openaiApiKey });
 
-    // --- REMOVE detailed context logging --- 
-    // console.log("Received Context Object:", JSON.stringify(context, null, 2));
-    // --- End REMOVE context logging ---
-
     // -----------------------------------------------------------------
     // --- 2. Handle Pre-OpenAI Actions (Confirmations, Direct Actions) ---
     // -----------------------------------------------------------------
@@ -1014,12 +1012,19 @@ Deno.serve(async (req: Request) => {
                               } else { // Multiple matches
                                   console.log(`Proactive search found ${findResult.count} matches. Prompting selection.`);
                                   const limitedMatches = findResult.matches.slice(0, 5);
-                                  const recipeNames = limitedMatches.map((r: any) => `'${r.recipe_name}'`).join(", ");
+                                  // --- Modify message generation to potentially include description --- 
+                                  const recipeOptionsText = limitedMatches.map((r: any) => 
+                                      r.description 
+                                          ? `'${r.recipe_name}' (${r.description.substring(0, 30)}${r.description.length > 30 ? '...' : ''})` 
+                                          : `'${r.recipe_name}'`
+                                  ).join(", ");
                                   responseData = {
                                       status: 'success',
-                                      message: `I found a few saved recipes matching '${dishNameToSearch}': ${recipeNames}. Which one did you mean, or is it something else?`,
+                                      // Updated message to show description snippets
+                                      message: `I found a few saved recipes matching '${dishNameToSearch}': ${recipeOptionsText}. Which one did you mean, or is it something else?`,
                                       response_type: 'saved_recipe_proactive_multiple',
-                                      context_for_reply: { matches: limitedMatches.map((r: any) => ({ id: r.id, recipe_name: r.recipe_name })) }
+                                      // Ensure the full matches array (including description) is passed
+                                      context_for_reply: { matches: limitedMatches } // Pass the full limitedMatches including description
                                   };
                                   requestHandled = true;
                               }
@@ -1068,8 +1073,6 @@ Deno.serve(async (req: Request) => {
                               switch (functionName) {
                                   case 'logGenericFoodItem':
                                       toolResult = await executeLogGenericFoodItem(functionArgs.food_description, userId, supabaseClient, openai);
-                                      // --- Add Log --- 
-                                      console.log(`DEBUG: Result from executeLogGenericFoodItem: ${JSON.stringify(toolResult)}`);
                                       break;
                                   case 'findSavedRecipeByName':
                                       toolResult = await executeFindSavedRecipeByName(functionArgs.query, userId, supabaseClient);
@@ -1091,24 +1094,38 @@ Deno.serve(async (req: Request) => {
 
                           // --- Handle specific tool results IF NOT CLARIFICATION ---
                           if (toolResult) { 
-                             // ... existing logic for handling single recipe found (from EXPLICIT search), analysis prompt ...
-                            
-                              // --- Append general tool result for the second OpenAI call ---
-                              const toolResultContent = JSON.stringify(toolResult);
-                              messages.push({
-                                  tool_call_id: toolCall.id,
-                                  role: "tool",
-                                  content: toolResultContent,
-                              });
+                              // --- Special Handling for Analyze Recipe Result --- 
+                              if (functionName === 'analyzeRecipeIngredients' && toolResult.status === 'success' && toolResult.analysis) {
+                                  console.log("AnalyzeRecipeIngredients succeeded. Preparing recipe analysis prompt.");
+                                  responseData = {
+                                      status: 'success',
+                                      // Message summarizing analysis - AI will generate a better one in the confirmation step if saved/logged.
+                                      message: `I've analyzed the ingredients for "${toolResult.analysis.recipe_name || 'your recipe'}". It has approximately ${toolResult.analysis.nutrition_summary?.calories || 'N/A'} calories. Would you like to Save & Log this recipe, Log it Once, or Cancel?`,
+                                      response_type: 'recipe_analysis_prompt',
+                                      pending_action: { 
+                                          type: 'log_analyzed_recipe',
+                                          analysis: toolResult.analysis // Pass the full analysis data
+                                      }
+                                  };
+                                  requestHandled = true; // Mark as handled to skip the second OpenAI call
+                              }
+                              // --- End Special Handling ---
+                              
+                              // --- Append general tool result for the second OpenAI call (only if not handled above) ---
+                              if (!requestHandled) { // Only append if analyzeRecipeIngredients didn't handle it
+                                  const toolResultContent = JSON.stringify(toolResult);
+                                  messages.push({
+                                      tool_call_id: toolCall.id,
+                                      role: "tool",
+                                      content: toolResultContent,
+                                  });
+                              }
                           }
                       } // End of for loop through tool calls
                   }
 
-                  // --- Second OpenAI Call (if not handled by confirmation/proactive prompts) ---
+                  // --- Second OpenAI Call (if not handled by confirmation/proactive prompts/analysis prompt) ---
                   if (!requestHandled) {
-                     // --- Add Log --- 
-                     console.log("DEBUG: Preparing for Second OpenAI call. requestHandled is false.");
-                     // --- End Log --- 
                      console.log("Making second OpenAI call with tool results...");
                      const finalApiResponse = await openai.chat.completions.create({
                          model: "gpt-4o-mini", // Or your preferred model
@@ -1142,7 +1159,7 @@ Deno.serve(async (req: Request) => {
                          finalResponseType = 'saved_recipe_logged';
                      } else if (successfulToolName === 'answerGeneralQuestion') {
                          finalResponseType = 'answer_provided';
-                     } // Add other mappings as needed
+                     } 
                      
                      responseData = {
                          status: 'success',
@@ -1177,10 +1194,6 @@ Deno.serve(async (req: Request) => {
         console.warn("Request not handled and no message provided for OpenAI flow.");
         responseData = { status: 'error', message: 'Unclear request. Please provide a message.', response_type: 'error_request' };
     }
-
-    // --- Add Log before Section 4 ---
-    console.log("DEBUG: Entering Section 4. responseData state:", JSON.stringify(responseData, null, 2));
-    // --- End Log ---
 
     // -----------------------------------------------------------------
     // --- 4. Final Response Formatting and Return ---

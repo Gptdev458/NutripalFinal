@@ -151,6 +151,15 @@ const ChatScreen = () => {
       sender: 'user',
     };
 
+    // --- Add history BEFORE setting state --- 
+    const MAX_HISTORY_FRONTEND = 8;
+    const recentHistory = messages.slice(-MAX_HISTORY_FRONTEND); // Get last N messages
+    const historyForBackend = recentHistory.map(msg => ({
+      sender: msg.sender, // 'user' or 'ai'
+      text: msg.text 
+    }));
+    // --- End add history ---
+
     setMessages(prevMessages => [...prevMessages, userMessage]);
     setInputText('');
     setIsAiThinking(true);
@@ -164,11 +173,13 @@ const ChatScreen = () => {
       const url = `${supabase.supabaseUrl}/functions/v1/ai-handler-v2`;
       console.log('Attempting fetch to:', url);
 
-      // Construct request body with potential context
+      // --- Modify requestBody construction --- 
       const requestBody = {
         message: userMessageText,
+        conversation_history: historyForBackend, // Add the prepared history
         context: null // Initialize context field
       };
+      // --- End modification ---
 
       let combinedContext = {};
       let contextWasSet = false;
@@ -188,7 +199,7 @@ const ChatScreen = () => {
       if (contextWasSet) {
         requestBody.context = combinedContext;
       } else {
-        delete requestBody.context; // Don't send null context
+        delete requestBody.context; 
         console.log("Sending request without pending action or stored context.");
       }
 
