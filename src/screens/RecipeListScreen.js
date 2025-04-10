@@ -164,6 +164,7 @@ const RecipeListScreen = () => {
         if (response.ok) {
             console.log(`Recipe ${recipeId} deleted successfully.`);
             setRecipes(currentRecipes => currentRecipes.filter(recipe => recipe.id !== recipeId));
+            setIsRecipeModalVisible(false);
         } else {
             let errorData = { message: `HTTP error! Status: ${response.status}` };
             try {

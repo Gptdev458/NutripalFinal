@@ -20,6 +20,7 @@ import {
   Surface,
   Banner,
   Divider,
+  RadioButton,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
@@ -32,6 +33,7 @@ const GoalSettingsScreen = ({ navigation }) => {
   const theme = useSafeTheme();
   const [trackedNutrients, setTrackedNutrients] = useState({});
   const [targetValues, setTargetValues] = useState({});
+  const [goalTypes, setGoalTypes] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -63,7 +65,7 @@ const GoalSettingsScreen = ({ navigation }) => {
       const [goalsResponse, profileResponse] = await Promise.all([
         supabase
           .from('user_goals')
-          .select('nutrient, target_value')
+          .select('nutrient, target_value, goal_type')
           .eq('user_id', user.id),
         fetchUserProfile(user.id)
       ]);
@@ -71,14 +73,17 @@ const GoalSettingsScreen = ({ navigation }) => {
       if (goalsResponse.error) throw new Error(`Failed to fetch goals: ${goalsResponse.error.message}`);
       const tracked = {};
       const targets = {};
+      const types = {};
       if (goalsResponse.data) {
         goalsResponse.data.forEach(goal => {
           tracked[goal.nutrient] = true;
           targets[goal.nutrient] = goal.target_value?.toString() || '';
+          types[goal.nutrient] = goal.goal_type || 'goal';
         });
       }
       setTrackedNutrients(tracked);
       setTargetValues(targets);
+      setGoalTypes(types);
       setLoading(false);
 
       if (profileResponse.error) {
@@ -128,16 +133,32 @@ const GoalSettingsScreen = ({ navigation }) => {
   }, [loadInitialData]);
 
   const toggleNutrient = (nutrientKey) => {
+    const isCurrentlyTracked = trackedNutrients[nutrientKey];
     setTrackedNutrients(prev => ({
       ...prev,
-      [nutrientKey]: !prev[nutrientKey],
+      [nutrientKey]: !isCurrentlyTracked,
     }));
-    if (trackedNutrients[nutrientKey]) {
+
+    if (isCurrentlyTracked) {
       setTargetValues(prev => {
         const newTargets = { ...prev };
         delete newTargets[nutrientKey];
         return newTargets;
       });
+      setGoalTypes(prev => {
+        const newTypes = { ...prev };
+        delete newTypes[nutrientKey];
+        return newTypes;
+      });
+    } else {
+      setGoalTypes(prev => ({
+          ...prev,
+          [nutrientKey]: 'goal'
+      }));
+      const recommendedValue = goalRecommendations?.[nutrientKey];
+       if (recommendedValue !== undefined) {
+           updateTargetValue(nutrientKey, recommendedValue.toString());
+       }
     }
   };
 
@@ -176,6 +197,7 @@ const GoalSettingsScreen = ({ navigation }) => {
           nutrient: key,
           target_value: targetValue,
           unit: nutrientDetail ? nutrientDetail.unit : null,
+          goal_type: goalTypes[key] || 'goal',
         };
       })
        .filter(goal => goal !== null);
@@ -288,36 +310,49 @@ const GoalSettingsScreen = ({ navigation }) => {
 
   const renderNutrientItem = ({ item }) => {
     const isTracked = trackedNutrients[item.key];
+    const currentTarget = targetValues[item.key] || '';
+    const currentType = goalTypes[item.key] || 'goal';
     const placeholder = getPlaceholder(item);
 
     return (
-      <View style={styles.nutrientItemContainer}>
-        <View style={styles.nutrientInfo}>
-          <Text style={[styles.nutrientName, { color: theme.colors.text }]}>{item.name}</Text>
-          <Text style={[styles.nutrientUnit, { color: theme.colors.textSecondary }]}>{item.unit}</Text>
-        </View>
-        <View style={styles.nutrientControls}>
-          {isTracked && (
-            <PaperTextInput
-              style={[styles.targetInput, { backgroundColor: theme.colors.background }]}
-              value={targetValues[item.key] || ''}
-              onChangeText={(text) => updateTargetValue(item.key, text)}
-              placeholder={placeholder}
-              keyboardType="numeric"
-              mode="outlined"
-              dense
-              disabled={saving}
-            />
-          )}
+      <Surface style={[styles.itemSurface, { backgroundColor: theme.colors.elevation.level2 }]} elevation={1}>
+        <View style={styles.itemHeader}>
+          <PaperText style={{ flex: 1, color: theme.colors.text }} variant="titleMedium">{item.name} ({item.unit})</PaperText>
           <PaperSwitch
             value={isTracked}
             onValueChange={() => toggleNutrient(item.key)}
             color={theme.colors.primary}
-            style={styles.switchControl}
-            disabled={saving}
           />
         </View>
-      </View>
+        {isTracked && (
+          <View style={styles.itemBody}>
+            <PaperTextInput
+              label={`Target ${item.name}`}
+              value={currentTarget}
+              placeholder={placeholder}
+              onChangeText={(value) => updateTargetValue(item.key, value)}
+              keyboardType="numeric"
+              mode="outlined"
+              style={styles.input}
+              dense
+            />
+            <View style={styles.radioButtonContainer}>
+              <PaperText variant="labelMedium" style={{ color: theme.colors.textSecondary, marginBottom: 4 }}>Type:</PaperText>
+              <RadioButton.Group
+                onValueChange={newValue => {
+                  setGoalTypes(prev => ({ ...prev, [item.key]: newValue }));
+                }}
+                value={currentType}
+              >
+                <View style={styles.radioButtonRow}>
+                    <RadioButton.Item label="Goal" value="goal" status={currentType === 'goal' ? 'checked' : 'unchecked'} style={styles.radioButtonItem} labelStyle={styles.radioLabel} />
+                    <RadioButton.Item label="Limit" value="limit" status={currentType === 'limit' ? 'checked' : 'unchecked'} style={styles.radioButtonItem} labelStyle={styles.radioLabel} />
+                </View>
+              </RadioButton.Group>
+            </View>
+          </View>
+        )}
+      </Surface>
     );
   };
 
@@ -450,36 +485,42 @@ const styles = StyleSheet.create({
   calcButton: {
     marginTop: 12,
   },
-  nutrientItemContainer: {
+  itemSurface: {
+    padding: 12,
+    marginVertical: 6,
+    borderRadius: 8,
+  },
+  itemHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    marginBottom: 8,
   },
-  nutrientInfo: {
-    flex: 1,
-    marginRight: 10,
+  itemBody: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
   },
-  nutrientName: {
-    fontSize: 16,
-    marginBottom: 2,
+  input: {
+    marginBottom: 8,
   },
-  nutrientUnit: {
-    fontSize: 12,
+  radioButtonContainer: {
+    marginTop: 8,
   },
-  nutrientControls: {
+  radioButtonRow: {
     flexDirection: 'row',
+    justifyContent: 'flex-start',
     alignItems: 'center',
+    marginLeft: -8,
   },
-  targetInput: {
-    width: 100,
-    marginRight: 10,
-    textAlign: 'right',
-    paddingVertical: 0,
+  radioButtonItem: {
+    paddingHorizontal: 0,
+    marginHorizontal: 0,
   },
-  switchControl: {
-  },
+   radioLabel: {
+     fontSize: 14,
+     marginLeft: -4,
+   },
   saveArea: {
     padding: 16,
     borderTopWidth: 1,

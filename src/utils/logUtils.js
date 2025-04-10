@@ -150,7 +150,7 @@ export const fetchUserGoals = async (userId) => {
 
     const { data, error } = await supabase
       .from('user_goals')
-      .select('id, nutrient, target_value, unit') // Select relevant columns for goals
+      .select('id, nutrient, target_value, unit, goal_type') // Select relevant columns for goals, including goal_type
       .eq('user_id', userId); // Filter by user ID
 
     if (error) {

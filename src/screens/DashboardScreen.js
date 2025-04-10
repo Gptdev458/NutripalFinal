@@ -20,6 +20,8 @@ import {
   Caption,
   Divider, // Import Divider
   List,    // Import List for log items
+  DataTable, // Import DataTable
+  Icon, // Import Icon
 } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
@@ -95,32 +97,53 @@ const DashboardScreen = ({ navigation }) => {
     let data = [];
     let todaysTotals = {};
 
-    // Calculate totals from logs for relevant nutrients (e.g., calories)
+    // Calculate totals from logs
     logs.forEach(log => {
         Object.keys(log).forEach(key => {
-            if (typeof log[key] === 'number') {
+            // Aggregate only if the key corresponds to a known nutrient and value is numeric
+            if (MASTER_NUTRIENT_LIST.some(n => n.key === key) && typeof log[key] === 'number') {
                 todaysTotals[key] = (todaysTotals[key] || 0) + log[key];
             }
         });
     });
 
-
-    // Goals Section
+    // Goals Section Header
     data.push({ type: 'header', title: 'Nutrition Goals' });
+
     if (goals.length > 0) {
-      goals.forEach(goal => {
+      // Create a dedicated array for goal items to be potentially used by DataTable
+      const goalItems = goals.map(goal => {
         const nutrientDetail = getNutrientDetails(goal.nutrient);
-        if (nutrientDetail) {
-          data.push({
-            type: 'goal',
-            key: goal.nutrient,
-            name: nutrientDetail.name,
-            target: goal.target_value,
-            unit: nutrientDetail.unit,
-            current: todaysTotals[goal.nutrient] || 0,
-          });
+        if (!nutrientDetail) return null; // Skip if nutrient details aren't found
+
+        const currentTotal = todaysTotals[goal.nutrient] || 0;
+        const targetValue = goal.target_value || 0;
+        let progressPercentage = 0;
+        if (targetValue > 0) {
+            progressPercentage = (currentTotal / targetValue) * 100;
         }
-      });
+        // For limits, exceeding 100% is still calculated the same way for display
+        // progressPercentage = targetValue > 0 ? (currentTotal / targetValue) * 100 : 0;
+
+
+        return {
+          type: 'goal', // Keep type for potential filtering later if needed
+          key: goal.nutrient,
+          name: nutrientDetail.name,
+          goalType: goal.goal_type || 'goal', // Get goal_type, default to 'goal'
+          target: targetValue,
+          unit: nutrientDetail.unit,
+          current: currentTotal,
+          progress: progressPercentage // Store calculated percentage
+        };
+      }).filter(item => item !== null); // Filter out any null entries
+
+      if (goalItems.length > 0) {
+          data.push({ type: 'goalTable', items: goalItems }); // Push one item representing the whole table
+      } else {
+          data.push({ type: 'noGoalsMessage' });
+      }
+
     } else {
       data.push({ type: 'noGoalsMessage' });
     }
@@ -128,11 +151,12 @@ const DashboardScreen = ({ navigation }) => {
     // Today's Log Section Header
     data.push({ type: 'header', title: "Today's Log" });
 
-    // Replace detailed logs with a summary item or no logs message
+    // Log Summary or No Logs Message
     if (logs.length > 0) {
         data.push({
             type: 'logSummary',
             count: logs.length,
+            // Include relevant totals in the summary
             calories: todaysTotals.calories || 0,
             protein: todaysTotals.protein || 0,
             carbohydrates: todaysTotals.carbohydrates || 0,
@@ -141,7 +165,6 @@ const DashboardScreen = ({ navigation }) => {
     } else {
         data.push({ type: 'noLogsMessage' });
     }
-
 
     setDashboardData(data);
   };
@@ -152,30 +175,6 @@ const DashboardScreen = ({ navigation }) => {
   }, [fetchDashboardData]);
 
   // --- Render Functions for Different Item Types ---
-
-  const renderGoalItem = (item) => {
-    const progress = item.target > 0 ? Math.min(item.current / item.target, 1) : 0;
-    const progressPercentage = (progress * 100).toFixed(0);
-    const currentRounded = item.current.toFixed(0);
-    const targetRounded = item.target.toFixed(0);
-    let progressBarColor = theme.colors.primary;
-    if (item.current > item.target && item.target > 0) {
-        progressBarColor = theme.colors.warning;
-    }
-
-    return (
-      <Card style={[styles.cardVertical, { backgroundColor: theme.colors.surface }]}>
-        <Card.Content>
-          <Text variant="titleMedium" style={[styles.cardTitleVertical, { color: theme.colors.text }]}>{item.name}</Text>
-          <ProgressBar progress={progress} color={progressBarColor} style={styles.progressBarVertical} />
-          <View style={styles.progressTextContainerVertical}>
-            <Text variant="bodySmall" style={[styles.progressTextVertical, { color: theme.colors.textSecondary }]}>{`${currentRounded} / ${targetRounded} ${item.unit}`}</Text>
-            <Text variant="bodySmall" style={[styles.progressPercentageText, { color: theme.colors.textSecondary }]}>{`${progressPercentage}%`}</Text>
-          </View>
-        </Card.Content>
-      </Card>
-    );
-  };
 
   const renderHeaderItem = (item) => (
       <View style={styles.sectionHeader}>
@@ -201,67 +200,87 @@ const DashboardScreen = ({ navigation }) => {
         <View style={styles.emptyContainer}>
             <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>No food logged today.</Text>
             <Button
-               mode="outlined"
-               onPress={() => navHook.navigate('Chat')}
-               icon="message-plus-outline"
+               mode="contained"
+               onPress={() => navHook.navigate('LogTab', { screen: 'LogFood' })}
+               icon="plus-circle-outline"
                style={styles.actionButton}
             >
-               Log Food via Chat
+               Log Your First Meal
             </Button>
         </View>
     );
 
   // NEW function to render the log summary item
   const renderLogSummaryItem = (item) => (
-    <TouchableOpacity
-       onPress={() => navigation.navigate('LogScreen', { date: todayDateString })}
-    >
-      <List.Item
-        title={`Today's Log (${item.count} items)`}
-        description={`Cals: ${Math.round(item.calories)} | P: ${Math.round(item.protein)}g | C: ${Math.round(item.carbohydrates)}g | F: ${Math.round(item.fat)}g`}
-        left={props => <List.Icon {...props} icon="notebook-outline" color={theme.colors.primary} />}
-        right={props => <List.Icon {...props} icon="chevron-right" color={theme.colors.textSecondary} />}
-        style={[styles.summaryItem, { backgroundColor: theme.colors.surface }]}
-        titleStyle={[styles.summaryTitle, { color: theme.colors.text }]}
-        descriptionStyle={[styles.summaryDescription, { color: theme.colors.textSecondary }]}
-      />
-    </TouchableOpacity>
+    <Card style={[styles.summaryCard, { backgroundColor: theme.colors.surface }]}>
+        <Card.Content>
+            <Text variant="titleMedium">{item.count} Log Entries Today</Text>
+            <Caption>Summary: {item.calories.toFixed(0)} kcal, {item.protein.toFixed(0)}g P, {item.carbohydrates.toFixed(0)}g C, {item.fat.toFixed(0)}g F</Caption>
+             <Button
+                mode="contained-tonal"
+                onPress={() => navHook.navigate('LogScreen')}
+                style={{ marginTop: 10 }}
+              >
+                View Log Details
+              </Button>
+        </Card.Content>
+    </Card>
   );
 
-  const renderQuickLogRecipeItem = (item) => (
-    <Button
-      key={item.id}
-      mode="outlined" // Or "contained" based on desired appearance
-      onPress={() => handleQuickLogRecipe(item)}
-      style={styles.quickLogButton}
-      labelStyle={styles.quickLogButtonText} // Apply the updated style here
-      disabled={item.logging}
-      loading={item.logging}
-      icon="plus"
-      compact // Makes the button slightly smaller vertically
-      // Use children prop for more control if labelStyle doesn't work reliably
-      // children={<Text style={styles.quickLogButtonText} numberOfLines={0}>{item.recipe_name}</Text>}
-    >
-      {/* The text here is handled by Button's internal label */}
-      {item.recipe_name}
-    </Button>
-  );
-
-  // --- Main renderItem function for the FlatList ---
-  const renderDashboardItem = ({ item }) => {
+  // --- Main Render Function for Items ---
+  const renderItem = ({ item }) => {
     switch (item.type) {
       case 'header':
         return renderHeaderItem(item);
-      case 'goal':
-        return renderGoalItem(item);
-      case 'logSummary':
-          return renderLogSummaryItem(item);
+      case 'goalTable': // Handle the new goalTable type
+        return (
+          <Card style={[styles.card, { backgroundColor: theme.colors.surface }]}>
+            <Card.Content style={styles.cardContentPadding}>
+              <DataTable>
+                <DataTable.Header style={[styles.tableHeader, { borderBottomColor: theme.colors.outline }]}>
+                  <DataTable.Title style={[styles.tableHeaderCell, { flex: 3.5 }]}><Text style={styles.tableHeaderText}>Name</Text></DataTable.Title>
+                  <DataTable.Title style={[styles.tableHeaderCell, { flex: 1.5 }]}><Text style={styles.tableHeaderText}>Type</Text></DataTable.Title>
+                  <DataTable.Title style={[styles.tableHeaderCell, { flex: 2.5 }]} numeric><Text style={[styles.tableHeaderText, styles.numericHeaderText]}>Amount</Text></DataTable.Title>
+                  <DataTable.Title style={[styles.tableHeaderCell, styles.progressHeaderCell, { flex: 2.5 }]} numeric><Text style={[styles.tableHeaderText, styles.numericHeaderText]}>Progress</Text></DataTable.Title>
+                </DataTable.Header>
+
+                {item.items.map((goal) => {
+                  const displayPercentage = goal.progress.toFixed(0);
+                  // Determine text color based on goal type and progress
+                  let percentageColor = theme.colors.textSecondary;
+                  const progressValue = goal.progress;
+                  if (goal.goalType === 'goal') {
+                    if (progressValue >= 50) { percentageColor = theme.colors.primary; }
+                  } else if (goal.goalType === 'limit') {
+                    if (progressValue > 100) { percentageColor = theme.colors.error; }
+                    else if (progressValue >= 50) { percentageColor = theme.colors.primary; }
+                  }
+
+                  return (
+                    <DataTable.Row key={goal.key} style={[styles.tableRow, { borderBottomColor: theme.colors.outlineVariant }]}>
+                      <DataTable.Cell style={[styles.tableCell, { flex: 3.5 }]}><Text style={styles.tableCellText} numberOfLines={2}>{goal.name}</Text></DataTable.Cell>
+                      <DataTable.Cell style={[styles.tableCell, { flex: 1.5 }]}><Text style={styles.tableCellMutedText}>{goal.goalType}</Text></DataTable.Cell>
+                      <DataTable.Cell style={[styles.tableCell, { flex: 2.5 }]} numeric>
+                         <Text style={[styles.tableCellText, styles.numericCellText]}>{`${goal.current.toFixed(0)} / ${goal.target.toFixed(0)} ${goal.unit}`}</Text>
+                      </DataTable.Cell>
+                      <DataTable.Cell style={[styles.tableCell, styles.progressCell, { flex: 2.5 }]}>
+                        <Text style={[styles.progressText, { color: percentageColor }]}>{`${displayPercentage}%`}</Text>
+                      </DataTable.Cell>
+                    </DataTable.Row>
+                  );
+                })}
+              </DataTable>
+            </Card.Content>
+          </Card>
+        );
       case 'noGoalsMessage':
         return renderNoGoalsMessage();
+      case 'logSummary':
+        return renderLogSummaryItem(item);
       case 'noLogsMessage':
         return renderNoLogsMessage();
       default:
-        return null; // Or a placeholder for unknown types
+        return null;
     }
   };
 
@@ -309,15 +328,34 @@ const DashboardScreen = ({ navigation }) => {
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: theme.colors.background }]}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary}/>}
       contentContainerStyle={styles.contentContainer}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
     >
+      {/* Map over dashboardData */} 
       {dashboardData.map((item, index) => (
-        <View key={item.key || `${item.type}-${index}`}>
-            {renderDashboardItem({ item })}
-            {item.type === 'header' && index > 0 && index < dashboardData.length -1 && <Divider style={styles.divider} />}
-        </View>
+          <View key={`${item.type}-${index}`}>{renderItem({ item })}</View>
       ))}
+
+      {/* Updated Analytics Navigation Link */}
+      <TouchableOpacity onPress={() => navHook.navigate('AnalyticsScreen')} activeOpacity={0.8}>
+          <Card style={[styles.card, styles.analyticsCard, { backgroundColor: theme.colors.surfaceVariant }]}>
+            <Card.Content style={styles.analyticsCardContent}>
+                 <Icon 
+                    source="chart-line" 
+                    size={20} 
+                    color={theme.colors.primary} 
+                 />
+                 <Text style={[styles.analyticsCardText, { color: theme.colors.primary }]}>
+                     View Nutrition Analytics
+                 </Text>
+            </Card.Content>
+          </Card>
+      </TouchableOpacity>
+
+      {/* Optional: Display minor errors */}
+      {error && dashboardData.length > 0 && (
+          <Text style={{ color: theme.colors.error, textAlign: 'center', padding: 10 }}>{error}</Text>
+      )}
     </ScrollView>
   );
 };
@@ -373,39 +411,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.primary,
   },
-  cardVertical: { // Goal card styles
-    marginBottom: 12,
-    marginHorizontal: 15, // Add horizontal margin for spacing from screen edges
-    elevation: 2,
-    backgroundColor: Colors.background, // Ensure background color
-    borderRadius: 6, // Apply requested border radius
+  card: {
+    marginBottom: 15,
+    elevation: 1,
+    marginHorizontal: 8,
+    borderRadius: 6,
   },
-  cardTitleVertical: {
-    fontSize: 18, // Slightly larger title
-    fontWeight: '600',
-    marginBottom: 8,
-    color: Colors.primary,
+  cardContentPadding: {
+    paddingHorizontal: 0, // Remove default padding if DataTable manages it
+    paddingVertical: 0,   // Remove default padding if DataTable manages it
   },
-  progressBarVertical: {
-    height: 10, // Slightly thicker bar
-    borderRadius: 5,
-    marginBottom: 8,
-  },
-  progressTextContainerVertical: {
-    flexDirection: 'row',
-    justifyContent: 'space-between', // Space out current/total and percentage
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  progressTextVertical: {
-    fontSize: 14,
-    color: Colors.primary,
-    fontWeight: '500',
-  },
-  progressPercentageText: {
-    fontSize: 14,
-    color: Colors.grey,
-    fontWeight: '500',
+  summaryCard: {
+    marginBottom: 15,
+    elevation: 1,
+    borderRadius: 6, // Reduce border radius to match goals card
+    marginHorizontal: 8, // Match goal card margin
   },
   errorText: {
     color: Colors.error,
@@ -495,6 +515,77 @@ const styles = StyleSheet.create({
   divider: {
       marginVertical: 8, // Add some space around dividers
       marginHorizontal: 16,
+  },
+  // DataTable Styles Refined
+  tableHeader: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    // backgroundColor: theme.colors.surfaceVariant, // Optional subtle background
+    paddingHorizontal: 6, // Reduce overall header padding slightly
+  },
+  tableHeaderCell: {
+    paddingHorizontal: 6, // Adjusted horizontal padding
+    paddingVertical: 14, // Increased vertical padding
+    justifyContent: 'center',
+  },
+  tableHeaderText: {
+      fontWeight: '600',
+      fontSize: 13,
+      opacity: 0.8,
+      textAlign: 'left',
+  },
+  numericHeaderText: {
+      textAlign: 'right',
+  },
+  tableRow: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    minHeight: 55,
+    paddingHorizontal: 6,
+  },
+  tableCell: {
+    paddingHorizontal: 6, // Adjusted horizontal padding
+    justifyContent: 'center', // Keep vertical centering
+    paddingVertical: 4, // Add some vertical padding within cell
+  },
+  tableCellText: {
+    fontSize: 13.5, // Slightly adjusted font size
+    textAlign: 'left',
+  },
+  numericCellText: {
+    textAlign: 'right',
+  },
+  tableCellMutedText: {
+    fontSize: 13.5, // Slightly adjusted font size
+    textTransform: 'capitalize',
+    textAlign: 'left',
+    opacity: 0.9,
+  },
+  progressHeaderCell: {
+    justifyContent: 'center', // Keep centered
+  },
+  progressCell: {
+    justifyContent: 'center', // Center vertically
+    paddingHorizontal: 6,
+  },
+  progressText: {
+     fontSize: 13.5,
+     fontWeight: '600',
+     textAlign: 'right', // This handles horizontal alignment
+  },
+  analyticsCard: { // Renamed from analyticsButtonCard
+     marginVertical: 10, 
+     // Use surfaceVariant or another subtle background
+  },
+  analyticsCardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center', // Center items horizontally
+    paddingVertical: 14, // Adjust padding
+    paddingHorizontal: 16,
+  },
+  analyticsCardText: {
+    marginLeft: 8, // Space between icon and text
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

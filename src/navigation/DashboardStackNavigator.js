@@ -2,6 +2,7 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import DashboardScreen from '../screens/DashboardScreen';
 import LogScreen from '../screens/LogScreen';
+import AnalyticsScreen from '../screens/AnalyticsScreen';
 // import { Colors } from '../constants/colors'; // Remove old Colors import
 
 const Stack = createNativeStackNavigator();
@@ -37,6 +38,13 @@ const DashboardStackNavigator = () => {
           // Title could be dynamic based on date, but 'Daily Log' is fine
           title: 'Daily Log',
         })}
+      />
+      <Stack.Screen
+        name="AnalyticsScreen"
+        component={AnalyticsScreen}
+        options={{
+          title: 'Nutrition Analytics',
+        }}
       />
       {/* Add other screens related to the Dashboard flow here if needed */}
     </Stack.Navigator>

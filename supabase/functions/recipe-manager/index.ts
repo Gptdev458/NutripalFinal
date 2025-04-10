@@ -34,6 +34,19 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  // --- Add Enhanced Logging --- 
+  console.log("Request Headers:", JSON.stringify(Object.fromEntries(req.headers.entries())));
+  let rawBodyText = "(Not read)";
+  try {
+    // Attempt to read raw body text *before* JSON parsing
+    rawBodyText = await req.text(); 
+    console.log("Raw Request Body Text:", rawBodyText);
+  } catch (bodyReadError) {
+    console.error("Error reading request body as text:", bodyReadError);
+    rawBodyText = `(Error reading: ${bodyReadError.message})`;
+  }
+  // --- End Enhanced Logging --- 
+
   let userId: string;
   let supabaseClient: SupabaseClient;
 
@@ -68,16 +81,25 @@ Deno.serve(async (req: Request) => {
     }
 
     // 4. Parse Input (Recipe ID from JSON body)
-    let recipeId: string | undefined;
+    let recipeId: number | undefined;
     try {
-        const requestData = await req.json();
+        // Parse the raw text we already read
+        if (rawBodyText.startsWith("(")) throw new Error("Raw body was not read successfully.");
+        const requestData = JSON.parse(rawBodyText); 
         recipeId = requestData?.recipe_id;
-        if (typeof recipeId !== 'string' || !recipeId) {
-            throw new Error('Missing or invalid "recipe_id" in request body.');
+        
+        // --- ADJUSTED VALIDATION --- 
+        // Check if recipeId is NOT a finite number OR if it's falsy (like 0, though IDs are usually > 0)
+        if (typeof recipeId !== 'number' || !Number.isFinite(recipeId) /* || recipeId <= 0 */ ) { 
+            // Optional: Add check for positive ID if needed: || recipeId <= 0
+            throw new Error('Missing or invalid "recipe_id" (must be a positive number) in parsed JSON.');
         }
+        // --- END ADJUSTED VALIDATION --- 
+
         console.log(`Attempting to delete recipe ID: ${recipeId}`);
     } catch (error) {
-        console.error('Error parsing request body:', error.message);
+        console.error('Error parsing request body JSON:', error.message, "Raw text was:", rawBodyText);
+        // Return the more specific error from the function's perspective
         return new Response( JSON.stringify({ status: 'error', message: `Invalid request body: ${error.message}` }), { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } );
     }
 
