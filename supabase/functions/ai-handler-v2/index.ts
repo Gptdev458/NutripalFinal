@@ -1040,12 +1040,6 @@ Deno.serve(async (req: Request) => {
                   // --- Execute Tool Calls (if not handled by proactive check) ---
                   if (!requestHandled) {
                       for (const toolCall of responseMessage.tool_calls) {
-                          // Skip clarifyDishType if it was already handled proactively (it shouldn't be if we got here, but check anyway)
-                          if (toolCall.function.name === 'clarifyDishType' && clarifyToolCall) {
-                              console.log("Skipping original clarifyDishType call as proactive search was done.");
-                              continue; // Skip this tool call if proactive search was attempted
-                          }
-
                           const functionName = toolCall.function.name;
                           let functionArgs: any;
                           try {
@@ -1067,7 +1061,6 @@ Deno.serve(async (req: Request) => {
                                   context_for_reply: { awaiting_clarification_for: functionArgs.dish_name }
                               };
                               requestHandled = true;
-                              break; // Exit loop after handling clarification
                           } else {
                               // --- Execute other tools --- 
                               switch (functionName) {
@@ -1094,13 +1087,47 @@ Deno.serve(async (req: Request) => {
 
                           // --- Handle specific tool results IF NOT CLARIFICATION ---
                           if (toolResult) { 
+                              // --- START NEW HANDLING BLOCK for findSavedRecipeByName ---
+                              if (!requestHandled && functionName === 'findSavedRecipeByName' && toolResult.status === 'success' && toolResult.found) {
+                                  if (toolResult.count === 1) {
+                                      console.log("Handling findSavedRecipeByName result: 1 match found.");
+                                      const matchedRecipe = toolResult.matches[0];
+                                      responseData = {
+                                          status: 'success',
+                                          message: `I found your saved recipe '${matchedRecipe.recipe_name}'. Should I log it for you?`,
+                                          response_type: 'saved_recipe_confirmation_prompt',
+                                          context_for_reply: {
+                                              recipe_id: matchedRecipe.id,
+                                              recipe_name: matchedRecipe.recipe_name
+                                          }
+                                      };
+                                      requestHandled = true;
+                                  } else { // Multiple matches
+                                      console.log(`Handling findSavedRecipeByName result: ${toolResult.count} matches found.`);
+                                      const limitedMatches = toolResult.matches.slice(0, 5);
+                                      const recipeOptionsText = limitedMatches.map((r: any) => 
+                                          r.description 
+                                              ? `'${r.recipe_name}' (${r.description.substring(0, 30)}${r.description.length > 30 ? '...' : ''})` 
+                                              : `'${r.recipe_name}'`
+                                      ).join(", ");
+                                      responseData = {
+                                          status: 'success',
+                                          message: `I found a few saved recipes matching that: ${recipeOptionsText}. Which one did you mean?`,
+                                          response_type: 'saved_recipe_found_multiple',
+                                          context_for_reply: { matches: limitedMatches }
+                                      };
+                                      requestHandled = true;
+                                  }
+                              }
+                              // --- END NEW HANDLING BLOCK ---
+
                               // --- Special Handling for Analyze Recipe Result --- 
-                              if (functionName === 'analyzeRecipeIngredients' && toolResult.status === 'success' && toolResult.analysis) {
+                              if (!requestHandled && functionName === 'analyzeRecipeIngredients' && toolResult.status === 'success' && toolResult.analysis) {
                                   console.log("AnalyzeRecipeIngredients succeeded. Preparing recipe analysis prompt.");
                                   responseData = {
                                       status: 'success',
                                       // Message summarizing analysis - AI will generate a better one in the confirmation step if saved/logged.
-                                      message: `I've analyzed the ingredients for "${toolResult.analysis.recipe_name || 'your recipe'}". It has approximately ${toolResult.analysis.nutrition_summary?.calories || 'N/A'} calories. Would you like to Save & Log this recipe, Log it Once, or Cancel?`,
+                                      message: `I've analyzed the ingredients for "${toolResult.analysis.recipe_name || 'your recipe'}". It has approximately ${toolResult.analysis.nutrition_estimate?.calories || 'N/A'} calories. Would you like to Save & Log this recipe, Log it Once, or Cancel?`,
                                       response_type: 'recipe_analysis_prompt',
                                       pending_action: { 
                                           type: 'log_analyzed_recipe',
@@ -1112,7 +1139,7 @@ Deno.serve(async (req: Request) => {
                               // --- End Special Handling ---
                               
                               // --- Append general tool result for the second OpenAI call (only if not handled above) ---
-                              if (!requestHandled) { // Only append if analyzeRecipeIngredients didn't handle it
+                              if (!requestHandled) { // Only append if analyzeRecipeIngredients or findSavedRecipeByName didn't handle it
                                   const toolResultContent = JSON.stringify(toolResult);
                                   messages.push({
                                       tool_call_id: toolCall.id,
