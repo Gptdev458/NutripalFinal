@@ -26,7 +26,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { getSupabaseClient } from '../lib/supabaseClient';
 import { MASTER_NUTRIENT_LIST, getNutrientDetails } from '../constants/nutrients';
-import { fetchUserProfile, fetchGoalRecommendations, updateUserProfile } from '../utils/profileUtils';
+import { fetchUserProfile, calculateNutritionalGoals, updateUserProfile } from '../utils/profileUtils';
 import useSafeTheme from '../hooks/useSafeTheme';
 
 const GoalSettingsScreen = ({ navigation }) => {
@@ -85,46 +85,35 @@ const GoalSettingsScreen = ({ navigation }) => {
       setTrackedNutrients(tracked);
       setTargetValues(targets);
       setGoalTypes(types);
-      setLoading(false);
 
       if (profileResponse.error) {
-        console.error('Profile fetch error during initial load:', profileResponse.error);
-        setUserProfile(null);
-        setIsLoadingRecommendations(false);
-        return;
-      }
-
-      const fetchedProfile = profileResponse.data;
-      setUserProfile(fetchedProfile);
-
-      if (fetchedProfile && fetchedProfile.age && fetchedProfile.weight_kg && fetchedProfile.height_cm && fetchedProfile.sex) {
-         console.log("Profile complete, fetching initial recommendations...");
-        const { data: recData, error: recError } = await fetchGoalRecommendations(fetchedProfile);
-
-        if (recError) {
-          console.error('Initial Recommendation fetch error:', recError);
-          setRecommendationError(`Could not fetch initial recommendations: ${recError.message}`);
-          setGoalRecommendations(null);
-        } else if (recData && recData.recommendations) {
-          console.log("Initial Recommendations received:", recData.recommendations);
-          setGoalRecommendations(recData.recommendations);
-          setRecommendationError(null);
-        } else {
-           console.warn('Received invalid initial recommendation data.');
-           setRecommendationError('Received invalid initial recommendation data.');
-           setGoalRecommendations(null);
-        }
+         console.error('Profile fetch error during initial load:', profileResponse.error);
+         setRecommendationError(`Could not load profile: ${profileResponse.error.message}. Please try again.`);
+         setUserProfile(null);
+      } else if (!profileResponse.data) {
+          console.log("No profile found during initial load.");
+          setRecommendationError('Please complete your profile to get personalized recommendations.');
+          setUserProfile(null);
       } else {
-        console.log("Profile incomplete or not found during initial load:", fetchedProfile);
-        setRecommendationError('Please complete your profile in Settings to get personalized recommendations.');
-        setGoalRecommendations(null);
+           const fetchedProfile = profileResponse.data;
+           setUserProfile(fetchedProfile);
+           const requiredKeys = ['age', 'weight_kg', 'height_cm', 'sex', 'activity_level', 'health_goal'];
+           const missingKeys = requiredKeys.filter(key => !(key in fetchedProfile) || fetchedProfile[key] === null || fetchedProfile[key] === undefined);
+           if (missingKeys.length > 0) {
+                console.log(`Profile incomplete for recommendations. Missing: ${missingKeys.join(', ')}`);
+                setRecommendationError(`Profile incomplete (${missingKeys.join(', ')} missing). Please update your profile.`);
+                setGoalRecommendations(null);
+           } else {
+               console.log("Profile loaded and appears complete.");
+               setRecommendationError(null);
+           }
       }
 
     } catch (err) {
       console.error('Error loading initial data:', err);
       setError(`Failed to load data: ${err.message}`);
-      setLoading(false);
     } finally {
+      setLoading(false);
       setIsLoadingRecommendations(false);
     }
   }, [user]);
@@ -154,12 +143,8 @@ const GoalSettingsScreen = ({ navigation }) => {
     } else {
       setGoalTypes(prev => ({
           ...prev,
-          [nutrientKey]: 'goal'
+          [nutrientKey]: prev[nutrientKey] || 'goal'
       }));
-      const recommendedValue = goalRecommendations?.[nutrientKey];
-       if (recommendedValue !== undefined) {
-           updateTargetValue(nutrientKey, recommendedValue.toString());
-       }
     }
   };
 
@@ -255,38 +240,29 @@ const GoalSettingsScreen = ({ navigation }) => {
     const supabase = getSupabaseClient();
 
     try {
-      const profileData = userProfile || (await fetchUserProfile(user.id)).data;
+      console.log("Requesting recommendations with profile:", userProfile);
+      const apiResponse = await calculateNutritionalGoals(userProfile);
 
-      if (!profileData || !profileData.age || !profileData.weight_kg || !profileData.height_cm || !profileData.sex) {
-        setCalcError('Your profile is incomplete. Please update Age, Weight, Height, and Sex in Settings first.');
-        setUserProfile(profileData);
-        setGoalRecommendations(null);
-        setIsCalculatingRecs(false);
-        return;
-      }
-
-      setUserProfile(profileData);
-
-      console.log("Profile complete, fetching recommendations via button press...");
-      const { data: recData, error: recError } = await fetchGoalRecommendations(profileData);
-
-      if (recError) {
-        throw new Error(recError.message || 'Failed to fetch recommendations from the server.');
-      }
-
-      if (recData && recData.status === 'success' && recData.recommendations) {
-        console.log("Recommendations received via button:", recData.recommendations);
-        setGoalRecommendations(recData.recommendations);
+      if (apiResponse.error) {
+        console.error("Calculation API Error:", apiResponse.error);
+        setCalcError(`Failed to calculate recommendations: ${apiResponse.error.message}`);
+        Alert.alert("Calculation Failed", `Could not get recommendations: ${apiResponse.error.message}`);
+      } else if (apiResponse.data && apiResponse.data.recommendations) {
+        const recommendations = apiResponse.data.recommendations;
+        console.log("Recommendations received:", recommendations);
+        setGoalRecommendations(recommendations);
         setCalcError(null);
-        Alert.alert("Success", "Personalized goal recommendations have been updated!");
+        Alert.alert("Recommendations Updated", "Recommended values are now shown as placeholders in the input fields.");
       } else {
-        console.error('Invalid recommendation data received:', recData);
-        throw new Error(recData?.message || 'Received invalid data structure for recommendations.');
+        console.error("Invalid data structure received from calculation utility:", apiResponse.data);
+        setCalcError("Received invalid data from calculation service.");
+        Alert.alert("Calculation Error", "Received unexpected data format for recommendations.");
       }
 
-    } catch (error) {
-      console.error("Error during recommendation calculation:", error);
-      setCalcError(`Calculation failed: ${error.message}`);
+    } catch (err) {
+      console.error("Unexpected error during calculation request:", err);
+      setCalcError(`An unexpected error occurred: ${err.message}`);
+      Alert.alert("Calculation Error", `An unexpected error occurred: ${err.message}`);
     } finally {
       setIsCalculatingRecs(false);
     }

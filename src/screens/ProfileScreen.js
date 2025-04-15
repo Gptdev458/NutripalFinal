@@ -35,6 +35,8 @@ const ProfileScreen = () => {
   const [weight, setWeight] = useState('');
   const [height, setHeight] = useState('');
   const [sex, setSex] = useState(''); // Store the selected sex value
+  const [activityLevel, setActivityLevel] = useState('');
+  const [healthGoal, setHealthGoal] = useState('');
 
   // State for loading and saving
   const [isLoading, setIsLoading] = useState(true);
@@ -63,6 +65,8 @@ const ProfileScreen = () => {
       setWeight(data.weight_kg?.toString() || '');
       setHeight(data.height_cm?.toString() || '');
       setSex(data.sex || ''); // Set sex state
+      setActivityLevel(data.activity_level || '');
+      setHealthGoal(data.health_goal || '');
     }
     setIsLoading(false);
   }, [user]);
@@ -90,6 +94,12 @@ const ProfileScreen = () => {
      if (!sex) {
        errors.sex = 'Please select your sex.';
      }
+    if (!activityLevel) {
+        errors.activityLevel = 'Please select your activity level.';
+    }
+    if (!healthGoal) {
+        errors.healthGoal = 'Please select your health goal.';
+    }
 
     setValidationErrors(errors);
     return Object.keys(errors).length === 0; // Return true if no errors
@@ -119,6 +129,8 @@ const ProfileScreen = () => {
       ...(weight && { weight_kg: parseFloat(weight) }),
       ...(height && { height_cm: parseFloat(height) }),
       ...(sex && { sex: sex }), // Include sex
+      ...(activityLevel && { activity_level: activityLevel }),
+      ...(healthGoal && { health_goal: healthGoal }),
     };
 
     // Check if there's actually data to save
@@ -205,13 +217,11 @@ const ProfileScreen = () => {
            </HelperText>
 
           <Text style={[styles.pickerLabel, { color: theme.colors.textSecondary }]}>Sex</Text>
-           <Surface 
+           <View
              style={[
-               styles.pickerSurface, 
-               { backgroundColor: theme.colors.surfaceVariant },
+               styles.pickerContainer,
                validationErrors.sex ? { borderColor: theme.colors.error } : { borderColor: theme.colors.outline }
-             ]} 
-             elevation={1}
+             ]}
            >
              <Picker
                 selectedValue={sex}
@@ -221,13 +231,63 @@ const ProfileScreen = () => {
                 prompt="Select Sex"
              >
                 <Picker.Item label="Select..." value="" enabled={false} style={[styles.pickerPlaceholder, { color: theme.colors.textSecondary }]} />
-                <Picker.Item label="Male" value="male" style={{ color: theme.colors.text }}/>
-                <Picker.Item label="Female" value="female" style={{ color: theme.colors.text }}/>
-                <Picker.Item label="Other" value="other" style={{ color: theme.colors.text }}/>
+                <Picker.Item label="Male" value="male" />
+                <Picker.Item label="Female" value="female" />
+                <Picker.Item label="Other" value="other" />
              </Picker>
-            </Surface>
+            </View>
             <HelperText type="error" visible={!!validationErrors.sex}>
              {validationErrors.sex}
+           </HelperText>
+
+          <Text style={[styles.pickerLabel, { color: theme.colors.textSecondary }]}>Activity Level</Text>
+           <View
+             style={[
+               styles.pickerContainer,
+               validationErrors.activityLevel ? { borderColor: theme.colors.error } : { borderColor: theme.colors.outline }
+             ]}
+           >
+             <Picker
+                selectedValue={activityLevel}
+                onValueChange={(itemValue) => setActivityLevel(itemValue)}
+                style={[styles.picker, { color: theme.colors.onSurfaceVariant }]}
+                dropdownIconColor={theme.colors.onSurfaceVariant}
+                prompt="Select Activity Level"
+             >
+                 <Picker.Item label="Select..." value="" enabled={false} style={[styles.pickerPlaceholder, { color: theme.colors.textSecondary }]} />
+                 <Picker.Item label="Sedentary (little to no exercise)" value="sedentary" />
+                 <Picker.Item label="Lightly Active (light exercise/sports 1-3 days/wk)" value="lightly_active" />
+                 <Picker.Item label="Moderately Active (moderate exercise/sports 3-5 days/wk)" value="moderately_active" />
+                 <Picker.Item label="Very Active (hard exercise/sports 6-7 days/wk)" value="very_active" />
+                 <Picker.Item label="Extra Active (very hard exercise/physical job)" value="extra_active" />
+             </Picker>
+            </View>
+            <HelperText type="error" visible={!!validationErrors.activityLevel}>
+             {validationErrors.activityLevel}
+           </HelperText>
+
+          <Text style={[styles.pickerLabel, { color: theme.colors.textSecondary }]}>Primary Health Goal</Text>
+           <View
+             style={[
+               styles.pickerContainer,
+               validationErrors.healthGoal ? { borderColor: theme.colors.error } : { borderColor: theme.colors.outline }
+             ]}
+           >
+             <Picker
+                selectedValue={healthGoal}
+                onValueChange={(itemValue) => setHealthGoal(itemValue)}
+                style={[styles.picker, { color: theme.colors.onSurfaceVariant }]}
+                dropdownIconColor={theme.colors.onSurfaceVariant}
+                prompt="Select Health Goal"
+             >
+                <Picker.Item label="Select..." value="" enabled={false} style={[styles.pickerPlaceholder, { color: theme.colors.textSecondary }]} />
+                <Picker.Item label="Lose Weight" value="weight_loss" />
+                <Picker.Item label="Maintain Weight" value="maintenance" />
+                <Picker.Item label="Gain Weight" value="weight_gain" />
+             </Picker>
+            </View>
+            <HelperText type="error" visible={!!validationErrors.healthGoal}>
+             {validationErrors.healthGoal}
            </HelperText>
 
           <PaperButton
@@ -277,17 +337,18 @@ const styles = StyleSheet.create({
   },
   pickerLabel: {
     fontSize: 14,
+    marginTop: 15,
     marginBottom: 4,
     marginLeft: 4,
   },
-  pickerSurface: {
+  pickerContainer: {
     borderWidth: 1,
     borderRadius: 4,
     marginBottom: 4,
   },
   picker: {
-      height: 50,
-      width: '100%',
+    height: 50,
+    width: '100%',
   },
   pickerPlaceholder: {
   },

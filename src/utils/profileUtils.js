@@ -44,7 +44,7 @@ export const fetchUserProfile = async (userId) => {
 /**
  * Updates or inserts (upserts) a user's profile data.
  * @param {string} userId - The ID of the user whose profile to update/insert.
- * @param {object} profileData - An object containing the profile fields to update (e.g., { age, weight_kg, height_cm, sex }).
+ * @param {object} profileData - An object containing the profile fields to update (e.g., { age, weight_kg, height_cm, sex, activity_level, health_goal }).
  * @returns {Promise<{ data: object | null, error: object | null }>} - An object containing the updated/inserted profile data or an error.
  */
 export const updateUserProfile = async (userId, profileData) => {
@@ -54,12 +54,15 @@ export const updateUserProfile = async (userId, profileData) => {
   }
 
   // Ensure only valid fields are included and user_id is set
+  // Make sure to include all fields used by calculate-goals function
   const validData = {
     user_id: userId,
     age: profileData.age,
     weight_kg: profileData.weight_kg,
     height_cm: profileData.height_cm,
     sex: profileData.sex,
+    activity_level: profileData.activity_level, // Ensure this is passed from ProfileScreen
+    health_goal: profileData.health_goal,       // Ensure this is passed from ProfileScreen
     // Add other profile fields here if needed
   };
 
@@ -96,80 +99,77 @@ export const updateUserProfile = async (userId, profileData) => {
 };
 
 /**
- * Fetches goal recommendations from the AI handler based on user profile data.
- * @param {object} profileData - An object containing { age, weight_kg, height_cm, sex }.
- * @returns {Promise<{ data: object | null, error: object | null }>} - The result from the edge function invocation.
- *           On success, `data` might contain `{ status: 'success', recommendations: {...} }`.
+ * Calculates recommended nutritional goals by invoking the 'calculate-goals' edge function.
+ * @param {object} profileData - An object containing the user's profile data { age, weight_kg, height_cm, sex, activity_level, health_goal }.
+ * @returns {Promise<{ data: object | null, error: object | null }>} - The result from the edge function.
+ *           On success, `data` should contain `{ recommendations: { calories: number, protein_g: number, ... } }`.
  *           On error, `error` will contain the error details.
  */
-export const fetchGoalRecommendations = async (profileData) => {
+export const calculateNutritionalGoals = async (profileData) => {
   // 1. Input Validation
   if (!profileData || typeof profileData !== 'object' || profileData === null) {
-    console.error('fetchGoalRecommendations: Missing or invalid profileData object.');
+    console.error('calculateNutritionalGoals: Missing or invalid profileData object.');
     return { data: null, error: { message: 'Profile data object is required.' } };
   }
 
-  const requiredKeys = ['age', 'weight_kg', 'height_cm', 'sex'];
+  // Keys required by the 'calculate-goals' edge function
+  const requiredKeys = ['age', 'weight_kg', 'height_cm', 'sex', 'activity_level', 'health_goal'];
   const missingKeys = requiredKeys.filter(key => !(key in profileData) || profileData[key] === null || profileData[key] === undefined);
 
   if (missingKeys.length > 0) {
-    const message = `Incomplete profile data provided. Missing or invalid fields: ${missingKeys.join(', ')}.`;
-    console.error(`fetchGoalRecommendations: ${message}`);
+    const message = `Incomplete profile data provided. Missing or invalid fields: ${missingKeys.join(', ')}. Please complete your profile.`;
+    console.error(`calculateNutritionalGoals: ${message}`);
     return { data: null, error: { message } };
   }
 
-  // Basic type validation (can be more sophisticated if needed)
-  if (typeof profileData.age !== 'number' || profileData.age <= 0) {
-    return { data: null, error: { message: 'Invalid age provided.' } };
-  }
-  if (typeof profileData.weight_kg !== 'number' || profileData.weight_kg <= 0) {
-     return { data: null, error: { message: 'Invalid weight_kg provided.' } };
-  }
-    if (typeof profileData.height_cm !== 'number' || profileData.height_cm <= 0) {
-     return { data: null, error: { message: 'Invalid height_cm provided.' } };
-  }
-   if (typeof profileData.sex !== 'string' || !['male', 'female', 'other'].includes(profileData.sex.toLowerCase())) {
-     return { data: null, error: { message: 'Invalid sex provided.' } };
-   }
+  // Add basic type validation if needed (similar to the old function)
+  // Example:
+  if (typeof profileData.age !== 'number' || profileData.age <= 0) return { data: null, error: { message: 'Invalid age.' } };
+  if (typeof profileData.weight_kg !== 'number' || profileData.weight_kg <= 0) return { data: null, error: { message: 'Invalid weight.' } };
+  if (typeof profileData.height_cm !== 'number' || profileData.height_cm <= 0) return { data: null, error: { message: 'Invalid height.' } };
+  if (!['male', 'female', 'other'].includes(profileData.sex?.toLowerCase())) return { data: null, error: { message: 'Invalid sex.' } };
+  if (!['sedentary', 'lightly_active', 'moderately_active', 'very_active', 'extra_active'].includes(profileData.activity_level?.toLowerCase())) return { data: null, error: { message: 'Invalid activity level.' } };
+  if (!['weight_loss', 'weight_gain', 'maintenance'].includes(profileData.health_goal?.toLowerCase())) return { data: null, error: { message: 'Invalid health goal.' } };
 
 
   try {
-    console.log('Invoking ai-handler-v2 for goal recommendations with profile:', profileData);
-    const supabase = getSupabaseClient(); // Get the client instance
+    console.log('Invoking calculate-goals function with profile:', profileData);
+    const supabase = getSupabaseClient();
 
-    // 2. Invoke Supabase Edge Function
-    const { data, error } = await supabase.functions.invoke('ai-handler-v2', {
+    // 2. Invoke the NEW Supabase Edge Function
+    const { data, error } = await supabase.functions.invoke('calculate-goals', { // <--- Call the new function
       body: {
-        action: 'get_recommendations',
-        profile: profileData,
+        profile: profileData, // Pass the profile data in the body
       },
-      // No need to manually set Authorization header, supabase-js handles it.
     });
 
     // 3. Handle Response
     if (error) {
-      // This catches errors during the function invocation itself (network issues, function crashing before returning JSON)
-      console.error('Error invoking Supabase function:', error);
-      throw error; // Re-throw to be caught by the outer catch block
+      // Catches invocation errors (network, function crash before returning JSON)
+      console.error(`Error invoking Supabase function 'calculate-goals':`, error);
+      throw error;
     }
 
-    // The 'data' object here is the *parsed JSON body* returned by the Edge Function.
-    // Check if the function itself returned an error status within its response data.
-    if (data && data.status === 'error') {
-        console.error('Edge function returned an error:', data);
-        // Return the structured error from the edge function
-        return { data: null, error: { message: data.message || 'Edge function failed.', details: data.detail } };
+    // Check if the function itself returned an error within its JSON response
+    if (data && data.error) {
+        console.error(`Edge function 'calculate-goals' returned an error:`, data.error);
+        return { data: null, error: { message: data.error } };
     }
 
-    console.log('Successfully received recommendations from edge function:', data);
-    return { data: data, error: null }; // Return the data received from the function
+    // Check if the expected recommendations object is present
+    if (!data || !data.recommendations) {
+        console.error(`Invalid response structure from 'calculate-goals':`, data);
+        return { data: null, error: { message: 'Received invalid response from calculation service.' } };
+    }
+
+    console.log('Successfully received recommendations from calculate-goals:', data);
+    return { data: data, error: null }; // Return the { recommendations: {...} } object
 
   } catch (error) {
-    console.error('Error in fetchGoalRecommendations:', error);
-    // Ensure a consistent error structure is returned
+    console.error('Error in calculateNutritionalGoals utility:', error);
     const errorObject = {
-        message: error.message || 'Unknown error fetching goal recommendations.',
-        details: error.details || error // Include details if available
+        message: error.message || 'Unknown error calculating nutritional goals.',
+        details: error.details || error
     };
      // Handle specific Supabase FunctionError details if present
     if (error.context) {
