@@ -1,6 +1,6 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import { Alert } from 'react-native';
-import { supabase } from '../lib/supabaseClient';
+import { getSupabaseClient } from '../lib/supabaseClient';
 
 // Create the auth context
 const AuthContext = createContext({
@@ -24,12 +24,28 @@ export const AuthProvider = ({ children }) => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    // Get the client instance inside useEffect after initialization
+    let supabase;
+    try {
+      supabase = getSupabaseClient();
+    } catch (initError) {
+      console.error('AuthContext: Failed to get Supabase client:', initError);
+      setError(initError.message);
+      setLoading(false);
+      Alert.alert(
+        'Initialization Error',
+        'Failed to initialize critical services. Please restart the app.',
+        [{ text: 'OK' }]
+      );
+      return; // Stop further execution in useEffect
+    }
+
     // Fetch the initial session when the component mounts
     const fetchInitialSession = async () => {
       try {
-        // Verify Supabase client is initialized properly
+        // Verify Supabase client is initialized properly (redundant check, but safe)
         if (!supabase || !supabase.auth) {
-          throw new Error('Supabase client is not properly initialized. Check environment variables.');
+          throw new Error('Supabase client is not properly initialized.');
         }
 
         const { data } = await supabase.auth.getSession();
@@ -38,11 +54,10 @@ export const AuthProvider = ({ children }) => {
       } catch (error) {
         console.error('Error fetching initial session:', error.message);
         setError(error.message);
-        
-        // Display error to user
+
         Alert.alert(
           'Authentication Error',
-          'Failed to initialize authentication. Please restart the app or contact support if the issue persists.',
+          'Failed to initialize authentication. Please check your connection or contact support.',
           [{ text: 'OK' }]
         );
       } finally {
@@ -73,6 +88,7 @@ export const AuthProvider = ({ children }) => {
 
   // Sign in with email and password
   const signIn = async (email, password) => {
+    const supabase = getSupabaseClient(); // Get client instance
     try {
       setLoading(true);
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -92,6 +108,7 @@ export const AuthProvider = ({ children }) => {
 
   // Sign up with email and password
   const signUp = async (email, password) => {
+    const supabase = getSupabaseClient(); // Get client instance
     try {
       setLoading(true);
       const { data, error } = await supabase.auth.signUp({
@@ -111,6 +128,7 @@ export const AuthProvider = ({ children }) => {
 
   // Sign out
   const signOut = async () => {
+    const supabase = getSupabaseClient(); // Get client instance
     try {
       // Add debug logs
       console.log('Starting sign out process...');

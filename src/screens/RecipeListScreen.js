@@ -23,7 +23,7 @@ import {
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabaseClient';
+import { getSupabaseClient } from '../lib/supabaseClient';
 import { useFocusEffect } from '@react-navigation/native';
 import { quickLogRecipe, fetchRecipeDetails, fetchUserGoals } from '../utils/logUtils';
 import useSafeTheme from '../hooks/useSafeTheme';
@@ -56,6 +56,7 @@ const RecipeListScreen = () => {
     setError(null);
     try {
       // Fetch recipes and goals concurrently
+      const supabase = getSupabaseClient();
       const [recipesResponse, goalsResponse] = await Promise.all([
         supabase
           .from('user_recipes')
@@ -148,6 +149,7 @@ const RecipeListScreen = () => {
 
     try {
         console.log(`Attempting to delete recipe ID: ${recipeId}`);
+        const supabase = getSupabaseClient();
         const url = `${supabase.supabaseUrl}/functions/v1/recipe-manager`;
 
         const response = await fetch(url, {

@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabaseClient';
+import { getSupabaseClient } from '../lib/supabaseClient';
 
 /**
  * Fetches daily aggregated totals for a specific nutrient using an RPC call.
@@ -16,6 +16,7 @@ export const fetchDailyNutrientTotals = async (userId, nutrientKey, startDate, e
 
   try {
     console.log(`RPC: fetchDailyNutrientTotals for ${nutrientKey} from ${startDate} to ${endDate}`);
+    const supabase = getSupabaseClient(); // Get the client instance
 
     const { data, error } = await supabase.rpc('get_daily_nutrient_totals', {
       p_user_id: userId,

@@ -24,7 +24,7 @@ import {
   Icon, // Import Icon
 } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabaseClient';
+import { getSupabaseClient } from '../lib/supabaseClient';
 import { getNutrientDetails, MASTER_NUTRIENT_LIST } from '../constants/nutrients';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Colors } from '../constants/colors';

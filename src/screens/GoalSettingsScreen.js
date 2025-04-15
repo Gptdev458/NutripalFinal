@@ -24,9 +24,9 @@ import {
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabaseClient';
+import { getSupabaseClient } from '../lib/supabaseClient';
 import { MASTER_NUTRIENT_LIST, getNutrientDetails } from '../constants/nutrients';
-import { fetchUserProfile, fetchGoalRecommendations } from '../utils/profileUtils';
+import { fetchUserProfile, fetchGoalRecommendations, updateUserProfile } from '../utils/profileUtils';
 import useSafeTheme from '../hooks/useSafeTheme';
 
 const GoalSettingsScreen = ({ navigation }) => {
@@ -62,6 +62,7 @@ const GoalSettingsScreen = ({ navigation }) => {
     setCalcError(null);
 
     try {
+      const supabase = getSupabaseClient();
       const [goalsResponse, profileResponse] = await Promise.all([
         supabase
           .from('user_goals')
@@ -216,6 +217,7 @@ const GoalSettingsScreen = ({ navigation }) => {
      }
 
     try {
+      const supabase = getSupabaseClient();
       const { data, error: upsertError } = await supabase
         .from('user_goals')
         .upsert(goalsToSave, {
@@ -250,13 +252,10 @@ const GoalSettingsScreen = ({ navigation }) => {
     setIsCalculatingRecs(true);
     setCalcError(null);
     setRecommendationError(null);
+    const supabase = getSupabaseClient();
 
     try {
-      const { data: profileData, error: profileError } = await fetchUserProfile(user.id);
-
-      if (profileError) {
-        throw new Error(profileError.message || 'Could not load your profile to get recommendations.');
-      }
+      const profileData = userProfile || (await fetchUserProfile(user.id)).data;
 
       if (!profileData || !profileData.age || !profileData.weight_kg || !profileData.height_cm || !profileData.sex) {
         setCalcError('Your profile is incomplete. Please update Age, Weight, Height, and Sex in Settings first.');

@@ -1,39 +1,63 @@
 import { createClient } from '@supabase/supabase-js';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@env';
+// import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@env'; // REMOVED @env import
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import 'react-native-url-polyfill/auto';
 
-// More detailed environment variable checking
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  const missingVars = [];
-  if (!SUPABASE_URL) missingVars.push('SUPABASE_URL');
-  if (!SUPABASE_ANON_KEY) missingVars.push('SUPABASE_ANON_KEY');
-  
-  console.error(`CRITICAL: Missing environment variables: ${missingVars.join(', ')}`);
-  console.error('Please ensure your .env file exists and contains the required variables.');
-  console.error('Also verify that the app was rebuilt after any changes to .env');
-  
-  throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
-}
+let supabase = null; // Client will be initialized later
 
-// Initialize Supabase client
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: {
-    storage: AsyncStorage,
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: false,
+/**
+ * Initializes the Supabase client.
+ * Must be called once during app startup.
+ * @param {string} supabaseUrl The Supabase project URL.
+ * @param {string} supabaseAnonKey The Supabase anon key.
+ */
+export const initializeSupabase = (supabaseUrl, supabaseAnonKey) => {
+  if (supabase) {
+    console.warn('Supabase client already initialized.');
+    return supabase;
   }
-});
 
-// Add a verification method
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error('CRITICAL: initializeSupabase called with missing URL or Key.');
+    // Decide how to handle this - maybe throw error or return null?
+    // Throwing error might be safer to prevent unexpected behavior.
+    throw new Error('initializeSupabase requires a valid URL and Key.');
+  }
+
+  console.log('Initializing Supabase client in supabaseClient.js...');
+  supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      storage: AsyncStorage,
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false,
+    }
+  });
+  console.log('Supabase client instance created.');
+  return supabase;
+};
+
+/**
+ * Returns the initialized Supabase client instance.
+ * Throws error if initializeSupabase hasn't been called.
+ */
+export const getSupabaseClient = () => {
+  if (!supabase) {
+    throw new Error('Supabase client has not been initialized. Call initializeSupabase first.');
+  }
+  return supabase;
+};
+
+// Update verification method to use the initialized client via getter
 export const verifySupabaseConnection = async () => {
   try {
-    const { error } = await supabase.auth.getSession();
+    const client = getSupabaseClient(); // Get the initialized client
+    const { error } = await client.auth.getSession();
     if (error) {
       console.error('Supabase connection test failed:', error.message);
       return false;
     }
+    console.log('Supabase connection verified successfully.');
     return true;
   } catch (err) {
     console.error('Supabase connection test error:', err);

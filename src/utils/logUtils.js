@@ -1,5 +1,5 @@
 import { Alert } from 'react-native';
-import { supabase } from '../lib/supabaseClient';
+import { getSupabaseClient } from '../lib/supabaseClient';
 import { MASTER_NUTRIENT_KEYS } from '../constants/nutrients';
 
 /**
@@ -35,6 +35,7 @@ export const quickLogRecipe = async (recipe, user) => {
 
     console.log('Attempting to insert food log entry:', foodLogEntry);
 
+    const supabase = getSupabaseClient(); // Get the client instance
 
     // Insert the food log entry
     const { error: logError } = await supabase
@@ -64,6 +65,9 @@ export const quickLogRecipe = async (recipe, user) => {
 export const fetchRecipeDetails = async (recipeId) => {
     if (!recipeId) return null;
     try {
+        console.log(`Fetching details for recipe ${recipeId}`);
+        const supabase = getSupabaseClient(); // Get the client instance
+
         const { data, error } = await supabase
             .from('user_recipes')
             .select('*')
@@ -111,6 +115,8 @@ export const fetchFoodLogsByDateRange = async (userId, startDate, endDate) => {
       ${MASTER_NUTRIENT_KEYS.join(', ')}
     `;
 
+    const supabase = getSupabaseClient(); // Get the client instance
+
     const { data, error } = await supabase
       .from('food_log')
       .select(selectColumns) // Use the constructed string
@@ -147,6 +153,7 @@ export const fetchUserGoals = async (userId) => {
 
   try {
     console.log(`Fetching goals for user ${userId}`);
+    const supabase = getSupabaseClient(); // Get the client instance
 
     const { data, error } = await supabase
       .from('user_goals')
@@ -182,6 +189,8 @@ export const deleteFoodLogEntry = async (logId) => {
 
   try {
     console.log(`Attempting to delete food log entry with ID: ${logId}`);
+
+    const supabase = getSupabaseClient(); // Get the client instance
 
     const { data, error } = await supabase
       .from('food_log')

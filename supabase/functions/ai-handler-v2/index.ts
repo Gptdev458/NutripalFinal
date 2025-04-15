@@ -399,8 +399,8 @@ async function storeConversation(userId: string, userMessage: string | null, aiR
                 created_at: timestamp
             }
         ];
-        // Ensure table name 'chat_messages' is correct
-        const { error } = await supabaseClient.from('chat_messages').insert(inserts);
+        // Ensure table name 'conversations' is correct
+        const { error } = await supabaseClient.from('conversations').insert(inserts);
         if (error) {
             // --- MODIFIED ERROR LOGGING ---
             console.error("DB Error storing conversation turn (Full Error Object):", JSON.stringify(error, null, 2));

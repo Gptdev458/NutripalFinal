@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabaseClient';
+import { getSupabaseClient } from '../lib/supabaseClient';
 
 /**
  * Fetches the profile data for a specific user.
@@ -13,6 +13,7 @@ export const fetchUserProfile = async (userId) => {
 
   try {
     console.log(`Fetching profile for user ${userId}`);
+    const supabase = getSupabaseClient(); // Get the client instance
 
     const { data, error } = await supabase
       .from('user_profiles')
@@ -71,6 +72,7 @@ export const updateUserProfile = async (userId, profileData) => {
 
   try {
     console.log(`Upserting profile for user ${userId} with data:`, validData);
+    const supabase = getSupabaseClient(); // Get the client instance
 
     const { data, error } = await supabase
       .from('user_profiles')
@@ -133,6 +135,7 @@ export const fetchGoalRecommendations = async (profileData) => {
 
   try {
     console.log('Invoking ai-handler-v2 for goal recommendations with profile:', profileData);
+    const supabase = getSupabaseClient(); // Get the client instance
 
     // 2. Invoke Supabase Edge Function
     const { data, error } = await supabase.functions.invoke('ai-handler-v2', {

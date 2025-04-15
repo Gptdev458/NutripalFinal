@@ -1,18 +1,64 @@
-import React, { useContext, useEffect } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View, ActivityIndicator, Text } from 'react-native';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@env';
+import Constants from 'expo-constants';
 import AuthContext, { AuthProvider, useAuth } from './src/context/AuthContext';
-import { testEnvVars } from './src/lib/envTest';
 import { PaperProvider } from 'react-native-paper';
 import theme from './src/theme/index.js';
-import { verifySupabaseConnection } from './src/lib/supabaseClient';
+import { initializeSupabase, verifySupabaseConnection } from './src/lib/supabaseClient';
 
-// Direct check for environment variables
-console.log('App.js - Direct environment check:');
-console.log('SUPABASE_URL available:', Boolean(SUPABASE_URL));
-console.log('SUPABASE_ANON_KEY available:', Boolean(SUPABASE_ANON_KEY));
+// --- Simple Error Boundary Component ---
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    // Update state so the next render will show the fallback UI.
+    return { hasError: true, error: error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    // You can also log the error to an error reporting service
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      // You can render any custom fallback UI
+      return (
+        <View style={styles.container}>
+          <Text style={{ color: 'red', marginBottom: 10 }}>Something went wrong.</Text>
+          <Text style={{ color: 'red', marginHorizontal: 20 }}>
+            {this.state.error ? this.state.error.toString() : 'Unknown error'}
+          </Text>
+        </View>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+// --- End Error Boundary ---
+
+// Get Supabase config - ONLY from Constants now
+const SUPABASE_URL = Constants.expoConfig?.extra?.supabaseUrl;
+const SUPABASE_ANON_KEY = Constants.expoConfig?.extra?.supabaseAnonKey;
+
+console.log('App.js - Final Config Check (Constants Only):');
+console.log('SUPABASE_URL from Constants:', Boolean(SUPABASE_URL));
+console.log('SUPABASE_ANON_KEY from Constants:', Boolean(SUPABASE_ANON_KEY));
+
+// Initialize Supabase client immediately
+if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+  initializeSupabase(SUPABASE_URL, SUPABASE_ANON_KEY);
+  console.log('App.js - Supabase initialized with provided keys from Constants.');
+} else {
+  console.error('App.js - CRITICAL: Supabase URL or Anon Key is missing from Constants! Cannot initialize Supabase.');
+  // Potentially throw error or display specific UI if critical
+}
 
 // Import the actual navigators
 import AuthNavigator from './src/navigation/AuthNavigator';
@@ -23,21 +69,18 @@ const AppContent = () => {
   const { user, loading } = useAuth();
 
   useEffect(() => {
-    // Test environment variables
-    const envVars = testEnvVars();
-    console.log('App.js - Environment variables test result:', envVars);
-  }, []);
-
-  useEffect(() => {
     const checkSupabase = async () => {
       const isConnected = await verifySupabaseConnection();
       if (!isConnected) {
-        console.error('Failed to establish Supabase connection');
+        console.error('Failed to establish Supabase connection (called from AppContent)');
         // Optionally show an alert to the user
       }
     };
-    
-    checkSupabase();
+
+    // Check connection only if Supabase was initialized
+    if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+        checkSupabase();
+    }
   }, []);
 
   // Show loading indicator while checking authentication
@@ -59,12 +102,14 @@ const AppContent = () => {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <PaperProvider theme={theme}>
-        <AppContent />
-      </PaperProvider>
-      <StatusBar style="auto" />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <PaperProvider theme={theme}>
+          <AppContent />
+        </PaperProvider>
+        <StatusBar style="auto" />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

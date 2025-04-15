@@ -20,7 +20,7 @@ import {
   Button,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { supabase } from '../lib/supabaseClient';
+import { getSupabaseClient } from '../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { useNetInfo } from '@react-native-community/netinfo';
 import { fetchUserProfile, fetchGoalRecommendations } from '../utils/profileUtils';
@@ -170,6 +170,7 @@ const ChatScreen = () => {
         throw new Error('Authentication token not found.');
       }
 
+      const supabase = getSupabaseClient(); // Get the client instance
       const url = `${supabase.supabaseUrl}/functions/v1/ai-handler-v2`;
       console.log('Attempting fetch to:', url);
 
@@ -355,6 +356,7 @@ const ChatScreen = () => {
          setIsSending(true);
 
          try {
+             const supabase = getSupabaseClient(); // Get the client instance
              const url = `${supabase.supabaseUrl}/functions/v1/ai-handler-v2`;
              const requestBody = { action: actionName, context: contextPayload };
 

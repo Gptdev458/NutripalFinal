@@ -7,7 +7,6 @@ import {
   Text,
 } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabaseClient';
 import useSafeTheme from '../hooks/useSafeTheme';
 
 const SettingsScreen = ({ navigation }) => {
