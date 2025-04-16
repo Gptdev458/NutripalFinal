@@ -13,15 +13,22 @@ interface ChatMessage {
   actions?: Array<{ label: string; payload: string }>; // Optional actions for bot messages
 }
 
+// Add type for recipe matches
+interface RecipeMatch {
+    id: string | number;
+    recipe_name: string;
+    // Add other potential fields if known
+}
+
 export default function ChatPage() {
   const { user, supabase, loading: authLoading, session } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false); // Mobile menu state
   const [message, setMessage] = useState(''); // Input field state
   const [sending, setSending] = useState(false); // Sending state
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]); // State for messages
-  // Add state from mobile for context/pending actions
-  const [pendingAction, setPendingAction] = useState<any>(null); 
-  const [contextForNextRequest, setContextForNextRequest] = useState<any>(null); 
+  // Use more specific types instead of any
+  const [pendingAction, setPendingAction] = useState<Record<string, unknown> | null>(null); 
+  const [contextForNextRequest, setContextForNextRequest] = useState<Record<string, unknown> | null>(null); 
   const messagesEndRef = useRef<HTMLDivElement>(null); // Ref for scrolling
 
   // --- localStorage Persistence --- 
@@ -62,8 +69,9 @@ export default function ChatPage() {
   // --- End localStorage Persistence ---
 
   // == Helper: Process Bot Reply & Add Actions (Adapted slightly for web state) ==
-  const processBotReply = (responseData: any): ChatMessage => {
-    const replyText = responseData.message;
+  const processBotReply = (responseData: Record<string, unknown>): ChatMessage => {
+    // Type assertion needed if accessing nested properties
+    const replyText = responseData.message as string;
     const botMessage: ChatMessage = { 
         id: Date.now() + 1, 
         sender: 'bot', 
@@ -78,7 +86,9 @@ export default function ChatPage() {
     // Handle specific response types that require context/actions
     if (responseType === 'recipe_analysis_prompt' && responseData.pending_action) {
         console.log("Setting pending action based on recipe_analysis_prompt");
-        setPendingAction(responseData.pending_action); 
+        // Ensure pending_action is an object before setting
+        const action = responseData.pending_action;
+        setPendingAction(action && typeof action === 'object' ? action as Record<string, unknown> : null);
         if (!botMessage.actions) { 
             botMessage.actions = [
                 { label: 'Save & Log', payload: 'User selects Save & Log' },
@@ -88,7 +98,9 @@ export default function ChatPage() {
         }
     } else if ((responseType === 'saved_recipe_confirmation_prompt' || responseType === 'saved_recipe_proactive_confirm') && responseData.context_for_reply) {
         console.log("Setting context for saved recipe confirmation prompt");
-        setContextForNextRequest(responseData.context_for_reply); 
+        // Ensure context_for_reply is an object before setting
+        const context = responseData.context_for_reply;
+        setContextForNextRequest(context && typeof context === 'object' ? context as Record<string, unknown> : null);
         if (!botMessage.actions) { 
              botMessage.actions = [
                  { label: 'Yes, log it', payload: 'confirm_log_saved_recipe' },
@@ -97,7 +109,9 @@ export default function ChatPage() {
         }
     } else if (responseType === 'clarification_needed_recipe' && responseData.context_for_reply) {
         console.log("Setting context for clarification needed");
-        setContextForNextRequest(responseData.context_for_reply);
+        // Ensure context_for_reply is an object before setting
+        const context = responseData.context_for_reply;
+        setContextForNextRequest(context && typeof context === 'object' ? context as Record<string, unknown> : null);
         if (!botMessage.actions) { 
              botMessage.actions = [
                  { label: 'It was homemade (list ingredients)', payload: 'User indicates homemade' }, 
@@ -106,10 +120,14 @@ export default function ChatPage() {
         }
     } else if ((responseType === 'saved_recipe_found_multiple' || responseType === 'saved_recipe_proactive_multiple') && responseData.context_for_reply) {
          console.log("Setting context for multiple recipes found");
-         setContextForNextRequest(responseData.context_for_reply);
-         if (responseData.context_for_reply?.matches && !botMessage.actions) {
-             // Fix Linter Error: Assign map result then push
-             const mappedActions = responseData.context_for_reply.matches.map((match: any) => ({
+         // Ensure context_for_reply is an object before setting
+         const context = responseData.context_for_reply;
+         setContextForNextRequest(context && typeof context === 'object' ? context as Record<string, unknown> : null);
+
+         // Check if context is valid object AND has the matches property before accessing nested properties
+         if (context && typeof context === 'object' && 'matches' in context && Array.isArray(context.matches) && !botMessage.actions) {
+             // Now TypeScript knows context might have matches
+             const mappedActions = (context.matches as RecipeMatch[]).map((match) => ({
                  label: `Log: ${match.recipe_name}`,
                  payload: `confirm_log_saved_recipe:${match.id}` // Example payload format
              }));
@@ -232,12 +250,12 @@ export default function ChatPage() {
       const accessToken = session.access_token;
       
       // Construct request body including context/pending action if they exist
-      const requestBody: any = {
+      const requestBody: Record<string, unknown> = {
           message: messageToSend,
           conversation_history: historyForBackend
       };
 
-      let combinedContext: any = {};
+      let combinedContext: Record<string, unknown> = {};
       let contextWasSet = false;
 
       if (currentPendingAction) {
@@ -269,7 +287,7 @@ export default function ChatPage() {
       if (!response.ok) {
           let errorData;
           try { errorData = await response.json(); } 
-          catch (e) { errorData = { message: await response.text() }; }
+          catch (_error) { errorData = { message: await response.text() }; }
           console.error("Backend Error Data (fetch):", errorData);
           throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
       }

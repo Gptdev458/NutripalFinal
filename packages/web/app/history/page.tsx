@@ -55,9 +55,10 @@ export default function HistoryPage() {
         setLogs(data || []);
         console.log(`Fetched ${data?.length || 0} logs`);
 
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error('Error fetching history data:', err);
-        setError('Failed to load history data: ' + err.message);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        setError('Failed to load history data: ' + errorMessage);
         setLogs([]);
     } finally {
         setLoading(false);

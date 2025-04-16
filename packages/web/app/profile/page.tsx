@@ -11,7 +11,6 @@ export default function ProfilePage() {
   const { user, supabase, loading: authLoading } = useAuth();
 
   // == State from Skeleton (Data & Form) ==
-  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [age, setAge] = useState<string>('');
   const [weight, setWeight] = useState<string>('');
   const [height, setHeight] = useState<string>('');
@@ -91,7 +90,6 @@ export default function ProfilePage() {
       if (fetchError && fetchError.code !== 'PGRST116') throw fetchError;
       if (data) {
         console.log('Profile data fetched:', data);
-        setProfile(data);
         setAge(data.age?.toString() ?? '');
         setWeight(data.weight_kg?.toString() ?? '');
         setHeight(data.height_cm?.toString() ?? '');
@@ -100,11 +98,11 @@ export default function ProfilePage() {
         setHealthGoal(data.health_goal ?? '');
       } else {
         console.log('No profile found for user, form will be empty.');
-        setProfile(null);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error fetching profile:', err);
-      setError(err.message || 'Failed to fetch profile data.');
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError(errorMessage || 'Failed to fetch profile data.');
     } finally {
       setLoading(false);
     }
@@ -160,9 +158,10 @@ export default function ProfilePage() {
       if (saveError) throw saveError;
       console.log('Profile saved successfully.');
       setSuccessMessage('Profile updated successfully!');
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error saving profile:', err);
-      setError(err.message || 'Failed to save profile.');
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError(errorMessage || 'Failed to save profile.');
     } finally {
       setSaving(false);
     }
@@ -350,6 +349,13 @@ export default function ProfilePage() {
                    <div className="text-center py-6 text-gray-500">Enter your height and weight to calculate your BMI</div>
                  )}
               </div>
+
+              {bmi && (
+                    <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md text-sm">
+                        <p><strong>Estimated BMI:</strong> {bmi} ({bmiCategory})</p>
+                        <p className="text-xs text-gray-600 mt-1">Note: BMI is an estimate and doesn&apos;t account for muscle mass.</p>
+                    </div>
+                )}
             </div>
           </div>
         </main>

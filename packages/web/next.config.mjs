@@ -1,6 +1,7 @@
-import type { NextConfig } from "next";
+// Remove type-only import
+// import type { NextConfig } from "next";
 
-const nextConfig: NextConfig = {
+const nextConfig = {
   /* config options here */
   typescript: {
     ignoreBuildErrors: true,

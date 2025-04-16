@@ -53,19 +53,33 @@ export async function middleware(request: NextRequest) {
 
     if (sessionError) {
         console.error('Middleware Error fetching session:', sessionError);
-        // Allow request to proceed but log the error, maybe auth check will fail later
-        return response;
+        // REMOVED EARLY RETURN: Allow logic to continue to determine redirect based on lack of session.
+        // return response;
     }
 
+    // Determine logged-in status *after* attempting to get session
     const isLoggedIn = !!session;
     const pathname = request.nextUrl.pathname;
 
     // Define protected and public-only routes
-    const protectedRoutes = ['/', '/dashboard', '/profile', '/chat'];
+    // REMOVED '/' from protectedRoutes as it no longer has a page
+    const protectedRoutes = ['/dashboard', '/profile', '/chat', '/analytics', '/recipes', '/settings', '/history']; 
     const publicOnlyRoutes = ['/login', '/signup']; // Routes accessible only when logged out
 
+    // Handle root path explicitly
+    if (pathname === '/') {
+        if (isLoggedIn) {
+            console.log('Middleware: Logged in at root, redirecting to /dashboard');
+            return NextResponse.redirect(new URL('/dashboard', request.url));
+        } else {
+            console.log('Middleware: Not logged in at root, redirecting to /login');
+            return NextResponse.redirect(new URL('/login', request.url));
+        }
+    }
+
     // Check if the current path is protected
-    const isProtectedRoute = protectedRoutes.some(route => pathname === route || (route !== '/' && pathname.startsWith(route + '/')));
+    // Adjusted check: Use startsWith for all protected routes
+    const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route));
 
     // Check if the current path is public-only
     const isPublicOnlyRoute = publicOnlyRoutes.includes(pathname);
@@ -76,17 +90,13 @@ export async function middleware(request: NextRequest) {
     if (!isLoggedIn && isProtectedRoute) {
         // Not logged in, trying to access protected route -> redirect to login
         console.log('Middleware: Not logged in, redirecting to /login');
-        const url = request.nextUrl.clone();
-        url.pathname = '/login';
-        return NextResponse.redirect(url);
+        return NextResponse.redirect(new URL('/login', request.url));
     }
 
     if (isLoggedIn && isPublicOnlyRoute) {
-        // Logged in, trying to access login/signup -> redirect to dashboard (or home)
-        console.log('Middleware: Logged in, redirecting to /');
-        const url = request.nextUrl.clone();
-        url.pathname = '/'; // Redirect to home/dashboard
-        return NextResponse.redirect(url);
+        // Logged in, trying to access login/signup -> redirect to dashboard
+        console.log('Middleware: Logged in, redirecting to /dashboard');
+        return NextResponse.redirect(new URL('/dashboard', request.url)); // Redirect to /dashboard
     }
 
     // If no redirect needed, continue to the requested page, returning the potentially modified response (with refreshed cookies)

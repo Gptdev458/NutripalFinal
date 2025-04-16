@@ -1,0 +1,41 @@
+
+> web@0.1.0 build
+> next build
+
+node:internal/modules/cjs/loader:1228
+  throw err;
+  ^
+
+Error: Cannot find module '@swc/helpers/_/_interop_require_default'
+Require stack:
+- C:\Users\ianku\Desktop\NutriPalApp\packages\web\node_modules\next\dist\shared\lib\constants.js
+- C:\Users\ianku\Desktop\NutriPalApp\packages\web\node_modules\next\dist\server\config.js
+- C:\Users\ianku\Desktop\NutriPalApp\packages\web\node_modules\next\dist\cli\next-test.js
+- C:\Users\ianku\Desktop\NutriPalApp\packages\web\node_modules\next\dist\bin\next
+    at Function.<anonymous> (node:internal/modules/cjs/loader:1225:15)
+    at C:\Users\ianku\Desktop\NutriPalApp\packages\web\node_modules\next\dist\server\require-hook.js:55:36
+    at Function._load (node:internal/modules/cjs/loader:1055:27)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:220:24)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1311:12)
+    at mod.require (C:\Users\ianku\Desktop\NutriPalApp\packages\web\node_modules\next\dist\server\require-hook.js:65:28)
+    at require (node:internal/modules/helpers:136:16)
+    at Object.<anonymous> (C:\Users\ianku\Desktop\NutriPalApp\packages\web\node_modules\next\dist\shared\lib\constants.js:279:34)
+    at Module._compile (node:internal/modules/cjs/loader:1554:14) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [
+    'C:\\Users\\ianku\\Desktop\\NutriPalApp\\packages\\web\\node_modules\\next\\dist\\shared\\lib\\constants.js',
+    'C:\\Users\\ianku\\Desktop\\NutriPalApp\\packages\\web\\node_modules\\next\\dist\\server\\config.js',
+    'C:\\Users\\ianku\\Desktop\\NutriPalApp\\packages\\web\\node_modules\\next\\dist\\cli\\next-test.js',
+    'C:\\Users\\ianku\\Desktop\\NutriPalApp\\packages\\web\\node_modules\\next\\dist\\bin\\next'
+  ]
+}
+
+Node.js v22.14.0
+npm error Lifecycle script `build` failed with error:
+npm error code 1
+npm error path C:\Users\ianku\Desktop\NutriPalApp\packages\web
+npm error workspace web@0.1.0
+npm error location C:\Users\ianku\Desktop\NutriPalApp\packages\web
+npm error command failed
+npm error command C:\WINDOWS\system32\cmd.exe /d /s /c next build

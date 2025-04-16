@@ -26,7 +26,7 @@ interface SavedRecipe {
   description?: string | null;
   ingredients?: string | null; // For detailed view
   // Add other potential detailed fields: protein, carbs, fat etc.
-  [key: string]: any; // Allow dynamic properties for nutrients
+  [key: string]: unknown; // Fix: Use unknown instead of any
 }
 
 // Interface for User Goals
@@ -50,7 +50,7 @@ export default function SavedRecipesPage() {
   const [deletingRecipeId, setDeletingRecipeId] = useState<string | null>(null);
   const [isRecipeModalVisible, setIsRecipeModalVisible] = useState(false);
   const [selectedRecipeData, setSelectedRecipeData] = useState<SavedRecipe | null>(null);
-  const [isModalLoading, setIsModalLoading] = useState(false); // Loading details inside modal
+  const [isModalLoading, setIsModalLoading] = useState(false); // Restore unused state
   const [modalError, setModalError] = useState<string | null>(null);
   const [userGoals, setUserGoals] = useState<UserGoal[]>([]); // Store user goals
 
@@ -93,9 +93,10 @@ export default function SavedRecipesPage() {
            setUserGoals(goalsResponse.data || []);
       }
 
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error loading data:", err);
-      setError(err.message || "Failed to load data.");
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError(errorMessage || "Failed to load data.");
       setRecipes([]); // Clear recipes on error
       setUserGoals([]); // Clear goals on error
     } finally {
@@ -123,8 +124,8 @@ export default function SavedRecipesPage() {
     setSelectedRecipeData({ ...recipe }); 
     setIsRecipeModalVisible(true);
     setModalError(null);
-    // No separate modal loading needed as data is pre-fetched
-    // setIsModalLoading(true);
+    // No separate modal loading needed as data is pre-fetched, but restore setter call if used elsewhere
+    // setIsModalLoading(true); // Restore if needed
     // setTimeout(() => { ... }, 500);
   };
 
@@ -162,10 +163,10 @@ export default function SavedRecipesPage() {
       alert(`Recipe "${recipeName}" logged successfully!`);
       handleCloseModal(); // Close modal after successful logging
 
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Failed to log recipe via function:", err);
-      // Show error feedback (e.g., toast notification or modal error)
-      setModalError(`Failed to log recipe: ${err.message || 'Unknown function error'}`);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setModalError(`Failed to log recipe: ${errorMessage || 'Unknown function error'}`);
       // Don't close modal on error
     } finally {
         setLoggingRecipeId(null);
@@ -203,11 +204,13 @@ export default function SavedRecipesPage() {
 
         console.log("Recipe deleted successfully from DB.");
         // Remove recipe from local state
-        setRecipes(currentRecipes => currentRecipes.filter(recipe => recipe.id !== recipeId));
+        setRecipes(prev => prev.filter(recipe => recipe.id !== recipeId));
         handleCloseModal(); // Close modal after successful deletion
-    } catch (err: any) { 
+        alert(`Recipe "${recipeName}" deleted.`); // Success feedback
+    } catch (err: unknown) { 
          console.error("Failed to delete recipe:", err);
-         setModalError(`Failed to delete recipe: ${err.message}`);
+         const errorMessage = err instanceof Error ? err.message : String(err);
+         setModalError(`Failed to delete recipe: ${errorMessage}`);
          // Don't close modal on error, let user see the message
     } finally {
         setDeletingRecipeId(null);
@@ -235,7 +238,7 @@ export default function SavedRecipesPage() {
               <span className="text-gray-600 font-medium">{typeof value === 'number' ? Math.round(value) : value} {unit}</span>
             </div>
           );
-        }
+        } 
         return null;
       };
 
@@ -359,10 +362,10 @@ export default function SavedRecipesPage() {
          <nav className="flex-1 p-4 space-y-1">
             <Link href="/dashboard" className="block px-3 py-2 text-gray-600 rounded-md hover:bg-gray-100">Dashboard</Link>
             <Link href="/profile" className="block px-3 py-2 text-gray-600 rounded-md hover:bg-gray-100">Profile</Link>
-            <Link href="#" className="block px-3 py-2 text-gray-600 rounded-md hover:bg-gray-100">Analytics</Link>
+            <Link href="/analytics" className="block px-3 py-2 text-gray-600 rounded-md hover:bg-gray-100">Analytics</Link>
             <Link href="/recipes" className="block px-3 py-2 bg-blue-50 text-blue-700 rounded-md font-medium">Saved Recipes</Link>
             <Link href="/chat" className="block px-3 py-2 text-gray-600 rounded-md hover:bg-gray-100">Chat</Link>
-            <Link href="#" className="block px-3 py-2 text-gray-600 rounded-md hover:bg-gray-100">Settings</Link>
+            <Link href="/settings" className="block px-3 py-2 text-gray-600 rounded-md hover:bg-gray-100">Settings</Link>
          </nav>
       </div>
 
@@ -444,7 +447,12 @@ export default function SavedRecipesPage() {
                             </div>
                         ))}
                      </div>
-                   ) : ( 
+                   ) : recipes.length === 0 ? (
+                      <div className="text-center py-10 px-4 bg-white rounded-lg border border-gray-200 shadow-sm">
+                         <p className="text-gray-600 mb-4">You haven&apos;t saved any recipes yet.</p>
+                         <Link href="/chat" className="text-blue-600 hover:underline">Start chatting to find and save recipes!</Link>
+                     </div>
+                  ) : (
                      <div className="text-center py-10">
                         <p className="text-lg text-gray-500">You haven't saved any recipes yet.</p>
                         <p className="mt-2 text-gray-500">Recipes you save from the Chat will appear here.</p>

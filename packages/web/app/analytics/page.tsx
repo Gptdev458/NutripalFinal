@@ -14,6 +14,7 @@ import {
     Legend, 
     ResponsiveContainer
 } from 'recharts';
+import type { UserProfile } from 'shared'; // Keep UserProfile if needed elsewhere
 
 // TODO: Add a charting library (e.g., Recharts or Chart.js)
 
@@ -41,6 +42,12 @@ interface ChartPoint {
     label: string; // X-axis label (e.g., 'Mon', '10-23')
     Actual: number | null;
     Goal: number | null;
+}
+
+// Define a type for the log entry shape we expect from food_log
+interface FoodLogEntry {
+  timestamp: string;
+  [key: string]: unknown; // Allow for nutrient columns like 'calories', 'protein_g', etc.
 }
 
 // Helper function
@@ -74,7 +81,7 @@ export default function AnalyticsPage() {
     if (!user || !supabase) {
         setTrackedNutrientsList([]);
         setLoadingGoals(false);
-        setError("User not available.")
+        setError("Authentication context not available.")
         return;
     }
     setLoadingGoals(true);
@@ -100,118 +107,157 @@ export default function AnalyticsPage() {
              setError("No nutrients are currently being tracked. Please set goals in Settings.");
         }
 
-    } catch (err: any) {
-        console.error("Error fetching tracked nutrients:", err);
-        setError(`Failed to load tracked nutrients: ${err.message}`);
-        setTrackedNutrientsList([]);
-        setSelectedNutrient(null);
+    } catch (err: unknown) {
+        console.error("Full error object loading tracked nutrients:", err); // Log full error
+        console.error("Error loading tracked nutrients:", err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        setError(`Failed to load nutrient goals: ${errorMessage}`);
     } finally {
         setLoadingGoals(false);
     }
-  }, [user, supabase, selectedNutrient]); // selectedNutrient dependency might cause loops if not careful, manage state setting
+  }, [user, supabase]);
 
   // Fetch analytics data for the selected nutrient
   const fetchAnalyticsData = useCallback(async () => {
-    if (!user || !supabase || !selectedNutrient || trackedNutrientsList.length === 0) {
-        setLoadingData(false);
+    if (!user || !supabase || !selectedNutrient) {
+        setError("Cannot fetch analytics data: missing user, service, or selected nutrient.");
         return;
     }
-
-    const goalDetails = trackedNutrientsList.find(g => g.nutrient === selectedNutrient);
-    if (!goalDetails) {
-        setError(`Details for nutrient '${selectedNutrient}' not found.`);
-        setLoadingData(false);
-        return;
-    }
-    setCurrentGoal(goalDetails); 
-
     setLoadingData(true);
     setError(null);
-    setAnalyticsSummary(null);
-    setWeeklyChartData(null);
-    setMonthlyChartData(null);
 
-    console.log(`Fetching analytics for: ${selectedNutrient}`);
+    const currentGoal = trackedNutrientsList.find(g => g.nutrient === selectedNutrient);
+    setCurrentGoal(currentGoal || null);
 
-    // --- Replace MOCK with Supabase RPC call --- 
-    const startDate = formatDate(getPastDate(29));
-    const endDate = formatDate(new Date());
+    if (!currentGoal) {
+        setError(`Goal not found for ${selectedNutrient}. Unable to calculate analytics.`);
+        setLoadingData(false);
+        setAnalyticsSummary(null);
+        setWeeklyChartData(null);
+        setMonthlyChartData(null);
+        return;
+    }
+
+    const today = new Date();
+    const thirtyDaysAgo = getPastDate(29); // Fetch 30 days of logs
+    const startRange = thirtyDaysAgo.toISOString();
+    const endRange = today.toISOString();
 
     try {
-        console.log(`Calling Supabase RPC: get_daily_nutrient_totals for ${selectedNutrient} from ${startDate} to ${endDate}`);
-        const { data, error: fetchError } = await supabase.rpc('get_daily_nutrient_totals', {
-            p_user_id: user.id,          // Match parameter name in SQL function
-            p_nutrient_key: selectedNutrient, // Match parameter name in SQL function
-            p_start_date: startDate,       // Match parameter name in SQL function
-            p_end_date: endDate           // Match parameter name in SQL function
+        console.log(`Fetching food_log for ${selectedNutrient} between ${startRange} and ${endRange}`);
+        // 1. Fetch raw logs from food_log (select all columns for better type inference)
+        const { data, error: logError } = await supabase
+            .from('food_log') // <-- Correct table
+            .select('*') // <-- Select all columns
+            .eq('user_id', user.id)
+            .gte('timestamp', startRange)
+            .lte('timestamp', endRange)
+            .order('timestamp', { ascending: true });
+
+        if (logError) throw logError;
+
+        // Explicitly type the fetched data after error check
+        const rawLogs: FoodLogEntry[] | null = data as FoodLogEntry[] | null;
+
+        console.log("Fetched raw logs:", rawLogs);
+
+        // 2. Aggregate daily totals from raw logs
+        const dailyTotalsMap = new Map<string, number>();
+        if (Array.isArray(rawLogs)) {
+            // No casting needed here now due to explicit typing above
+            rawLogs.forEach(log => {
+                // Use type guards for safer access
+                if (log && typeof log.timestamp === 'string' && typeof log[selectedNutrient] === 'number') {
+                    const day = log.timestamp.split('T')[0]; 
+                    const value = log[selectedNutrient] as number;
+                    const currentTotal = dailyTotalsMap.get(day) || 0;
+                    dailyTotalsMap.set(day, currentTotal + value);
+                } else {
+                    console.warn("Skipping invalid log entry or missing nutrient value:", log);
+                }
+            });
+        }
+        // Ensure all days within the 30-day range have an entry (even if 0)
+        for (let i = 29; i >= 0; i--) {
+            const date = getPastDate(i);
+            const dateStr = formatDate(date);
+            if (!dailyTotalsMap.has(dateStr)) {
+                dailyTotalsMap.set(dateStr, 0);
+            }
+        }
+
+        // Convert map to sorted array
+        const dailyTotals: DailyNutrientTotal[] = Array.from(dailyTotalsMap, ([day, total]) => ({ day, total }))
+                                                     .sort((a, b) => a.day.localeCompare(b.day));
+
+        console.log("Aggregated daily totals:", dailyTotals);
+
+        if (dailyTotals.length === 0) {
+             console.log("No aggregated totals found for the selected period and nutrient.");
+            // Set empty/default states if no logs are found
+            setAnalyticsSummary({
+                today: { value: 0, percent: 0 },
+                weeklyAvg: { value: 0, percent: 0 },
+                monthlyAvg: { value: 0, percent: 0 },
+            });
+            setWeeklyChartData([]);
+            setMonthlyChartData([]);
+            setError(null); // Clear any previous errors
+            setLoadingData(false);
+            return; 
+        }
+
+        // Calculate summaries
+        const todayStr = formatDate(new Date());
+        const sevenDaysAgoStr = formatDate(getPastDate(6)); // Adjust index for filtering
+        
+        const todayData = dailyTotals.find(d => d.day === todayStr);
+        const todayValue = todayData?.total || 0;
+        const todayPercent = currentGoal.target_value > 0 ? (todayValue / currentGoal.target_value) * 100 : 0;
+
+        const weeklyData = dailyTotals.filter(d => d.day >= sevenDaysAgoStr);
+        const weeklyTotal = weeklyData.reduce((sum, d) => sum + d.total, 0);
+        const weeklyAvgValue = weeklyData.length > 0 ? weeklyTotal / weeklyData.length : 0;
+        const weeklyAvgPercent = currentGoal.target_value > 0 ? (weeklyAvgValue / currentGoal.target_value) * 100 : 0;
+
+        const monthlyData = dailyTotals; // Uses all 30 days
+        const monthlyTotal = monthlyData.reduce((sum, d) => sum + d.total, 0);
+        const monthlyAvgValue = monthlyData.length > 0 ? monthlyTotal / monthlyData.length : 0;
+        const monthlyAvgPercent = currentGoal.target_value > 0 ? (monthlyAvgValue / currentGoal.target_value) * 100 : 0;
+
+        setAnalyticsSummary({
+            today: { value: todayValue, percent: todayPercent },
+            weeklyAvg: { value: weeklyAvgValue, percent: weeklyAvgPercent },
+            monthlyAvg: { value: monthlyAvgValue, percent: monthlyAvgPercent },
         });
 
-        console.log("Supabase RPC Response:", { data, fetchError });
-
-        if (fetchError) {
-            // Attempt to parse Supabase error for more detail
-            let detailedError = fetchError.message;
-            try {
-                 const parsedHint = JSON.parse(fetchError.hint || '{}');
-                 if (parsedHint.message) detailedError = parsedHint.message;
-            } catch (e) { /* Ignore parsing errors */ }
-            throw new Error(`Database error: ${detailedError} (Code: ${fetchError.code})`);
+        // Prepare chart data (using dailyTotalsMap or sorted dailyTotals)
+        const goalValue = currentGoal.target_value;
+        const weeklyChart: ChartPoint[] = [];
+        for (let i = 6; i >= 0; i--) { // Last 7 days
+            const date = getPastDate(i);
+            const dateStr = formatDate(date);
+            const dayData = dailyTotalsMap.get(dateStr); // Use map for direct lookup
+            weeklyChart.push({
+                label: date.toLocaleDateString('en-US', { weekday: 'short' }),
+                Actual: dayData !== undefined ? dayData : null, // Use null if no data
+                Goal: goalValue
+            });
         }
-        
-        const dailyTotals: DailyNutrientTotal[] = data || [];
-        console.log("Processed daily totals:", dailyTotals);
+        setWeeklyChartData(weeklyChart);
 
-        // --- Calculations (using fetched data) ---
-        let calculatedSummary: AnalyticsSummary = {
-            today: { value: 0, percent: 0 },
-            weeklyAvg: { value: 0, percent: 0 },
-            monthlyAvg: { value: 0, percent: 0 },
-        };
-        const targetValue = goalDetails.target_value || 0;
+        const monthlyChart: ChartPoint[] = dailyTotals.map(item => ({
+            label: new Date(item.day + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            Actual: item.total,
+            Goal: goalValue
+        }));
+        setMonthlyChartData(monthlyChart);
 
-        if (dailyTotals.length > 0) {
-            const todayTotal = dailyTotals[dailyTotals.length - 1]?.total || 0;
-            calculatedSummary.today = { value: todayTotal, percent: targetValue > 0 ? (todayTotal / targetValue) * 100 : 0 };
-
-            const last7Days = dailyTotals.slice(-7);
-            const weeklySum = last7Days.reduce((sum, day) => sum + (day.total || 0), 0);
-            const weeklyAvg = last7Days.length > 0 ? weeklySum / last7Days.length : 0;
-            calculatedSummary.weeklyAvg = { value: weeklyAvg, percent: targetValue > 0 ? (weeklyAvg / targetValue) * 100 : 0 };
-
-            const monthlySum = dailyTotals.reduce((sum, day) => sum + (day.total || 0), 0);
-            const monthlyAvg = dailyTotals.length > 0 ? monthlySum / dailyTotals.length : 0;
-            calculatedSummary.monthlyAvg = { value: monthlyAvg, percent: targetValue > 0 ? (monthlyAvg / targetValue) * 100 : 0 };
-        }
-        setAnalyticsSummary(calculatedSummary);
-
-        // --- Chart Data Prep (Formatted for Recharts) ---
-        if (dailyTotals.length > 0) {
-             // Weekly Chart Data
-             const last7 = dailyTotals.slice(-7);
-             const weeklyData: ChartPoint[] = last7.map(d => ({
-                 label: d.day.slice(5), // MM-DD
-                 Actual: d.total,
-                 Goal: targetValue
-             }));
-             setWeeklyChartData(weeklyData);
-
-             // Monthly Chart Data
-             const monthlyData: ChartPoint[] = dailyTotals.map(d => ({
-                label: d.day.slice(5), // MM-DD
-                Actual: d.total,
-                Goal: targetValue
-             }));
-             setMonthlyChartData(monthlyData);
-
-        } else {
-            setWeeklyChartData(null);
-            setMonthlyChartData(null);
-        }
-
-    } catch (err: any) {
+    } catch (err: unknown) {
+        console.error("Full error object fetching/processing analytics data:", err); 
         console.error(`Error fetching/processing analytics data for ${selectedNutrient}:`, err);
-        // Use the error message directly from the caught error
-        setError(`Failed to load analytics: ${err.message}`); 
+        const errorMessage = err instanceof Error ? err.message : String(err); 
+        setError(`Failed to load analytics: ${errorMessage}`);
         setAnalyticsSummary(null);
         setWeeklyChartData(null);
         setMonthlyChartData(null);

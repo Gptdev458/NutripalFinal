@@ -45,9 +45,10 @@ export default function LoginPage() {
       console.log('[handleLogin] Calling router.replace(\'/dashboard\')...');
       router.replace('/dashboard');
 
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[handleLogin] Error caught:', err);
-      setError(err.message || 'An unexpected error occurred during login.');
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError(errorMessage || 'An unexpected error occurred during login.');
       setLoading(false);
     }
   };

@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '@/context/AuthContext'; // Import useAuth hook
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 export default function SignUpPage() {
   const [email, setEmail] = useState('');
@@ -73,9 +74,10 @@ export default function SignUpPage() {
          setError('An unexpected issue occurred during sign up.');
       }
 
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[handleSignUp] Error caught:', err);
-      setError(err.message || 'An unexpected error occurred during sign up.');
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError(errorMessage || 'An unexpected error occurred during sign up.');
     } finally {
       setLoading(false);
     }
@@ -139,7 +141,13 @@ export default function SignUpPage() {
             </button>
           </div>
         </form>
-         {/* TODO: Add link back to Login page */}
+         {/* Link to Login */}
+         <p className="mt-4 text-center text-sm text-gray-600">
+           Already have an account?{' '}
+           <Link href="/login" className="font-medium text-indigo-600 hover:text-indigo-500">
+             Log in
+           </Link>
+         </p>
       </div>
     </div>
   );

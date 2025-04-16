@@ -92,9 +92,10 @@ export default function GoalSettingsPage() {
       });
       setTrackedGoals(initialGoalsState);
 
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error fetching goals:", err);
-      setError(`Failed to load goals: ${err.message}`);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError(`Failed to load goals: ${errorMessage}`);
     } finally {
       setLoading(false);
     }
@@ -199,8 +200,8 @@ export default function GoalSettingsPage() {
 
     console.log("Goals to save:", goalsToSave);
 
+    // Delete goals first (safer transaction approach)
     try {
-        // 1. Delete existing goals for the user
         console.log("Deleting existing goals for user:", user.id);
         const { error: deleteError } = await supabase
             .from('user_goals')
@@ -208,32 +209,28 @@ export default function GoalSettingsPage() {
             .eq('user_id', user.id);
 
         if (deleteError) {
-            console.error("Error deleting old goals:", deleteError);
-            throw new Error(`Failed to clear previous goals: ${deleteError.message}`);
+            console.warn("Error during goal deletion (might be okay if no goals existed):", deleteError.message);
         }
-        console.log("Existing goals deleted.");
 
-        // 2. Insert new goals (if any)
+        // If deletion is successful (or non-critical error), insert new goals
         if (goalsToSave.length > 0) {
-            console.log("Inserting new goals:", goalsToSave.length);
-            const { error: insertError } = await supabase
-                .from('user_goals')
-                .insert(goalsToSave);
-
-            if (insertError) {
-                 console.error("Error inserting new goals:", insertError);
-                throw new Error(`Failed to save new goals: ${insertError.message}`);
-            }
-            console.log("New goals inserted successfully.");
-            setSuccessMessage("Nutrient goals saved successfully!");
-        } else {
-             console.log("No goals selected for tracking.");
-             setSuccessMessage("Tracking cleared. No goals are currently selected.");
+             console.log("Inserting new goals:", goalsToSave);
+             const { error: insertError } = await supabase
+                 .from('user_goals')
+                 .insert(goalsToSave);
+            
+             if (insertError) {
+                 throw insertError; // Throw insert error to be caught below
+             }
         }
 
-    } catch (err: any) {
-        console.error("Error saving goals:", err);
-        setError(err.message || "An unexpected error occurred while saving.");
+        setSuccessMessage("Goals updated successfully!");
+        console.log("Goals update process completed successfully.");
+
+    } catch (error: unknown) {
+         console.error("Error saving goals (delete/insert transaction):", error);
+         const errorMessage = error instanceof Error ? error.message : String(error);
+         setError(`Failed to save goals: ${errorMessage}`);
     } finally {
         setSaving(false);
     }

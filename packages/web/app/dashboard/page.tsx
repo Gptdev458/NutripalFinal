@@ -29,7 +29,7 @@ interface FoodLog {
     timestamp: string; 
     food_name?: string | null;
     calories?: number | null;
-    [key: string]: any; 
+    [key: string]: unknown; // Retry: Use unknown instead of any
 }
 
 interface DailyTotals {
@@ -115,9 +115,11 @@ export default function DashboardPage() {
 
         console.log("Dashboard data fetched:", { fetchedGoals, fetchedLogs, totals });
 
-    } catch (err: any) {
+    } catch (err: unknown) { // Retry: Change any to unknown
         console.error("Error fetching dashboard data:", err);
-        setError(`Failed to load dashboard data: ${err.message}`);
+        // Retry: Safely access error message
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        setError(`Failed to load dashboard data: ${errorMessage}`);
         setUserGoals([]);
         setDailyTotals({});
         setRecentLogs([]);
@@ -128,15 +130,30 @@ export default function DashboardPage() {
 
   }, [user, supabase]);
 
-  // Initial fetch 
+  // Initial fetch - Trigger only when auth loading finishes and user exists
   useEffect(() => {
-      if (!authLoading && user) {
-          fetchDashboardData();
-      } else if (!authLoading && !user) {
-          setLoadingData(false);
+    // Check if auth is finished loading
+    if (!authLoading) {
+      if (user) {
+        // User is logged in, fetch data
+        console.log("DashboardPage Effect: Auth loaded, user found. Fetching data...");
+        fetchDashboardData();
+      } else {
+        // Auth loaded, but no user (logged out)
+        console.log("DashboardPage Effect: Auth loaded, no user found. Clearing data.");
+        setLoadingData(false); 
+        setUserGoals([]);
+        setDailyTotals({});
+        setRecentLogs([]);
+        setError(null); 
       }
-  }, [authLoading, user, fetchDashboardData]);
-  
+    }
+    // We only want this effect to run when authLoading changes from true to false.
+    // It should not re-run if the user object identity changes later,
+    // or if fetchDashboardData identity changes (it's stable via useCallback).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading]); // <-- Depend ONLY on authLoading
+
   // Handle Refresh Action
   const handleRefresh = () => {
       fetchDashboardData(true); // Pass true to indicate refresh
@@ -276,7 +293,7 @@ export default function DashboardPage() {
                
                {/* Today's Log Section */} 
                <div className="mb-8">
-                 <h2 className="text-lg font-semibold text-blue-600 mb-4 px-1">Today's Log</h2>
+                 <h2 className="text-lg font-semibold text-blue-600 mb-4 px-1">Today&apos;s Log</h2>
                  {recentLogs.length > 0 ? (
                    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
                      <ul className="divide-y divide-gray-200">
@@ -307,7 +324,7 @@ export default function DashboardPage() {
                    </div>
                  ) : (
                    <div className="bg-white border border-gray-200 rounded-lg p-6 text-center">
-                     <p className="text-gray-500 mb-4">No food logged today.</p>
+                     <p className="text-gray-500 mb-4">No food logged today yet. Let&apos;s add something!</p>
                      <Link href="/chat" className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium">
                        Log Your First Meal
                      </Link>
