@@ -8,8 +8,12 @@ export default ({ config }) => {
   console.log("app.config.js: SUPABASE_URL found:", Boolean(supabaseUrl));
   console.log("app.config.js: SUPABASE_ANON_KEY found:", Boolean(supabaseAnonKey));
 
-  // Try to get EAS Project ID from env, fallback to existing or hardcoded
-  const easProjectId = process.env.EAS_PROJECT_ID || config?.expo?.extra?.eas?.projectId || "60aff455-12b7-4de3-8582-1119fa72ef92";
+  // Explicitly remove the project ID from the incoming config if it exists
+  // This forces EAS to see the project as unlinked
+  if (config?.expo?.extra?.eas?.projectId) {
+    console.log("app.config.js: Deleting existing EAS projectId from config object.");
+    delete config.expo.extra.eas.projectId;
+  }
 
   return {
     ...config, // Spread the existing base config
@@ -17,6 +21,7 @@ export default ({ config }) => {
       ...config?.expo, // Spread the existing expo config
       name: "NutriPalApp",
       slug: "NutriPalApp",
+      owner: "space-inch",
       version: "1.0.0",
       orientation: "portrait",
       icon: "./assets/icon.png",
@@ -44,12 +49,13 @@ export default ({ config }) => {
         favicon: "./assets/favicon.png"
       },
       extra: {
-        ...config?.expo?.extra, // Spread existing extra config
+        // We won't spread config.expo.extra here to avoid potential stale data,
+        // but we will construct the eas object manually.
         eas: {
-          ...(config?.expo?.extra?.eas), // Spread existing eas config
-          projectId: easProjectId
+          // Prioritize environment variable, then use the newly linked static ID.
+          projectId: process.env.EAS_PROJECT_ID || "e2224b27-6cfa-4fd4-a7f0-b4b7d9740ef0"
         },
-        // Use process.env here
+        // Use process.env here for Supabase keys
         supabaseUrl: supabaseUrl,
         supabaseAnonKey: supabaseAnonKey
       },

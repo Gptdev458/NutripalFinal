@@ -42,8 +42,8 @@ export default function LoginPage() {
       setLoading(false); 
 
       // Re-introduce redirect after successful login
-      console.log('[handleLogin] Calling router.replace(\'/\')...'); 
-      router.replace('/'); 
+      console.log('[handleLogin] Calling router.replace(\'/dashboard\')...');
+      router.replace('/dashboard');
 
     } catch (err: any) {
       console.error('[handleLogin] Error caught:', err);

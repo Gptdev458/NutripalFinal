@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 // Assuming icons might be used - replace with actual icon components if available
 // import { UserIcon, CogIcon, ArrowRightIcon, LogoutIcon } from '@heroicons/react/outline'; 
@@ -20,6 +21,7 @@ const LoadingSpinner = () => {
 
 export default function SettingsPage() {
   const { user, signOut, loading: authLoading } = useAuth();
+  const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
 
@@ -40,17 +42,29 @@ export default function SettingsPage() {
     if (signingOut) return; // Prevent double clicks
     setSigningOut(true);
     try {
+      console.log("SettingsPage: Attempting sign out..."); // Optional: Add log
       const { error } = await signOut();
+      console.log("SettingsPage: Sign out completed.", { error }); // Optional: Add log
+
+      // Always redirect after attempting sign out
+      console.log("SettingsPage: Redirecting to /login..."); // Optional: Add log
+      router.replace('/login'); // <<< ADD REDIRECT
+
       if (error) {
-        alert(`Sign Out Error: ${error.message}`); // Use a proper notification system later
+        // Log error or show non-blocking notification if needed, but redirect happens anyway
+        console.error(`Sign Out Error (handled by redirect): ${error.message}`);
+        // alert(`Sign Out Error: ${error.message}`); // Avoid blocking alerts if possible
       }
     } catch (error: any) {
-      alert(`Sign Out Error: ${error.message || 'An unexpected error occurred.'}`);
-      console.error('Sign Out error:', error);
+      console.error('Sign Out unexpected error:', error);
+      // Still redirect even if there was an unexpected JS error in the try block
+      router.replace('/login'); 
+      // alert(`Sign Out Error: ${error.message || 'An unexpected error occurred.'}`);
     } finally {
-      setSigningOut(false);
+      // No need to setSigningOut(false) as we are navigating away
+      // setSigningOut(false);
     }
-  }, [signOut, signingOut]);
+  }, [signOut, signingOut, router]); // <<< ADD router TO DEPENDENCY ARRAY
 
   // == Render Component with New UI Structure ==
   return (
