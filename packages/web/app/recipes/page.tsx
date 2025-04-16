@@ -232,10 +232,15 @@ export default function SavedRecipesPage() {
         const unit = goal.unit || 'g'; // Default unit if missing
 
         if (value !== null && value !== undefined) {
+          // Prepare value for rendering, handle non-renderable types
+          const displayValue = typeof value === 'number' 
+              ? Math.round(value) 
+              : (typeof value === 'string' ? value : 'N/A'); // Fallback for unexpected types
+            
           return (
             <div key={nutrientKey} className="flex justify-between py-1 text-sm">
               <span className="text-gray-700">{nutrientKey.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}:</span>
-              <span className="text-gray-600 font-medium">{typeof value === 'number' ? Math.round(value) : value} {unit}</span>
+              <span className="text-gray-600 font-medium">{displayValue} {unit}</span>
             </div>
           );
         } 
