@@ -233,6 +233,7 @@ export default function SavedRecipesPage() {
 
         if (value !== null && value !== undefined) {
           // Prepare value for rendering, handle non-renderable types
+          // Test comment to trigger git detection
           const displayValue = typeof value === 'number' 
               ? Math.round(value) 
               : (typeof value === 'string' ? value : 'N/A'); // Fallback for unexpected types
