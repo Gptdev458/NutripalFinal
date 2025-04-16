@@ -62,58 +62,58 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!supabase) {
-      setError("Authentication service failed to initialize.");
-      setLoading(false);
-      return;
-    }
-
-    let isMounted = true; 
-
-    // Fetch the initial session
-    const fetchInitialSession = async () => {
-      try {
-        // Use the client created above
-        const { data, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) throw sessionError;
-
-        if (isMounted) {
-          setSession(data.session);
-          setUser(data.session?.user ?? null);
-        }
-      } catch (err: any) {
-        console.error('Error fetching initial session:', err.message);
-        if (isMounted) setError('Failed to load user session.');
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-
-    fetchInitialSession();
-
-    // Subscribe to auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        if (isMounted) {
-          console.log("AuthProvider state changed:", _event, session ? 'Got session' : 'No session');
-          setSession(session);
-          setUser(session?.user ?? null);
-          setLoading(false); 
-          setError(null); 
-        }
-      }
-    );
-
-    // Cleanup: unsubscribe on unmount
-    return () => {
-      isMounted = false;
-      if (subscription) {
-        console.log("AuthProvider: Unsubscribing from auth state changes.");
-        subscription.unsubscribe();
-      }
-    };
-  }, [supabase]); // Add supabase as dependency
+  // useEffect(() => {
+  //   if (!supabase) {
+  //     setError("Authentication service failed to initialize.");
+  //     setLoading(false);
+  //     return;
+  //   }
+  //
+  //   let isMounted = true; 
+  //
+  //   // Fetch the initial session
+  //   const fetchInitialSession = async () => {
+  //     try {
+  //       // Use the client created above
+  //       const { data, error: sessionError } = await supabase.auth.getSession();
+  //       if (sessionError) throw sessionError;
+  //
+  //       if (isMounted) {
+  //         setSession(data.session);
+  //         setUser(data.session?.user ?? null);
+  //       }
+  //     } catch (err: any) {
+  //       console.error('Error fetching initial session:', err.message);
+  //       if (isMounted) setError('Failed to load user session.');
+  //     } finally {
+  //       if (isMounted) setLoading(false);
+  //     }
+  //   };
+  //
+  //   fetchInitialSession();
+  //
+  //   // Subscribe to auth state changes
+  //   const { data: { subscription } } = supabase.auth.onAuthStateChange(
+  //     (_event, session) => {
+  //       if (isMounted) {
+  //         console.log("AuthProvider state changed:", _event, session ? 'Got session' : 'No session');
+  //         setSession(session);
+  //         setUser(session?.user ?? null);
+  //         setLoading(false); 
+  //         setError(null); 
+  //       }
+  //     }
+  //   );
+  //
+  //   // Cleanup: unsubscribe on unmount
+  //   return () => {
+  //     isMounted = false;
+  //     if (subscription) {
+  //       console.log("AuthProvider: Unsubscribing from auth state changes.");
+  //       subscription.unsubscribe();
+  //     }
+  //   };
+  // }, [supabase]); // Add supabase as dependency
 
   // --- Add signOut function --- 
   const signOut = async () => {
