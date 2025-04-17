@@ -1,3 +1,4 @@
+// Trigger redeploy after making repo public
 // Remove type-only import
 // import type { NextConfig } from "next";
 
