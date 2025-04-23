@@ -17,9 +17,12 @@ export const MASTER_NUTRIENT_LIST = [
   { key: "fat_polyunsaturated_g", name: "Polyunsaturated Fat", unit: "g" },
   { key: "fat_monounsaturated_g", name: "Monounsaturated Fat", unit: "g" },
   { key: "fat_trans_g", name: "Trans Fat", unit: "g" },
+  { key: "omega_3_g", name: "Omega-3 Fatty Acids", unit: "g" },
+  { key: "omega_6_g", name: "Omega-6 Fatty Acids", unit: "g" },
 
   // Carb Subtypes
-  { key: "fiber_g", name: "Dietary Fiber", unit: "g" },
+  { key: "fiber_g", name: "Total Fiber", unit: "g" },
+  { key: "fiber_soluble_g", name: "Soluble Fiber", unit: "g" },
   { key: "sugar_g", name: "Total Sugars", unit: "g" },
   { key: "sugar_added_g", name: "Added Sugars", unit: "g" },
 
@@ -54,6 +57,9 @@ export const MASTER_NUTRIENT_LIST = [
   { key: "biotin_mcg", name: "Biotin (B7)", unit: "mcg" },
   { key: "folate_mcg_dfe", name: "Folate (B9)", unit: "mcg DFE" },
   { key: "vitamin_b12_mcg", name: "Vitamin B12", unit: "mcg" },
+
+  // Calculated/Ratio Goals
+  { key: "omega_ratio", name: "Omega 6:3 Ratio", unit: "ratio" },
 ];
 
 /**

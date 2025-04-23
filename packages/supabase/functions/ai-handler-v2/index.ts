@@ -17,13 +17,16 @@ const CORS_HEADERS = {
 };
 
 // Define AI Persona with updated instructions for follow-ups
-const AI_PERSONA = "You are NutriPal, an encouraging, knowledgeable, and friendly AI nutrition coach. Be supportive, conversational, and concise in your responses. When completing a successful logging action or answering a question helpfully, end your response with a brief, encouraging, natural-sounding follow-up like 'Keep up the great work!' or 'Anything else today?'.";
+const AI_PERSONA = `You are NutriPal, an encouraging, knowledgeable, and friendly AI nutrition coach. Be supportive, conversational, and concise in your responses. When completing a successful logging action or answering a question helpfully, end your response with a brief, encouraging, natural-sounding follow-up like 'Keep up the great work!' or 'Anything else today?'.
+If the user mentions more than one food in a message, call the logging tool once for each food, not as a combined description.`;
 
 // Define Master Nutrient Keys Directly
 const MASTER_NUTRIENT_KEYS = [
   "calories", "water_g", "protein_g", "fat_total_g", "carbs_g",
   "fat_saturated_g", "fat_polyunsaturated_g", "fat_monounsaturated_g", "fat_trans_g",
-  "fiber_g", "sugar_g", "sugar_added_g", "cholesterol_mg", "sodium_mg",
+  "omega_3_g", "omega_6_g",
+  "fiber_g", "fiber_soluble_g",
+  "sugar_g", "sugar_added_g", "cholesterol_mg", "sodium_mg",
   "potassium_mg", "calcium_mg", "iron_mg", "magnesium_mg", "phosphorus_mg",
   "zinc_mg", "copper_mg", "manganese_mg", "selenium_mcg", "vitamin_a_mcg_rae",
   "vitamin_d_mcg", "vitamin_e_mg", "vitamin_k_mcg", "vitamin_c_mg", "thiamin_mg",
@@ -37,7 +40,7 @@ const availableTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         type: 'function',
         function: {
             name: 'logGenericFoodItem',
-            description: "Logs a single, simple food item (e.g., 'an apple', 'coffee with milk', 'slice of cheese') or a pre-packaged/standard meal where ingredients aren't needed (e.g., 'McDonalds Big Mac', 'Amy's frozen burrito' IF specified like that). Use this ONLY when the item is clearly simple OR explicitly stated as standard/pre-packaged. **DO NOT use** for dishes that typically require multiple ingredients (like 'fried rice', 'soup', 'salad', 'pasta', 'smoothie', 'casserole') UNLESS the user provides specific context indicating it's standard/pre-made OR you are explicitly told to log it as a generic item after asking for clarification." ,
+            description: "Logs a single, simple food item. If the user mentions multiple foods in one message (e.g., 'log a banana and an apple'), call this tool separately for each food item. Use this ONLY when the item is clearly simple OR explicitly stated as standard/pre-packaged. **DO NOT use** for dishes that typically require multiple ingredients (like 'fried rice', 'soup', 'salad', 'pasta', 'smoothie', 'casserole') UNLESS the user provides specific context indicating it's standard/pre-made OR you are explicitly told to log it as a generic item after asking for clarification.",
             parameters: {
                 type: 'object',
                 properties: {
@@ -306,71 +309,63 @@ async function executeLogExistingSavedRecipe(recipeId: string, recipeName: strin
     }
 }
 
-/** Estimates nutrition for a generic item and logs it (Tool: logGenericFoodItem) */
+/** Gets nutrition data for a generic food item using OpenAI (Tool: logGenericFoodItem) */
 async function executeLogGenericFoodItem(foodDescription: string, userId: string, supabaseClient: SupabaseClient, openai: OpenAI): Promise<ToolResult> {
-    console.log(`Executing tool: logGenericFoodItem for '${foodDescription}' for user ${userId}`);
-    const cleanedFoodDescription = (foodDescription || "Food item").trim();
-    if (!cleanedFoodDescription) {
-         return { status: 'error', message: 'Food description cannot be empty.' };
+    console.log(`Executing tool: logGenericFoodItem for description '${foodDescription}' by user ${userId}`);
+    if (!foodDescription) {
+        return { status: 'error', message: 'Food description is required.', response_type: 'error_parsing_args' };
     }
-
     try {
-        // 1. Call OpenAI for nutrition estimate ONLY
-        console.log(`Calling OpenAI for nutrition estimation of: "${cleanedFoodDescription}"`);
-        // Simplified prompt focusing only on nutrition JSON based on description
-        const foodPrompt = `Estimate nutritional content for "${cleanedFoodDescription}". Respond ONLY with JSON: { ${MASTER_NUTRIENT_KEYS.map(k => `"${k}": number|null`).join(", ")} }. Use null if unknown. No extra text.`;
-        const foodResponse = await openai.chat.completions.create({
-            model: "gpt-4o-mini", // Use cheaper/faster model for estimation
-            messages: [{ role: "system", content: foodPrompt }],
-            temperature: 0.2, // Lower temperature for more deterministic nutrition estimates
-            response_format: { type: "json_object" }
-        });
-        const foodResponseContent = foodResponse.choices[0].message?.content || '';
-        console.log("Raw OpenAI nutrition response:", foodResponseContent);
-
-        let parsedNutrition: Record<string, any> = {};
-        try {
-            parsedNutrition = JSON.parse(foodResponseContent);
-        } catch (parseError) {
-            console.error("Failed to parse JSON from OpenAI nutrition response:", foodResponseContent, parseError);
-            throw new Error("AI response for nutrition was not valid JSON.");
+        // Call fetchNutritionData (which internally calls OpenAI)
+        const nutritionResult = await fetchNutritionData(foodDescription, openai);
+        if (nutritionResult.status === 'error' || !nutritionResult.data) {
+            console.error("Error fetching nutrition data from helper:", nutritionResult.message);
+            // Return a more user-friendly message if possible
+            return { status: 'error', message: nutritionResult.message || "Couldn't analyze the food item.", response_type: 'error_nutrition_api' };
         }
 
-        // 2. Filter Nutrition Data
-        const nutritionToLog = await filterNutritionDataForUserGoals(parsedNutrition, userId, supabaseClient);
+        const nutritionData = nutritionResult.data;
 
-        // 3. Prepare Log Entry - Use the cleaned foodDescription as the primary name
-        const foodLogEntry = {
-          user_id: userId,
-          food_name: cleanedFoodDescription,
-          timestamp: new Date().toISOString(),
-          source: 'ai_tool_item',
-          recipe_id: null,
-          ...nutritionToLog,
+        // Prepare log entry, including new nutrients
+        const logEntry = {
+            user_id: userId,
+            food_name: nutritionData.food_name || foodDescription, // Use name from analysis if available
+            calories: nutritionData.calories,
+            protein_g: nutritionData.protein_g,
+            fat_total_g: nutritionData.fat_total_g,
+            carbs_g: nutritionData.carbs_g,
+            fiber_g: nutritionData.fiber_g,
+            sugar_g: nutritionData.sugar_g,
+            sodium_mg: nutritionData.sodium_mg,
+            cholesterol_mg: nutritionData.cholesterol_mg,
+            fat_saturated_g: nutritionData.fat_saturated_g,
+            potassium_mg: nutritionData.potassium_mg,
+            // ADDED NEW NUTRIENTS
+            omega_3_g: nutritionData.omega_3_g ?? null, // Default to null if not returned
+            omega_6_g: nutritionData.omega_6_g ?? null,
+            fiber_soluble_g: nutritionData.fiber_soluble_g ?? null,
+            // Add other nutrients if they are being returned by fetchNutritionData
+            source: 'manual', // Always set a non-null source for generic food logs
         };
 
-        // 4. Insert into food_log
-        console.log(`Attempting to insert generic food log entry for: "${cleanedFoodDescription}"`);
-        const { data: newLogEntry, error: logError } = await supabaseClient
-          .from('food_log')
-          .insert(foodLogEntry)
-          .select('id') // Select only ID back
-          .single();
+        // Insert into food_log
+        const { data: insertedData, error: insertError } = await supabaseClient
+            .from('food_log')
+            .insert([logEntry])
+            .select();
 
-        if (logError || !newLogEntry) {
-          console.error("Supabase DB insert error or no data returned for generic item:", logError?.message);
-          throw new Error(`DB Error: ${logError?.message || 'Failed to retrieve log ID after insert'}`);
+        if (insertError) {
+            console.error("Error inserting generic food log:", insertError);
+            return { status: 'error', message: `Database error logging item: ${insertError.message}`, response_type: 'error_db_insert' };
         }
 
-        console.log(`Generic food log entry inserted successfully. ID: ${newLogEntry.id}`);
-        // Return success status and the original description logged
-        return { status: 'success', logged_item_description: cleanedFoodDescription };
+        console.log("Logged generic food item:", insertedData);
+        return { status: 'success', message: `Logged: ${logEntry.food_name}.`, response_type: 'log_success' };
 
-     } catch (error) {
-          console.error(`Error in executeLogGenericFoodItem for "${cleanedFoodDescription}":`, error);
-           // Return error status and message
-           return { status: 'error', message: `Sorry, I had trouble logging '${cleanedFoodDescription}'. ${error instanceof Error ? error.message : String(error)}` };
-     }
+    } catch (error) {
+        console.error("Unexpected error in executeLogGenericFoodItem:", error);
+        return { status: 'error', message: `Unexpected error logging item: ${error.message}`, response_type: 'error_unexpected' };
+    }
 }
 
 /** Stores the conversation turn in the database */
@@ -456,62 +451,95 @@ async function executeFindSavedRecipeByName(query: string, userId: string, supab
     }
 }
 
-/** Analyzes ingredients to estimate nutrition (Tool: analyzeRecipeIngredients) */
+/** Analyzes recipe ingredients using OpenAI (Tool: analyzeRecipeIngredients) */
 async function executeAnalyzeRecipeIngredients(recipeName: string, ingredientsList: string, userId: string, supabaseClient: SupabaseClient, openai: OpenAI): Promise<ToolResult> {
-    console.log(`Executing tool: analyzeRecipeIngredients for recipe '${recipeName}' by user ${userId}`);
-    const cleanedRecipeName = (recipeName || 'Custom Recipe').trim();
-    const cleanedIngredients = (ingredientsList || '').trim();
-
-    if (!cleanedIngredients) {
-        return { status: 'error', message: 'Ingredients list cannot be empty for analysis.' };
+    console.log(`Executing tool: analyzeRecipeIngredients for '${recipeName}' by user ${userId}`);
+    if (!recipeName || !ingredientsList) {
+        return { status: 'error', message: 'Recipe name and ingredients list are required.', response_type: 'error_parsing_args' };
     }
-
     try {
-        // 1. Call OpenAI for nutrition estimate
-        console.log(`Calling OpenAI for recipe analysis: "${cleanedRecipeName}", Ingredients: "${cleanedIngredients.substring(0, 100)}..."`); // Log truncated ingredients
-        const nutrientPrompt = `User recipe name: "${cleanedRecipeName}", Ingredients: "${cleanedIngredients}". Estimate nutritional content. Respond ONLY with valid JSON format like this: {"recipe_name": "${cleanedRecipeName}", "description": "User provided ingredients: ${cleanedIngredients.substring(0, 50)}...", ${MASTER_NUTRIENT_KEYS.map(k => `"${k}": number|null`).join(", ")}}. Use null for unknown values. Ensure the output is strictly JSON, with no surrounding text or explanations.`;
+        // Use OpenAI Function Calling for structured analysis
+        const analysisPrompt = `Analyze the following recipe ingredients list and estimate the total nutritional content for the *entire recipe*. Provide the total amounts for calories, protein (g), total fat (g), saturated fat (g), carbohydrates (g), fiber (g), soluble fiber (g), sugars (g), sodium (mg), cholesterol (mg), potassium (mg), omega-3 (g), and omega-6 (g). Recipe Name: ${recipeName}. Ingredients: ${ingredientsList}`;
 
-        const nutrientResponse = await openai.chat.completions.create({
-            model: "gpt-4o-mini", // Use a capable model for analysis
-            messages: [{ role: "system", content: nutrientPrompt }],
-            temperature: 0.2,
-            response_format: { type: "json_object" }
+        const analysisCompletion = await openai.chat.completions.create({
+            model: "gpt-4o", // Or your preferred model
+            messages: [
+                { role: "system", content: "You are a helpful nutrition analysis assistant." },
+                { role: "user", content: analysisPrompt }
+            ],
+            tools: [{
+                type: "function",
+                function: {
+                    name: "recordRecipeAnalysis",
+                    description: "Records the estimated nutritional analysis of a recipe.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            calories: { type: "number", description: "Total estimated calories (kcal)" },
+                            protein_g: { type: "number", description: "Total estimated protein (g)" },
+                            fat_total_g: { type: "number", description: "Total estimated fat (g)" },
+                            fat_saturated_g: { type: "number", description: "Total estimated saturated fat (g)" },
+                            carbs_g: { type: "number", description: "Total estimated carbohydrates (g)" },
+                            fiber_g: { type: "number", description: "Total estimated dietary fiber (g)" },
+                            fiber_soluble_g: { type: "number", description: "Total estimated soluble fiber (g)" }, // Added
+                            sugar_g: { type: "number", description: "Total estimated sugars (g)" },
+                            sodium_mg: { type: "number", description: "Total estimated sodium (mg)" },
+                            cholesterol_mg: { type: "number", description: "Total estimated cholesterol (mg)" },
+                            potassium_mg: { type: "number", description: "Total estimated potassium (mg)" },
+                            omega_3_g: { type: "number", description: "Total estimated Omega-3 fatty acids (g)" }, // Added
+                            omega_6_g: { type: "number", description: "Total estimated Omega-6 fatty acids (g)" }, // Added
+                            // Add others if needed
+                        },
+                        // required: [...] // Define required fields if necessary
+                    }
+                }
+            }],
+            tool_choice: { type: "function", function: { name: "recordRecipeAnalysis" } }
         });
 
-        const nutritionContent = nutrientResponse.choices[0].message?.content || '';
-        console.log("Raw OpenAI recipe analysis response:", nutritionContent);
+        const analysisChoice = analysisCompletion.choices[0];
+        const functionCall = analysisChoice?.message?.tool_calls?.[0]?.function;
 
-        let parsedNutrition: Record<string, any> = {};
-        try {
-            parsedNutrition = JSON.parse(nutritionContent);
-        } catch (parseError) {
-            console.error("Failed to parse JSON from OpenAI recipe analysis:", nutritionContent, parseError);
-            throw new Error("AI response for recipe analysis was not valid JSON.");
+        if (!functionCall || !functionCall.arguments) {
+            console.error("OpenAI did not return expected function call for recipe analysis:", analysisCompletion);
+            return { status: 'error', message: "Could not analyze recipe nutrition. OpenAI response format error.", response_type: 'error_openai_format' };
         }
 
-        // Ensure essential keys exist, even if null
-        const finalNutritionEstimate: Record<string, any> = {};
-        MASTER_NUTRIENT_KEYS.forEach(key => {
-             finalNutritionEstimate[key] = parsedNutrition[key] === undefined || parsedNutrition[key] === null ? null : parsedNutrition[key];
-        });
+        let analysisData: Record<string, any> = {};
+        try {
+            analysisData = JSON.parse(functionCall.arguments);
+            analysisData.recipe_name = recipeName; // Add recipe name back
+            analysisData.ingredients = ingredientsList; // Add ingredients for potential saving
+            analysisData.user_id = userId; // Add user_id
 
-        // 2. Return success with analysis data, requiring confirmation
-        const analysisResult = {
-            recipe_name: parsedNutrition.recipe_name || cleanedRecipeName, // Prefer AI's interpreted name or fall back
-            description: parsedNutrition.description || `Ingredients: ${cleanedIngredients.substring(0, 100)}...`, // Prefer AI description or fall back
-            nutrition_estimate: finalNutritionEstimate // The processed nutrition object
-        };
+             // Extract new nutrients, defaulting to null
+             analysisData.omega_3_g = analysisData.omega_3_g ?? null;
+             analysisData.omega_6_g = analysisData.omega_6_g ?? null;
+             analysisData.fiber_soluble_g = analysisData.fiber_soluble_g ?? null;
 
-        console.log(`Recipe analysis successful for '${cleanedRecipeName}'. Ready for user confirmation.`);
+        } catch (parseError) {
+            console.error("Error parsing recipe analysis arguments:", parseError, functionCall.arguments);
+            return { status: 'error', message: "Could not parse recipe analysis results.", response_type: 'error_parsing_analysis' };
+        }
+
+        // Filter based on user goals before presenting for confirmation
+        const filteredAnalysis = await filterNutritionDataForUserGoals(analysisData, userId, supabaseClient);
+
+        console.log("Recipe analysis successful:", analysisData); // Log full analysis
+
+        // Return analysis data to present to user for confirmation (Save/Log/Cancel)
         return {
             status: 'success',
-            confirmation_needed: true, // Signal to OpenAI to ask user to save/log
-            analysis: analysisResult
+            message: `Here is the estimated nutrition for '${recipeName}'. What would you like to do?`,
+            analysis: filteredAnalysis, // Send filtered data for display
+            full_analysis: analysisData, // Send full data for saving/logging
+            response_type: 'recipe_analysis_prompt',
+            pending_action: { type: 'confirm_recipe_log', analysis: analysisData } // Store full analysis for next step
         };
 
     } catch (error) {
-        console.error(`Error in executeAnalyzeRecipeIngredients for recipe '${cleanedRecipeName}':`, error);
-        return { status: 'error', message: `Sorry, I couldn't analyze the recipe '${cleanedRecipeName}'. ${error instanceof Error ? error.message : String(error)}` };
+        console.error("Unexpected error in executeAnalyzeRecipeIngredients:", error);
+        return { status: 'error', message: `Unexpected error analyzing recipe: ${error.message}`, response_type: 'error_unexpected' };
     }
 }
 
@@ -574,119 +602,196 @@ async function executeAnswerGeneralQuestion(question: string, userId: string, su
     }
 }
 
-/** Saves a newly analyzed recipe and logs it (Internal Helper) */
+/** Saves analysis data to user_recipes and logs it (Helper for recipe analysis flow) */
 async function saveAndLogRecipe(analysisData: any, userId: string, supabaseClient: SupabaseClient): Promise<ToolResult> {
-    console.log(`Internal Helper: saveAndLogRecipe for '${analysisData?.recipe_name}' by user ${userId}`);
-    if (!analysisData || !analysisData.recipe_name || !analysisData.nutrition_estimate) {
-        console.error("SaveAndLog: Invalid analysisData provided.");
-        return { status: 'error', message: 'Missing required recipe data for saving and logging.' };
+    console.log(`Executing helper: saveAndLogRecipe for recipe '${analysisData?.recipe_name}' by user ${userId}`);
+    if (!analysisData || !userId) {
+        return { status: 'error', message: 'Missing analysis data or user ID for save/log.', response_type: 'error_internal_state' };
     }
-
-    const { recipe_name, description, nutrition_estimate } = analysisData;
-    const cleanedRecipeName = recipe_name.trim();
-    let newRecipeId: string | null = null;
-
     try {
-        // 1. Save to user_recipes
-        const recipeToSave: Record<string, any> = {
+        // 1. Prepare data for user_recipes (ensure all needed columns are included)
+        const recipeRecord = {
             user_id: userId,
-            recipe_name: cleanedRecipeName,
-            description: description || '', // Use provided description or empty string
+            recipe_name: analysisData.recipe_name,
+            description: analysisData.description || null, // Assuming description might exist
+            ingredients: analysisData.ingredients || null,
+            calories: analysisData.calories,
+            protein_g: analysisData.protein_g,
+            fat_total_g: analysisData.fat_total_g,
+            carbs_g: analysisData.carbs_g,
+            fiber_g: analysisData.fiber_g,
+            sugar_g: analysisData.sugar_g,
+            sodium_mg: analysisData.sodium_mg,
+            cholesterol_mg: analysisData.cholesterol_mg,
+            fat_saturated_g: analysisData.fat_saturated_g,
+            potassium_mg: analysisData.potassium_mg,
+            // ADDED NEW NUTRIENTS
+            omega_3_g: analysisData.omega_3_g ?? null,
+            omega_6_g: analysisData.omega_6_g ?? null,
+            fiber_soluble_g: analysisData.fiber_soluble_g ?? null,
+            // Add others if needed in user_recipes table
         };
-        // Add all nutrient keys from the estimate
-        MASTER_NUTRIENT_KEYS.forEach(key => {
-             recipeToSave[key] = nutrition_estimate[key] === undefined ? null : nutrition_estimate[key];
-        });
 
-        console.log(`Saving recipe '${cleanedRecipeName}' to user_recipes.`);
-        const { data: savedRecipe, error: saveError } = await supabaseClient
+        // 2. Upsert into user_recipes
+        const { data: recipeUpsertData, error: recipeUpsertError } = await supabaseClient
             .from('user_recipes')
-            .insert(recipeToSave)
-            .select('id') // Select the ID of the newly inserted row
+            .upsert(recipeRecord, { onConflict: 'user_id, recipe_name' }) // Upsert based on user and name
+            .select('id') // Select the ID after upsert
             .single();
 
-        if (saveError || !savedRecipe?.id) {
-            console.error(`DB Error saving recipe '${cleanedRecipeName}':`, saveError?.message);
-            throw new Error(`Failed to save recipe to database: ${saveError?.message || 'No ID returned'}`);
+        if (recipeUpsertError) {
+            console.error("Error upserting recipe:", recipeUpsertError);
+            throw new Error(`Failed to save recipe details: ${recipeUpsertError.message}`);
         }
-        newRecipeId = savedRecipe.id;
-        console.log(`Recipe saved successfully. ID: ${newRecipeId}`);
+        if (!recipeUpsertData || !recipeUpsertData.id) {
+            console.error("Recipe upsert did not return an ID.", recipeUpsertData);
+            throw new Error("Failed to get recipe ID after saving.");
+        }
+        const savedRecipeId = recipeUpsertData.id;
+        console.log(`Recipe saved/updated successfully with ID: ${savedRecipeId}`);
 
-        // 2. Filter nutrition for logging
-        const nutritionToLog = await filterNutritionDataForUserGoals(nutrition_estimate, userId, supabaseClient);
+        // 3. Prepare data for food_log (reference saved recipe ID)
+        const logEntry = { ...recipeRecord, recipe_id: savedRecipeId, source: 'analyzed_recipe' }; // Include recipe_id and source
+        delete logEntry.description; // Remove fields not in food_log
+        delete logEntry.ingredients;
 
-        // 3. Log to food_log
-        const foodLogEntry = {
-            user_id: userId,
-            food_name: cleanedRecipeName,
-            timestamp: new Date().toISOString(),
-            source: 'ai_tool_recipe_saved',
-            recipe_id: newRecipeId,
-            ...nutritionToLog,
-        };
+        // 4. Insert into food_log
+        const { data: logInsertData, error: logInsertError } = await supabaseClient
+            .from('food_log')
+            .insert([logEntry]) // Pass logEntry wrapped in an array
+            .select();
 
-        console.log(`Logging saved recipe '${cleanedRecipeName}' (ID: ${newRecipeId}) to food_log.`);
-        const { error: logError } = await supabaseClient.from('food_log').insert(foodLogEntry);
-
-        if (logError) {
-            console.error(`DB Error logging recipe '${cleanedRecipeName}' after saving:`, logError.message);
-            // Consider if we should attempt to roll back the recipe save? For now, report failure.
-            throw new Error(`Recipe saved (ID: ${newRecipeId}) but failed to log it: ${logError.message}`);
+        if (logInsertError) {
+            console.error("Error inserting recipe log:", logInsertError);
+            // Note: Recipe was saved, but logging failed. Inform user.
+            return { status: 'error', message: `Recipe '${recipeRecord.recipe_name}' saved, but failed to log: ${logInsertError.message}. You can log it later from Saved Recipes.`, response_type: 'error_db_insert_partial' };
         }
 
-        console.log(`Recipe '${cleanedRecipeName}' saved and logged successfully.`);
-        return { status: 'success', message: `Okay, I've saved the recipe "${cleanedRecipeName}" and logged it for you.` };
+        console.log("Recipe logged successfully:", logInsertData);
+        return { status: 'success', message: `Recipe '${recipeRecord.recipe_name}' saved and logged successfully!`, response_type: 'save_log_success' };
 
     } catch (error) {
-        console.error(`Error in saveAndLogRecipe for '${cleanedRecipeName}':`, error);
-        // Provide a more specific error message if possible
-        const errorMessage = newRecipeId
-            ? `I managed to save the recipe "${cleanedRecipeName}" (ID: ${newRecipeId}), but couldn't log it. ${error instanceof Error ? error.message : String(error)}`
-            : `Sorry, I couldn't save and log the recipe "${cleanedRecipeName}". ${error instanceof Error ? error.message : String(error)}`;
-        return { status: 'error', message: errorMessage };
+        console.error("Unexpected error in saveAndLogRecipe:", error);
+        return { status: 'error', message: `Error saving/logging recipe: ${error.message}`, response_type: 'error_unexpected' };
     }
 }
 
-/** Logs a newly analyzed recipe without saving it (Internal Helper) */
+/** Logs analyzed recipe data without saving to user_recipes (Helper for recipe analysis flow) */
 async function logOnlyAnalyzedRecipe(analysisData: any, userId: string, supabaseClient: SupabaseClient): Promise<ToolResult> {
-    console.log(`Internal Helper: logOnlyAnalyzedRecipe for '${analysisData?.recipe_name}' by user ${userId}`);
-     if (!analysisData || !analysisData.recipe_name || !analysisData.nutrition_estimate) {
-        console.error("LogOnly: Invalid analysisData provided.");
-        return { status: 'error', message: 'Missing required recipe data for logging.' };
+    console.log(`Executing helper: logOnlyAnalyzedRecipe for recipe '${analysisData?.recipe_name}' by user ${userId}`);
+     if (!analysisData || !userId) {
+        return { status: 'error', message: 'Missing analysis data or user ID for logging.', response_type: 'error_internal_state' };
     }
-
-    const { recipe_name, nutrition_estimate } = analysisData;
-    const cleanedRecipeName = recipe_name.trim();
-
     try {
-        // 1. Filter nutrition for logging
-        const nutritionToLog = await filterNutritionDataForUserGoals(nutrition_estimate, userId, supabaseClient);
-
-        // 2. Prepare food_log entry
-        const foodLogEntry = {
+        // Prepare data for food_log (directly from analysis)
+         const logEntry = {
             user_id: userId,
-            food_name: cleanedRecipeName,
-            timestamp: new Date().toISOString(),
-            source: 'ai_tool_recipe_logged',
-            recipe_id: null,
-            ...nutritionToLog,
+            food_name: analysisData.recipe_name || 'Analyzed Recipe',
+            calories: analysisData.calories,
+            protein_g: analysisData.protein_g,
+            fat_total_g: analysisData.fat_total_g,
+            carbs_g: analysisData.carbs_g,
+            fiber_g: analysisData.fiber_g,
+            sugar_g: analysisData.sugar_g,
+            sodium_mg: analysisData.sodium_mg,
+            cholesterol_mg: analysisData.cholesterol_mg,
+            fat_saturated_g: analysisData.fat_saturated_g,
+            potassium_mg: analysisData.potassium_mg,
+            // ADDED NEW NUTRIENTS
+            omega_3_g: analysisData.omega_3_g ?? null,
+            omega_6_g: analysisData.omega_6_g ?? null,
+            fiber_soluble_g: analysisData.fiber_soluble_g ?? null,
+            // Add others as needed
+            // Do NOT include recipe_id as it wasn't saved
+            source: 'analyzed_recipe', // Always set a non-null source for analyzed recipe logs
         };
 
-        // 3. Insert into food_log
-        console.log(`Logging analyzed recipe '${cleanedRecipeName}' (not saved) to food_log.`);
-        const { error: logError } = await supabaseClient.from('food_log').insert(foodLogEntry);
+        // Insert into food_log
+        const { data: logInsertData, error: logInsertError } = await supabaseClient
+            .from('food_log')
+            .insert([logEntry])
+            .select();
 
-        if (logError) {
-            console.error(`DB Error logging analyzed recipe '${cleanedRecipeName}':`, logError.message);
-            throw new Error(`Failed to log recipe in database: ${logError.message}`);
+        if (logInsertError) {
+            console.error("Error inserting analyzed recipe log:", logInsertError);
+            throw new Error(`Failed to log analyzed recipe: ${logInsertError.message}`);
         }
 
-        console.log(`Analyzed recipe '${cleanedRecipeName}' logged successfully (without saving).`);
-        return { status: 'success', message: `Okay, I've logged "${cleanedRecipeName}" for today without saving it to your recipes.` };
+        console.log("Analyzed recipe logged successfully:", logInsertData);
+        return { status: 'success', message: `Logged '${logEntry.food_name}' successfully!`, response_type: 'log_only_success' };
 
     } catch (error) {
-        console.error(`Error in logOnlyAnalyzedRecipe for '${cleanedRecipeName}':`, error);
-        return { status: 'error', message: `Sorry, I couldn't log the recipe "${cleanedRecipeName}". ${error instanceof Error ? error.message : String(error)}` };
+        console.error("Unexpected error in logOnlyAnalyzedRecipe:", error);
+        return { status: 'error', message: `Error logging analyzed recipe: ${error.message}`, response_type: 'error_unexpected' };
+    }
+}
+
+/** Fetches nutrition data using OpenAI function calling */
+async function fetchNutritionData(query: string, openai: OpenAI): Promise<ToolResult & { data?: Record<string, any> }> {
+    console.log(`Fetching nutrition data for query: "${query}"`);
+    try {
+        const completion = await openai.chat.completions.create({
+            model: "gpt-4o", // Or your preferred model
+            messages: [
+                { role: "system", content: "You are a nutrition data extraction assistant." },
+                { role: "user", content: `Provide estimated nutritional information for: ${query}` }
+            ],
+            tools: [{
+                type: "function",
+                function: {
+                    name: "recordNutritionData",
+                    description: "Records the estimated nutritional information for a food item.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            food_name: { type: "string", description: "The identified food name." },
+                            calories: { type: "number", description: "Estimated calories (kcal)" },
+                            protein_g: { type: "number", description: "Estimated protein (g)" },
+                            fat_total_g: { type: "number", description: "Estimated total fat (g)" },
+                            fat_saturated_g: { type: "number", description: "Estimated saturated fat (g)" },
+                            carbs_g: { type: "number", description: "Estimated carbohydrates (g)" },
+                            fiber_g: { type: "number", description: "Estimated dietary fiber (g)" },
+                            fiber_soluble_g: { type: "number", description: "Estimated soluble fiber (g)" }, // Added
+                            sugar_g: { type: "number", description: "Estimated sugars (g)" },
+                            sodium_mg: { type: "number", description: "Estimated sodium (mg)" },
+                            cholesterol_mg: { type: "number", description: "Estimated cholesterol (mg)" },
+                            potassium_mg: { type: "number", description: "Estimated potassium (mg)" },
+                            omega_3_g: { type: "number", description: "Estimated Omega-3 fatty acids (g)" }, // Added
+                            omega_6_g: { type: "number", description: "Estimated Omega-6 fatty acids (g)" }, // Added
+                            // Add other relevant MASTER_NUTRIENT_KEYS here if needed
+                        },
+                        // required: [...] // Define required fields if necessary
+                    }
+                }
+            }],
+            tool_choice: { type: "function", function: { name: "recordNutritionData" } }
+        });
+
+        const choice = completion.choices[0];
+        const functionCall = choice?.message?.tool_calls?.[0]?.function;
+
+        if (!functionCall || !functionCall.arguments) {
+            console.error("OpenAI did not return expected function call for nutrition data:", completion);
+            return { status: 'error', message: "Could not get nutrition data. OpenAI response format error." };
+        }
+
+        try {
+            const nutritionData = JSON.parse(functionCall.arguments);
+            // Extract new nutrients, defaulting to null
+            nutritionData.omega_3_g = nutritionData.omega_3_g ?? null;
+            nutritionData.omega_6_g = nutritionData.omega_6_g ?? null;
+            nutritionData.fiber_soluble_g = nutritionData.fiber_soluble_g ?? null;
+
+            console.log("Parsed nutrition data:", nutritionData);
+            return { status: 'success', data: nutritionData };
+        } catch (parseError) {
+            console.error("Error parsing nutrition data arguments:", parseError, functionCall.arguments);
+            return { status: 'error', message: "Could not parse nutrition data results." };
+        }
+
+    } catch (error) {
+        console.error(`Error fetching nutrition data from OpenAI for query "${query}":`, error);
+        return { status: 'error', message: `OpenAI API error: ${error.message}` };
     }
 }
 
@@ -1039,6 +1144,7 @@ Deno.serve(async (req: Request) => {
 
                   // --- Execute Tool Calls (if not handled by proactive check) ---
                   if (!requestHandled) {
+                      const logResults: { success: string[]; failed: { food: string; reason: string }[] } = { success: [], failed: [] };
                       for (const toolCall of responseMessage.tool_calls) {
                           const functionName = toolCall.function.name;
                           let functionArgs: any;
@@ -1066,6 +1172,11 @@ Deno.serve(async (req: Request) => {
                               switch (functionName) {
                                   case 'logGenericFoodItem':
                                       toolResult = await executeLogGenericFoodItem(functionArgs.food_description, userId, supabaseClient, openai);
+                                      if (toolResult && toolResult.status === 'success') {
+                                          logResults.success.push(functionArgs.food_description);
+                                      } else {
+                                          logResults.failed.push({ food: functionArgs.food_description, reason: toolResult?.message || 'Unknown error' });
+                                      }
                                       break;
                                   case 'findSavedRecipeByName':
                                       toolResult = await executeFindSavedRecipeByName(functionArgs.query, userId, supabaseClient);
@@ -1149,6 +1260,29 @@ Deno.serve(async (req: Request) => {
                               }
                           }
                       } // End of for loop through tool calls
+                      // --- Aggregate log results for user feedback ---
+                      if (logResults.success.length > 0 && logResults.failed.length === 0) {
+                        responseData = {
+                          status: 'success',
+                          message: `Logged: ${logResults.success.join(' and ')}! Great job keeping track of your food today. Keep up the great work! Anything else today?`,
+                          response_type: 'item_logged',
+                        };
+                        requestHandled = true;
+                      } else if (logResults.success.length > 0 && logResults.failed.length > 0) {
+                        responseData = {
+                          status: 'success',
+                          message: `Logged: ${logResults.success.join(' and ')}. Failed to log: ${logResults.failed.map(f => f.food + ' (' + f.reason + ')').join(', ')}.`,
+                          response_type: 'item_logged',
+                        };
+                        requestHandled = true;
+                      } else if (logResults.success.length === 0 && logResults.failed.length > 0) {
+                        responseData = {
+                          status: 'error',
+                          message: `Failed to log: ${logResults.failed.map(f => f.food + ' (' + f.reason + ')').join(', ')}.`,
+                          response_type: 'error_db_insert',
+                        };
+                        requestHandled = true;
+                      }
                   }
 
                   // --- Second OpenAI Call (if not handled by confirmation/proactive prompts/analysis prompt) ---

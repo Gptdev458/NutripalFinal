@@ -52,7 +52,7 @@ const DashboardScreen = ({ navigation }) => {
   // Use navigation hook in case navigation prop is not passed down correctly
   const navHook = useNavigation();
 
-  const fetchDashboardData = useCallback(async () => {
+  const fetchDashboardData = useCallback(async (isRefreshing = false) => {
     if (!user) {
       setLoading(false);
       return;
@@ -97,13 +97,20 @@ const DashboardScreen = ({ navigation }) => {
     let data = [];
     let todaysTotals = {};
 
-    // Calculate totals from logs
+    // Calculate totals from logs - Include specific omega keys
+    const nutrientsToTotal = new Set<string>(goals.map(g => g.nutrient));
+    if (goals.some(g => g.nutrient === 'omega_ratio')) {
+        nutrientsToTotal.add('omega_3_g');
+        nutrientsToTotal.add('omega_6_g');
+    }
+    nutrientsToTotal.add('calories'); // Always include calories
+
     logs.forEach(log => {
-        Object.keys(log).forEach(key => {
-            // Aggregate only if the key corresponds to a known nutrient and value is numeric
-            if (MASTER_NUTRIENT_LIST.some(n => n.key === key) && typeof log[key] === 'number') {
-                todaysTotals[key] = (todaysTotals[key] || 0) + log[key];
-            }
+        nutrientsToTotal.forEach(key => {
+             // Check if the key exists in the log and is a number
+             if (log.hasOwnProperty(key) && typeof log[key] === 'number') {
+                 todaysTotals[key] = (todaysTotals[key] || 0) + log[key];
+             }
         });
     });
 
@@ -111,39 +118,60 @@ const DashboardScreen = ({ navigation }) => {
     data.push({ type: 'header', title: 'Nutrition Goals' });
 
     if (goals.length > 0) {
-      // Create a dedicated array for goal items to be potentially used by DataTable
       const goalItems = goals.map(goal => {
         const nutrientDetail = getNutrientDetails(goal.nutrient);
-        if (!nutrientDetail) return null; // Skip if nutrient details aren't found
+        if (!nutrientDetail) return null;
 
-        const currentTotal = todaysTotals[goal.nutrient] || 0;
+        const nutrientKey = goal.nutrient;
+        const currentTotal = todaysTotals[nutrientKey] || 0;
         const targetValue = goal.target_value || 0;
-        let progressPercentage = 0;
-        if (targetValue > 0) {
-            progressPercentage = (currentTotal / targetValue) * 100;
-        }
-        // For limits, exceeding 100% is still calculated the same way for display
-        // progressPercentage = targetValue > 0 ? (currentTotal / targetValue) * 100 : 0;
+        const goalType = goal.goal_type || 'goal';
+        const unit = nutrientDetail.unit;
 
+        let consumedText = `${currentTotal.toFixed(0)} ${unit}`;
+        let targetText = targetValue > 0 ? `${targetValue.toFixed(0)} ${unit}` : '-';
+        let progressText = '-'; // Default progress text
+        let progressPercentage = 0; // Default percentage
+
+        if (nutrientKey === 'omega_ratio') {
+            const omega6Total = todaysTotals['omega_6_g'] || 0;
+            const omega3Total = todaysTotals['omega_3_g'] || 0;
+            const currentRatio = omega3Total > 0 ? (omega6Total / omega3Total) : 0;
+            targetText = `${targetValue}:1`; // Target is the ratio number
+            consumedText = omega3Total > 0 ? `${currentRatio.toFixed(1)}:1` : '0:0';
+            progressText = consumedText; // Display current ratio in progress column
+            // Percentage doesn't make direct sense for ratio, maybe compare closeness?
+            progressPercentage = 0; // Set to 0 or handle differently if needed
+        } else if (targetValue > 0) {
+            progressPercentage = (currentTotal / targetValue) * 100;
+            const displayPercentage = progressPercentage.toFixed(0);
+            const difference = targetValue - currentTotal;
+            // Match web format: 0% (+132 g)
+            const differenceText = difference >= 0 ? `(+${difference.toFixed(0)} ${unit})` : `(${difference.toFixed(0)} ${unit})`;
+            progressText = `${displayPercentage}% ${differenceText}`;
+        }
 
         return {
-          type: 'goal', // Keep type for potential filtering later if needed
-          key: goal.nutrient,
+          type: 'goal',
+          key: nutrientKey,
           name: nutrientDetail.name,
-          goalType: goal.goal_type || 'goal', // Get goal_type, default to 'goal'
-          target: targetValue,
-          unit: nutrientDetail.unit,
-          current: currentTotal,
-          progress: progressPercentage // Store calculated percentage
+          goalType: goalType,
+          target: targetValue, // Keep original target
+          unit: unit,
+          current: currentTotal, // Keep original current
+          progress: progressPercentage, // Store calculated percentage for potential color logic
+          // Add formatted text fields for direct use in rendering
+          targetText: targetText,
+          consumedText: consumedText,
+          progressText: progressText,
         };
-      }).filter(item => item !== null); // Filter out any null entries
+      }).filter(item => item !== null);
 
       if (goalItems.length > 0) {
-          data.push({ type: 'goalTable', items: goalItems }); // Push one item representing the whole table
+          data.push({ type: 'goalTable', items: goalItems });
       } else {
           data.push({ type: 'noGoalsMessage' });
       }
-
     } else {
       data.push({ type: 'noGoalsMessage' });
     }
@@ -151,16 +179,15 @@ const DashboardScreen = ({ navigation }) => {
     // Today's Log Section Header
     data.push({ type: 'header', title: "Today's Log" });
 
-    // Log Summary or No Logs Message
+    // Log Summary (remains the same)
     if (logs.length > 0) {
         data.push({
             type: 'logSummary',
             count: logs.length,
-            // Include relevant totals in the summary
             calories: todaysTotals.calories || 0,
-            protein: todaysTotals.protein || 0,
-            carbohydrates: todaysTotals.carbohydrates || 0,
-            fat: todaysTotals.total_fat || 0,
+            protein: todaysTotals.protein_g || 0, // Use correct key
+            carbohydrates: todaysTotals.carbs_g || 0, // Use correct key
+            fat: todaysTotals.fat_total_g || 0, // Use correct key
         });
     } else {
         data.push({ type: 'noLogsMessage' });
@@ -232,39 +259,52 @@ const DashboardScreen = ({ navigation }) => {
     switch (item.type) {
       case 'header':
         return renderHeaderItem(item);
-      case 'goalTable': // Handle the new goalTable type
+      case 'goalTable':
         return (
           <Card style={[styles.card, { backgroundColor: theme.colors.surface }]}>
             <Card.Content style={styles.cardContentPadding}>
               <DataTable>
                 <DataTable.Header style={[styles.tableHeader, { borderBottomColor: theme.colors.outline }]}>
-                  <DataTable.Title style={[styles.tableHeaderCell, { flex: 3.5 }]}><Text style={styles.tableHeaderText}>Name</Text></DataTable.Title>
-                  <DataTable.Title style={[styles.tableHeaderCell, { flex: 1.5 }]}><Text style={styles.tableHeaderText}>Type</Text></DataTable.Title>
-                  <DataTable.Title style={[styles.tableHeaderCell, { flex: 2.5 }]} numeric><Text style={[styles.tableHeaderText, styles.numericHeaderText]}>Amount</Text></DataTable.Title>
-                  <DataTable.Title style={[styles.tableHeaderCell, styles.progressHeaderCell, { flex: 2.5 }]} numeric><Text style={[styles.tableHeaderText, styles.numericHeaderText]}>Progress</Text></DataTable.Title>
+                  {/* Match Web Headers: Nutrient, Target, Consumed, Progress */}
+                  <DataTable.Title style={[styles.tableHeaderCell, { flex: 3 }]}>Nutrient</DataTable.Title>
+                  <DataTable.Title style={[styles.tableHeaderCell, { flex: 2 }]} numeric>Target</DataTable.Title>
+                  <DataTable.Title style={[styles.tableHeaderCell, { flex: 2 }]} numeric>Consumed</DataTable.Title>
+                  <DataTable.Title style={[styles.tableHeaderCell, styles.progressHeaderCell, { flex: 3 }]} numeric>Progress</DataTable.Title>
                 </DataTable.Header>
 
                 {item.items.map((goal) => {
-                  const displayPercentage = goal.progress.toFixed(0);
-                  // Determine text color based on goal type and progress
-                  let percentageColor = theme.colors.textSecondary;
-                  const progressValue = goal.progress;
-                  if (goal.goalType === 'goal') {
-                    if (progressValue >= 50) { percentageColor = theme.colors.primary; }
-                  } else if (goal.goalType === 'limit') {
-                    if (progressValue > 100) { percentageColor = theme.colors.error; }
-                    else if (progressValue >= 50) { percentageColor = theme.colors.primary; }
+                  // Use pre-formatted text fields
+                  const targetText = goal.targetText;
+                  const consumedText = goal.consumedText;
+                  const progressText = goal.progressText;
+                  
+                  // Simple Color Coding Logic (from web) - apply to row?
+                  let rowStyle = styles.tableRow;
+                  if (goal.key !== 'omega_ratio' && goal.current === 0) {
+                     rowStyle = goal.goalType === 'goal' ? 
+                       [styles.tableRow, styles.goalRowInitial] : 
+                       [styles.tableRow, styles.limitRowInitial];
                   }
+                  // TODO: Add more sophisticated color logic if needed
 
                   return (
-                    <DataTable.Row key={goal.key} style={[styles.tableRow, { borderBottomColor: theme.colors.outlineVariant }]}>
-                      <DataTable.Cell style={[styles.tableCell, { flex: 3.5 }]}><Text style={styles.tableCellText} numberOfLines={2}>{goal.name}</Text></DataTable.Cell>
-                      <DataTable.Cell style={[styles.tableCell, { flex: 1.5 }]}><Text style={styles.tableCellMutedText}>{goal.goalType}</Text></DataTable.Cell>
-                      <DataTable.Cell style={[styles.tableCell, { flex: 2.5 }]} numeric>
-                         <Text style={[styles.tableCellText, styles.numericCellText]}>{`${goal.current.toFixed(0)} / ${goal.target.toFixed(0)} ${goal.unit}`}</Text>
+                    <DataTable.Row key={goal.key} style={[rowStyle, { borderBottomColor: theme.colors.outlineVariant }]}>
+                      {/* Nutrient Cell */}
+                      <DataTable.Cell style={[styles.tableCell, { flex: 3 }]}>
+                        <Text style={styles.tableCellText} numberOfLines={2}>{goal.name}</Text>
+                        <Text style={styles.tableCellMutedText}> ({goal.goalType})</Text>
                       </DataTable.Cell>
-                      <DataTable.Cell style={[styles.tableCell, styles.progressCell, { flex: 2.5 }]}>
-                        <Text style={[styles.progressText, { color: percentageColor }]}>{`${displayPercentage}%`}</Text>
+                      {/* Target Cell */}
+                      <DataTable.Cell style={[styles.tableCell, { flex: 2 }]} numeric>
+                         <Text style={[styles.tableCellText, styles.numericCellText]}>{targetText}</Text>
+                      </DataTable.Cell>
+                      {/* Consumed Cell */}
+                      <DataTable.Cell style={[styles.tableCell, { flex: 2 }]} numeric>
+                         <Text style={[styles.tableCellText, styles.numericCellText]}>{consumedText}</Text>
+                      </DataTable.Cell>
+                      {/* Progress Cell */}
+                      <DataTable.Cell style={[styles.tableCell, styles.progressCell, { flex: 3 }]} numeric>
+                        <Text style={styles.tableCellText}>{progressText}</Text>
                       </DataTable.Cell>
                     </DataTable.Row>
                   );
@@ -586,6 +626,12 @@ const styles = StyleSheet.create({
     marginLeft: 8, // Space between icon and text
     fontSize: 16,
     fontWeight: '600',
+  },
+  goalRowInitial: {
+     backgroundColor: 'rgba(255, 0, 0, 0.05)', // Light red background
+  },
+  limitRowInitial: {
+     backgroundColor: 'rgba(0, 255, 0, 0.05)', // Light green background
   },
 });
 
