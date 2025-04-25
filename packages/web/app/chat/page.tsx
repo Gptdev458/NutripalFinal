@@ -16,6 +16,12 @@ interface ChatMessage {
   actions?: Array<{ label: string; payload: string }>; // Optional actions for bot messages
 }
 
+// --- ADDED: Interface for UI Action State ---
+interface UiActionState {
+  actionType: string;
+  payload: any;
+}
+
 // Add type for recipe matches
 interface RecipeMatch {
     id: string | number;
@@ -136,6 +142,12 @@ const DashboardTableRow = ({ nutrient, current, target, unit, goalType }: { nutr
     );
 };
 
+interface ChatSessionMeta {
+  chat_id: string;
+  title: string;
+  updated_at: string;
+}
+
 export default function ChatPage() {
   // --- MOVE DEFINITION INSIDE COMPONENT ---
   const MASTER_NUTRIENT_LIST = [
@@ -194,14 +206,38 @@ export default function ChatPage() {
   const [menuOpen, setMenuOpen] = useState(false); // Mobile menu state
   const [message, setMessage] = useState(''); // Input field state
   const [sending, setSending] = useState(false); // Sending state
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]); // State for messages
+  const [chatSessions, setChatSessions] = useState<ChatSessionMeta[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [loadingChats, setLoadingChats] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(false);
   // Use more specific types instead of any
   const [pendingAction, setPendingAction] = useState<Record<string, unknown> | null>(null); 
   const [contextForNextRequest, setContextForNextRequest] = useState<Record<string, unknown> | null>(null); 
   const messagesEndRef = useRef<HTMLDivElement>(null); // Ref for scrolling
 
-  // --- localStorage Persistence --- 
-  const storageKey = user ? `chatHistory_${user.id}` : 'chatHistory_guest'; // User-specific key
+  // Persist activeChatId to localStorage whenever it changes
+  useEffect(() => {
+    if (activeChatId) {
+      localStorage.setItem('activeChatId', activeChatId);
+    }
+  }, [activeChatId]);
+
+  // On mount, restore activeChatId from localStorage if available
+  useEffect(() => {
+    if (!activeChatId) {
+      const savedChatId = localStorage.getItem('activeChatId');
+      if (savedChatId) {
+        setActiveChatId(savedChatId);
+      }
+    }
+  }, []);
+
+  // Use a unique storageKey for each user and chat session
+  const storageKey = user && activeChatId ? `chatHistory_${user.id}_${activeChatId}` : user ? `chatHistory_${user.id}` : 'chatHistory_guest';
+
+  // --- ADDED: State for UI Actions from Markers ---
+  const [currentUiAction, setCurrentUiAction] = useState<UiActionState | null>(null);
 
   // --- Dashboard State ---
   const [userGoals, setUserGoals] = useState<UserGoal[]>([]);
@@ -211,59 +247,110 @@ export default function ChatPage() {
   const [refreshingDashboard, setRefreshingDashboard] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
 
-  // Load history from localStorage on mount
+  // Load history from localStorage if available, otherwise from backend
   useEffect(() => {
-    if (typeof window !== 'undefined' && user) { // Ensure localStorage is available and user is loaded
-       try {
-         const savedHistory = localStorage.getItem(storageKey);
-         if (savedHistory) {
-           const parsedHistory = JSON.parse(savedHistory);
-           // Basic validation: Check if it's an array
-           if (Array.isArray(parsedHistory)) {
-               setChatHistory(parsedHistory);
-           } else {
-               console.warn('Invalid chat history format found in localStorage.');
-               localStorage.removeItem(storageKey); // Clear invalid data
-           }
-         }
-       } catch (error) {
-         console.error('Failed to load or parse chat history from localStorage:', error);
-         localStorage.removeItem(storageKey); // Clear potentially corrupted data
-       }
+    if (typeof window !== 'undefined' && user && activeChatId) {
+      const savedHistory = localStorage.getItem(storageKey);
+      if (savedHistory) {
+        try {
+          const parsedHistory = JSON.parse(savedHistory);
+          if (Array.isArray(parsedHistory)) {
+            setChatHistory(parsedHistory);
+            setLoadingMessages(false);
+            return; // Don't fetch from backend if we have local data
+          }
+        } catch (error) {
+          console.error('Failed to parse chat history from localStorage:', error);
+          localStorage.removeItem(storageKey);
+        }
+      }
+      // If no localStorage, fetch from backend
+      setLoadingMessages(true);
+      supabase
+        .from('chat_messages')
+        .select('id, sender, message')
+        .eq('chat_id', activeChatId)
+        .order('created_at', { ascending: true })
+        .then(({ data, error }) => {
+          if (!error && data) {
+            setChatHistory(
+              data.map((msg) => ({
+                id: msg.id,
+                sender: msg.sender,
+                text: msg.message,
+              }))
+            );
+          }
+          setLoadingMessages(false);
+        });
     }
-  }, [user, storageKey]); // Rerun if user changes (e.g., login/logout)
+  }, [user, activeChatId, storageKey, supabase]);
 
   // Save history to localStorage whenever it changes
   useEffect(() => {
-    if (typeof window !== 'undefined' && user && chatHistory.length > 0) { // Don't save initial empty array unless intended
+    if (typeof window !== 'undefined' && user && activeChatId && chatHistory.length > 0) {
       try {
         localStorage.setItem(storageKey, JSON.stringify(chatHistory));
       } catch (error) {
         console.error('Failed to save chat history to localStorage:', error);
       }
     }
-  }, [chatHistory, user, storageKey]); // Rerun when history or user changes
-  // --- End localStorage Persistence ---
+  }, [chatHistory, user, activeChatId, storageKey]);
 
-  // == Helper: Process Bot Reply & Add Actions (Adapted slightly for web state) ==
+  // --- Process Bot Reply (MODIFIED) ---
   const processBotReply = (responseData: Record<string, unknown>): ChatMessage => {
-    // Type assertion needed if accessing nested properties
-    const replyText = responseData.message as string;
+    let replyText = (responseData.message as string) || 'Sorry, I received an empty response.';
+    const responseType = responseData.response_type;
+
+    // --- ADDED: Marker Processing --- 
+    const markerRegex = /\s*\[UI_ACTION:([A-Z_]+):(.+)\]$/;
+    console.log("Checking for UI_ACTION marker in:", replyText); // <-- Log 1: Check message
+    const match = replyText.match(markerRegex);
+
+    if (match) {
+        console.log("UI_ACTION Marker FOUND!"); // <-- Log 2: Confirm match
+        const actionType = match[1];
+        const payloadString = match[2];
+        console.log(`Extracted ActionType: ${actionType}, PayloadString: ${payloadString}`); // <-- Log 3: Show extracted parts
+        const cleanedMessage = replyText.replace(markerRegex, '').trim(); // Remove marker for display
+        replyText = cleanedMessage; // Update replyText to be the cleaned version
+
+        try {
+            const payload = JSON.parse(payloadString);
+            console.log("Parsed Payload:", payload); // <-- Log 4: Show parsed payload
+            console.log("Setting currentUiAction state..."); // <-- Log 5: Confirm state set attempt
+            setCurrentUiAction({ actionType, payload });
+            // Create the message object with the cleaned text
+            const botMessage: ChatMessage = { 
+                id: Date.now() + 1, 
+                sender: 'bot', 
+                text: replyText 
+            };
+            console.log("Returning bot message after setting UI action."); // <-- Log 6: Confirm early return
+            return botMessage; // Return immediately after setting UI action state
+        } catch (e) {
+            console.error('Failed to parse UI_ACTION payload:', e, payloadString); // <-- Log Error
+            // If parsing fails, fall through to display the original message (including the marker)
+        }
+    } else {
+        console.log("No UI_ACTION marker found."); // <-- Log 7: Confirm no match
+    }
+    // --- End Marker Processing ---
+
+    // Original context/action handling (can be removed/refactored if markers cover all cases)
+    setPendingAction(null);
+    setContextForNextRequest(null);
+
     const botMessage: ChatMessage = { 
         id: Date.now() + 1, 
         sender: 'bot', 
         text: replyText 
     };
-    const responseType = responseData.response_type;
 
-    // Reset context/pending action unless explicitly set by response
-    setPendingAction(null);
-    setContextForNextRequest(null);
-
-    // Handle specific response types that require context/actions
+    // Keep existing specific handling for now as fallback or transition 
+    // (Ideally, backend markers should handle these)
     if (responseType === 'recipe_analysis_prompt' && responseData.pending_action) {
         console.log("Setting pending action based on recipe_analysis_prompt");
-        // Ensure pending_action is an object before setting
         const action = responseData.pending_action;
         setPendingAction(action && typeof action === 'object' ? action as Record<string, unknown> : null);
         if (!botMessage.actions) { 
@@ -273,102 +360,25 @@ export default function ChatPage() {
                 { label: 'Cancel', payload: 'User selects Cancel' },
             ];
         }
-    } else if ((responseType === 'saved_recipe_confirmation_prompt' || responseType === 'saved_recipe_proactive_confirm') && responseData.context_for_reply) {
-        console.log("Setting context for saved recipe confirmation prompt");
-        // Ensure context_for_reply is an object before setting
+    } else if ((responseType === 'saved_recipe_confirmation_prompt' /* || responseType === 'saved_recipe_proactive_confirm' */) && responseData.context_for_reply) {
+         // This might be superseded by the CONFIRM_LOG_SAVED_RECIPE marker 
+        console.warn("Legacy context handling for saved_recipe_confirmation_prompt triggered. Should markers handle this?");
         const context = responseData.context_for_reply;
         setContextForNextRequest(context && typeof context === 'object' ? context as Record<string, unknown> : null);
-        if (!botMessage.actions) { 
-             botMessage.actions = [
-                 { label: 'Yes, log it', payload: 'confirm_log_saved_recipe' },
-                 { label: 'No, cancel', payload: 'User selects Cancel' }
-             ];
-        }
+        // ... (button adding logic, potentially removable if markers work) ...
     } else if (responseType === 'clarification_needed_recipe' && responseData.context_for_reply) {
-        console.log("Setting context for clarification needed");
-        // Ensure context_for_reply is an object before setting
-        const context = responseData.context_for_reply;
-        setContextForNextRequest(context && typeof context === 'object' ? context as Record<string, unknown> : null);
-        if (!botMessage.actions) { 
-             botMessage.actions = [
-                 { label: 'It was homemade (list ingredients)', payload: 'User indicates homemade' }, 
-                 { label: 'It was a standard item', payload: 'User indicates standard item' }
-             ];
-        }
-    } else if ((responseType === 'saved_recipe_found_multiple' || responseType === 'saved_recipe_proactive_multiple') && responseData.context_for_reply) {
-         console.log("Setting context for multiple recipes found");
-         // Ensure context_for_reply is an object before setting
-         const context = responseData.context_for_reply;
-         setContextForNextRequest(context && typeof context === 'object' ? context as Record<string, unknown> : null);
-
-         // Check if context is valid object AND has the matches property before accessing nested properties
-         if (context && typeof context === 'object' && 'matches' in context && Array.isArray(context.matches) && !botMessage.actions) {
-             // Now TypeScript knows context might have matches
-             const mappedActions = (context.matches as RecipeMatch[]).map((match) => ({
-                 label: `Log: ${match.recipe_name}`,
-                 payload: `confirm_log_saved_recipe:${match.id}` // Example payload format
-             }));
-             mappedActions.push({ label: 'None of these', payload: 'User selects None' });
-             botMessage.actions = mappedActions; 
-         }
+         console.warn("Legacy context handling for clarification_needed_recipe triggered. Should markers handle this?");
+         // ... (context/button logic, potentially removable) ...
+    } else if ((responseType === 'saved_recipe_found_multiple' /* || responseType === 'saved_recipe_proactive_multiple' */) && responseData.context_for_reply) {
+          console.warn("Legacy context handling for saved_recipe_found_multiple triggered. Should markers handle this?");
+          // ... (context/button logic, potentially removable) ...
+    } else if (responseType === 'clarification_needed_typo' && responseData.context_for_reply) {
+         // This should be handled by the CONFIRM_TYPO marker now.
+         console.warn("Legacy context handling for clarification_needed_typo triggered. Should CONFIRM_TYPO marker handle this?");
+        // ... (context/button logic, potentially removable) ...
     }
-
-    // Add any other standard action processing here if needed
-    // const lowerReply = (replyText || '').toLowerCase();
-    // ...
 
     return botMessage;
-  };
-
-  // == Handle Action Button Click ==
-  // TODO: Update handleActionClick to use fetch and pass context correctly if actions are used.
-  const handleActionClick = (payload: string, messageId: number) => {
-    // Add check for supabase client
-    if (!supabase) {
-        console.error("Supabase client not available for action click.");
-         // Optionally show an error message to the user
-         const errorMessage: ChatMessage = { id: Date.now(), sender: 'error', text: 'Could not send action, please try refreshing.' };
-         setChatHistory(prev => [...prev, errorMessage]);
-        return; 
-    }
-
-    // 1. Remove actions from the original message to hide buttons
-    setChatHistory(prev => 
-        prev.map(msg => 
-            msg.id === messageId ? { ...msg, actions: undefined } : msg
-        )
-    );
-
-    // 2. Send the payload as a new message
-    // We need to bypass the normal input state setting
-    // We'll reuse parts of handleSend but send the payload directly
-
-    const actionAsUserMessage: ChatMessage = { id: Date.now(), sender: 'user', text: payload };
-    setChatHistory(prev => [...prev, actionAsUserMessage]);
-    setSending(true);
-
-    // Directly call the backend with the action payload
-    supabase.functions.invoke('ai-handler-v2', {
-        body: { message: payload, conversation_history: chatHistory }, 
-    }).then(({ data, error }) => {
-         if (error) throw new Error(error.message);
-
-         const replyText = data?.reply;
-         if (replyText && typeof replyText === 'string' && replyText.trim() !== '') {
-             const botMessage = processBotReply(data); // Use helper
-             setChatHistory(prev => [...prev, botMessage]);
-        } else {
-             console.error("Invalid response format from ai-handler-v2 after action:", data);
-             const errorMessage: ChatMessage = { id: Date.now() + 1, sender: 'error', text: 'Sorry, I received an unexpected response. Please try again.' };
-             setChatHistory(prev => [...prev, errorMessage]);
-        }
-    }).catch((error) => {
-        console.error("Error invoking Supabase function after action:", error);
-        const errorMessage: ChatMessage = { id: Date.now() + 1, sender: 'error', text: error instanceof Error ? error.message : 'An unknown error occurred calling the AI handler.' };
-        setChatHistory(prev => [...prev, errorMessage]);
-    }).finally(() => {
-        setSending(false);
-    });
   };
 
   // --- Mobile Menu Logic (Copied from Profile/Dashboard) ---
@@ -392,114 +402,210 @@ export default function ChatPage() {
     scrollToBottom();
   }, [chatHistory]); // Scroll when history changes
 
-  // == Handle Sending Message (Using Fetch + Context Logic) ==
-  const handleSend = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!message.trim() || sending || !session?.access_token) return;
+  // --- Fetch chat sessions on load ---
+  useEffect(() => {
+    if (!user || !supabase) return;
+    setLoadingChats(true);
+    supabase
+      .from('chat_sessions')
+      .select('chat_id, title, updated_at')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setChatSessions(data);
+          if (data.length > 0 && !activeChatId) {
+            setActiveChatId(data[0].chat_id);
+          }
+        }
+        setLoadingChats(false);
+      });
+  }, [user, supabase]);
 
-    const messageToSend = message;
-    // Capture history *before* adding new message
-    const historyForBackend = [...chatHistory];
-    // Capture context *before* clearing states
-    const currentContext = contextForNextRequest;
-    const currentPendingAction = pendingAction;
+  // --- Create new chat session ---
+  const handleNewChat = async () => {
+    if (!user || !supabase) return;
+    const now = new Date();
+    const title = now.toLocaleString();
+    const { data, error } = await supabase
+      .from('chat_sessions')
+      .insert([{ user_id: user.id, title }])
+      .select('chat_id, title, updated_at')
+      .single();
+    if (!error && data) {
+      setChatSessions((prev) => [data, ...prev]);
+      setActiveChatId(data.chat_id);
+      setChatHistory([]);
+    }
+  };
 
-    // Clear context/pending actions intended for *this* request only
-    setContextForNextRequest(null);
-    setPendingAction(null); 
+  // --- Switch chat ---
+  const handleSelectChat = (chatId: string) => {
+    setActiveChatId(chatId);
+    setChatHistory([]);
+  };
+
+  // --- ADDED: Handlers for UI Action Buttons ---
+
+  // Generic function to send action results back to the backend
+  const sendActionResponse = useCallback(async (requestBody: Record<string, any>) => {
+    if (!supabase || !user) {
+      console.error("Supabase client or user not available for action response.");
+      const errorMessage: ChatMessage = { id: Date.now(), sender: 'error', text: 'Could not send action, please try refreshing.' };
+      setChatHistory(prev => [...prev, errorMessage]);
+      return;
+    }
 
     setSending(true);
-    setMessage(''); // Clear input
+    setCurrentUiAction(null); // Clear UI buttons immediately
 
-    // Add user message locally
-    const newUserMessage: ChatMessage = { id: Date.now(), sender: 'user', text: messageToSend };
-    setChatHistory(prev => [...prev, newUserMessage]);
+    // Construct the body, including user_id and potentially chat_id if needed
+    const body = {
+        user_id: user.id,
+        chat_id: activeChatId,
+        ...requestBody // Include message, action, context etc.
+    };
 
     try {
-      // --- Use fetch directly, mimicking mobile --- 
-      const functionUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/ai-handler-v2`;
-      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-      if (!functionUrl || !anonKey) {
-         throw new Error('Supabase URL or Anon Key missing in environment variables. Check .env.local');
-      }
-      const accessToken = session.access_token;
-      
-      // Construct request body including context/pending action if they exist
-      const requestBody: Record<string, unknown> = {
-          message: messageToSend,
-          conversation_history: historyForBackend,
-          user_id: user?.id, // Pass user ID
-      };
+      const { data, error } = await supabase.functions.invoke('ai-handler-v2', { body });
 
-      let combinedContext: Record<string, unknown> = {};
-      let contextWasSet = false;
+      if (error) throw new Error(error.message);
 
-      if (currentPendingAction) {
-          combinedContext.pending_action = currentPendingAction;
-          contextWasSet = true;
-          console.log("DEBUG: Including pending action in context:", currentPendingAction);
+      if (data && data.message) {
+        const botMessage = processBotReply(data);
+        setChatHistory(prev => [...prev, botMessage]);
+      } else {
+        console.error('Unexpected response format after action:', data);
+        const errorMessage: ChatMessage = { id: Date.now() + 1, sender: 'error', text: 'Sorry, I received an unexpected response after your action. Please try again.' };
+        setChatHistory(prev => [...prev, errorMessage]);
       }
-      if (currentContext) {
-          combinedContext = { ...combinedContext, ...currentContext }; // Merge properties
-          contextWasSet = true;
-          console.log("DEBUG: Including stored context_for_reply in context:", currentContext);
-      }
-      if (contextWasSet) {
-          requestBody.context = combinedContext;
-      } // No need for else delete requestBody.context as it's not added initially
+    } catch (error) {
+      console.error('Error sending action response:', error);
+      const errorMessage: ChatMessage = { id: Date.now() + 1, sender: 'error', text: `Error processing action: ${error instanceof Error ? error.message : 'Unknown error'}` };
+      setChatHistory(prev => [...prev, errorMessage]);
+    } finally {
+      setSending(false);
+    }
+  }, [supabase, user, activeChatId, processBotReply]); // Include dependencies
 
-      console.log(`DEBUG: Calling function via fetch: ${functionUrl} with body:`, JSON.stringify(requestBody));
-      const response = await fetch(functionUrl, {
-          method: 'POST',
-          headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${accessToken}`,
-              'apikey': anonKey
-          },
-          body: JSON.stringify(requestBody)
+  const handleTypoConfirm = useCallback((useSuggestion: boolean) => {
+    if (!currentUiAction || currentUiAction.actionType !== 'CONFIRM_TYPO') return;
+
+    const payload = currentUiAction.payload;
+    const confirmedMessage = useSuggestion ? payload.suggestion : payload.original;
+
+    // Add user's explicit confirmation choice to history
+    const userChoiceMessage: ChatMessage = { 
+        id: Date.now(), 
+        sender: 'user', 
+        text: `(Selected: ${confirmedMessage})` // Indicate the choice clearly
+    };
+    setChatHistory(prev => [...prev, userChoiceMessage]);
+
+    sendActionResponse({
+        message: confirmedMessage, // Send the chosen spelling as the new message
+        context: { confirmed_typo: payload } // Provide context about the typo confirmation
+    });
+  }, [currentUiAction, sendActionResponse]);
+
+  const handleSavedRecipeConfirm = useCallback((confirm: boolean) => {
+    if (!currentUiAction || currentUiAction.actionType !== 'CONFIRM_LOG_SAVED_RECIPE') return;
+
+    const payload = currentUiAction.payload;
+    
+    // Add user's choice to history
+    const userChoiceMessage: ChatMessage = { 
+        id: Date.now(), 
+        sender: 'user', 
+        text: confirm ? `(Selected: Log recipe '${payload.recipe_name}')` : `(Selected: Cancel)` 
+    };
+    setChatHistory(prev => [...prev, userChoiceMessage]);
+
+    // --- Clear pending actions/context when a new recipe is selected ---
+    setPendingAction(null);
+    setContextForNextRequest(null);
+
+    if (confirm) {
+        // Use the existing direct action pattern the backend expects
+        sendActionResponse({
+            action: 'confirm_log_saved_recipe', // Specific action key
+            context: { // Pass the payload needed by the backend action
+                recipe_id: payload.recipe_id,
+                recipe_name: payload.recipe_name
+            }
+        });
+    } else {
+        // If cancelling, just clear the buttons and maybe send a cancel message
+        setCurrentUiAction(null); 
+        // Optionally send a "User cancelled" message to backend if needed for history
+        // sendActionResponse({ message: "User cancelled recipe log confirmation" }); 
+    }
+  }, [currentUiAction, sendActionResponse]);
+
+  // --- Send message (user) ---
+  const handleSend = async (e?: React.FormEvent<HTMLFormElement>) => {
+    if (e) e.preventDefault(); // Prevent default form submission
+    const currentMessage = message.trim();
+    if (!currentMessage || sending || !supabase || !user) return; // Prevent sending empty or while processing
+
+    setMessage(''); // Clear input field
+    setSending(true);
+    setCurrentUiAction(null); // --- ADDED: Clear any existing UI action buttons ---
+
+    // --- Clear pending actions/context if starting a new log ---
+    if (/^(log |add )/i.test(currentMessage)) {
+      setPendingAction(null);
+      setContextForNextRequest(null);
+    }
+
+    const newUserMessage: ChatMessage = { id: Date.now(), sender: 'user', text: currentMessage };
+    const updatedHistory = [...chatHistory, newUserMessage];
+    setChatHistory(updatedHistory);
+
+    // Prepare conversation history for the API
+    // Include only user/bot messages, map to required format
+    const conversation_history = updatedHistory
+      .filter(msg => msg.sender === 'user' || msg.sender === 'bot')
+      .slice(-10) // Limit history length if needed
+      .map(({ sender, text }) => ({ role: sender === 'user' ? 'user' : 'assistant', content: text }));
+
+    // Prepare context (if any)
+    let requestContext: Record<string, unknown> | undefined = undefined;
+    if (pendingAction) requestContext = { pending_action: pendingAction };
+    // contextForNextRequest might be set by previous bot replies if not using markers fully
+    if (contextForNextRequest) requestContext = { ...requestContext, ...contextForNextRequest }; 
+
+    try {
+      const { data: responseData, error } = await supabase.functions.invoke('ai-handler-v2', {
+        body: {
+          message: currentMessage,
+          chat_id: activeChatId,
+          user_id: user.id,
+          conversation_history,
+          ...(requestContext ? { context: requestContext } : {}),
+        },
       });
 
-      console.log('DEBUG: Fetch response status:', response.status);
-      if (!response.ok) {
-          let errorData;
-          try { errorData = await response.json(); } 
-          catch (_error) { errorData = { message: await response.text() }; }
-          console.error("Backend Error Data (fetch):", errorData);
-          throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+      if (error) {
+        throw new Error(error.message);
       }
-      const data = await response.json(); // Process response
-      console.log("DEBUG: Received data (fetch):", data);
-      // --- End fetch use ---
 
-      // --- Process Valid Response (using processBotReply) --- 
-      if (data && data.message) { // Check if essential fields exist
-          const botMessage = processBotReply(data); // Use helper to handle actions/context
-          setChatHistory(prev => [...prev, botMessage]);
+      if (responseData && responseData.message) {
+        const botMessage = processBotReply(responseData); // Process reply (handles markers)
+        setChatHistory(prev => [...prev, botMessage]);
       } else {
-         // Handle cases where response is technically valid JSON but lacks expected structure
-         console.error("Invalid response structure from ai-handler-v2 (fetch):", data);
-         const errorMessage: ChatMessage = {
-             id: Date.now() + 1,
-             sender: 'error',
-             text: 'Sorry, I received an incomplete response. Please try again.'
-         };
-         setChatHistory(prev => [...prev, errorMessage]);
+        // Handle unexpected response format
+        const errorMessage: ChatMessage = { id: Date.now() + 1, sender: 'error', text: 'Sorry, I received an unexpected response. Please try again.' };
+        setChatHistory(prev => [...prev, errorMessage]);
       }
-      // --- End Response Processing ---
-
-    } catch (error) { // Outer catch block handles errors
-       console.error("Error during handleSend:", error);
-       const errorMessage: ChatMessage = {
-           id: Date.now() + 1, 
-           sender: 'error', 
-           // Updated error message construction to handle non-Error objects
-           text: error instanceof Error ? error.message : (typeof error === 'string' ? error : 'An unknown error occurred calling the AI handler.') 
-       };
-       setChatHistory(prev => [...prev, errorMessage]);
+    } catch (error) {
+      // Handle fetch/network errors or errors thrown from the function
+      const errorMessage: ChatMessage = { id: Date.now() + 1, sender: 'error', text: error instanceof Error ? error.message : 'An unknown error occurred calling the AI handler.' };
+      setChatHistory(prev => [...prev, errorMessage]);
     } finally {
-       setSending(false);
+      setSending(false);
     }
-  }; // End handleSend
+  };
 
   // --- Dashboard Data Fetching Logic ---
   const fetchDashboardData = useCallback(async (isRefreshing = false) => {
@@ -618,40 +724,21 @@ export default function ChatPage() {
 
   // --- JSX for Chat Panel ---
   const chatPanelContent = (
-    <div className="flex flex-col flex-1 bg-white overflow-hidden"> 
-      {/* Chat Header (Optional - Now likely handled by parent layout) */}
-      {/* <header className="bg-white border-b border-gray-200 p-4 z-10 flex-shrink-0">
-         <h2 className="text-xl font-semibold text-gray-800">NutriPal AI Chat</h2>
-      </header> */}
-
-      {/* Message List - With color coding */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50 h-0"> 
+    <div className="flex flex-col h-full bg-white overflow-hidden"> {/* Main container for chat panel */}
+      {/* Message List - Make this scrollable */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50"> {/* Scrollable message area */}
         {chatHistory.map((msg) => (
-           <div key={msg.id} className={`flex mb-3 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}> 
-              <div 
+           <div key={msg.id} className={`flex mb-3 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div
                 className={`max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-lg shadow-sm ${ 
                   msg.sender === 'user' 
                     ? 'bg-blue-500 text-white' 
                     : msg.sender === 'bot' 
                     ? 'bg-gray-100 text-gray-800' 
                     : 'bg-red-100 text-red-700' // Error style
-                }`} 
-              > 
-                <p className="text-sm whitespace-pre-wrap">{msg.text}</p> 
-                {/* Action Buttons */}
-                {msg.sender === 'bot' && msg.actions && msg.actions.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                     {msg.actions.map((action, index) => (
-                       <button 
-                         key={index}
-                         onClick={() => handleActionClick(action.payload, msg.id)} 
-                         className="px-3 py-1 bg-blue-100 text-blue-700 rounded-md text-xs hover:bg-blue-200 transition-colors"
-                       > 
-                         {action.label}
-                       </button> 
-                     ))} 
-                  </div>
-                )}
+                }`}
+              >
+                <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
               </div>
            </div>
          ))} 
@@ -659,8 +746,8 @@ export default function ChatPage() {
          <div ref={messagesEndRef} /> 
        </div> 
 
-       {/* Input Area - With color coding */} 
-       <div className="p-4 border-t border-gray-200 bg-white flex-shrink-0"> 
+       {/* Input Area - Fixed at the bottom */}
+       <div className="p-4 border-t border-gray-200 bg-white flex-shrink-0"> {/* Input area container */}
          <form onSubmit={handleSend} className="flex items-center space-x-3"> 
            <input 
              type="text" 
@@ -668,12 +755,14 @@ export default function ChatPage() {
              onChange={(e) => setMessage(e.target.value)} 
              placeholder="Ask NutriPal anything or log food..." 
              disabled={sending} 
-             className="flex-1 border border-gray-300 rounded-md px-4 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100" 
+             className="flex-1 border border-gray-300 rounded-md px-4 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
+             name="message" // Added name for accessibility/autofill
+             id="chat-input" // Added id
            /> 
            <button 
              type="submit" 
              disabled={sending || message.trim().length === 0} 
-             className="px-5 py-2 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors" 
+             className="px-5 py-2 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
            > 
              {sending ? 'Sending...' : 'Send'} 
            </button> 
@@ -682,38 +771,39 @@ export default function ChatPage() {
     </div>
   );
 
-  // --- JSX for Dashboard Panel (UPDATED) --- 
+  // --- JSX for Dashboard Panel (UPDATED) ---
   const dashboardPanelContent = (
-    <div className="flex flex-col flex-1 bg-gray-100 overflow-y-auto"> 
-       {/* Dashboard Header */}
-       {/* Header is now handled by the shared component */}
-       {/* Dashboard Content Area - Using Shared Table */}
-       <div className="flex-1 p-4 overflow-y-auto"> 
-          <DashboardSummaryTable
-            userGoals={userGoals}
-            dailyTotals={dailyTotals}
-            loading={loadingDashboardData}
-            error={dashboardError}
-            refreshing={refreshingDashboard}
-            onRefresh={() => fetchDashboardData(true)}
-          />
-       </div>
+    // Removed outer flex container, apply scroll directly here
+    <div className="flex-1 p-4 overflow-y-auto"> {/* Scrollable dashboard content area */}
+      <DashboardSummaryTable
+        userGoals={userGoals}
+        dailyTotals={dailyTotals}
+        loading={loadingDashboardData}
+        error={dashboardError}
+        refreshing={refreshingDashboard}
+        onRefresh={() => fetchDashboardData(true)}
+      />
     </div>
   );
 
-  // --- CLEANED UP FINAL RENDER --- 
-  // Removed sidebar, header, and outer container div.
-  // Render ONLY the layout component, passing the panels.
+  // --- Final Render using DashboardShell ---
   return (
-    <DashboardShell headerTitle="Chat">
+    <DashboardShell
+      headerTitle="Chat"
+      chatSessions={chatSessions}
+      activeChatId={activeChatId || undefined}
+      onSelectChat={handleSelectChat}
+      onNewChat={handleNewChat}
+    >
       <div className="flex h-[calc(100vh-56px)]"> {/* Full viewport minus header */}
-        <div className="flex-1 min-w-0 flex flex-col">
-          <div className="flex-1 min-h-0 overflow-y-auto"> {/* Only chat panel scrolls */}
-            {chatPanelContent}
-          </div>
+        {/* Chat Panel takes half the width */}
+        <div className="flex-1 min-w-0 flex flex-col border-r border-gray-200"> {/* Added flex-1 and border */}
+          {/* chatPanelContent now handles its own internal flex/scroll */}
+          {chatPanelContent} 
         </div>
-        <div className="flex-shrink-0 h-full flex flex-col border-l border-gray-200 bg-gray-100"> {/* Summary always visible */}
-          {dashboardPanelContent}
+        {/* Dashboard Panel takes the other half */}
+        <div className="flex-1 border-l border-gray-200 bg-gray-100 p-4 overflow-y-auto"> {/* Changed w-96 to flex-1. Added overflow-y-auto back for safety. */}
+          {dashboardPanelContent} 
         </div>
       </div>
     </DashboardShell>

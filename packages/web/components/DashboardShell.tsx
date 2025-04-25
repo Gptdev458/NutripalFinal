@@ -1,12 +1,22 @@
 import React, { useState, useEffect, ReactNode } from 'react';
 import Link from 'next/link';
 
+interface ChatSessionMeta {
+  chat_id: string;
+  title: string;
+  updated_at: string;
+}
+
 interface DashboardShellProps {
   children: ReactNode;
   headerTitle?: string;
+  chatSessions?: ChatSessionMeta[];
+  activeChatId?: string;
+  onSelectChat?: (chatId: string) => void;
+  onNewChat?: () => void;
 }
 
-const DashboardShell: React.FC<DashboardShellProps> = ({ children, headerTitle = 'Dashboard' }) => {
+const DashboardShell: React.FC<DashboardShellProps> = ({ children, headerTitle = 'Dashboard', chatSessions = [], activeChatId, onSelectChat, onNewChat }) => {
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -38,6 +48,35 @@ const DashboardShell: React.FC<DashboardShellProps> = ({ children, headerTitle =
           <Link href="/chat" className="block px-3 py-2 text-gray-600 rounded-md hover:bg-gray-100">Chat</Link>
           <Link href="/settings" className="block px-3 py-2 text-gray-600 rounded-md hover:bg-gray-100">Settings</Link>
         </nav>
+        {/* Chats Section */}
+        <div className="border-t border-gray-200 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-semibold text-gray-700">Chats</span>
+            <button
+              onClick={onNewChat}
+              className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700"
+              title="Start a new chat"
+            >
+              + New
+            </button>
+          </div>
+          <ul className="space-y-1 max-h-48 overflow-y-auto">
+            {chatSessions.length === 0 && (
+              <li className="text-xs text-gray-400">No chats yet</li>
+            )}
+            {chatSessions.map((chat) => (
+              <li key={chat.chat_id}>
+                <button
+                  className={`w-full text-left px-2 py-1 rounded text-sm ${chat.chat_id === activeChatId ? 'bg-blue-100 text-blue-700 font-semibold' : 'hover:bg-gray-100 text-gray-700'}`}
+                  onClick={() => onSelectChat && onSelectChat(chat.chat_id)}
+                >
+                  {chat.title}
+                  <span className="block text-xs text-gray-400">{new Date(chat.updated_at).toLocaleString()}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
 
       {/* Main Content Area */}
