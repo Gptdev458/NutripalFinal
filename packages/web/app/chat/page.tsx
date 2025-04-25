@@ -7,6 +7,7 @@ import Link from 'next/link';
 import ChatDashboardLayout from '@/components/ChatDashboardLayout'; // Import the new layout
 import DashboardShell from '@/components/DashboardShell';
 import DashboardSummaryTable from '@/components/DashboardSummaryTable';
+import ChatMessageList from '@/components/ChatMessageList'; // <-- Import the new component
 
 // Interface for chat messages
 interface ChatMessage {
@@ -208,13 +209,10 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false); // Sending state
   const [chatSessions, setChatSessions] = useState<ChatSessionMeta[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [loadingChats, setLoadingChats] = useState(false);
-  const [loadingMessages, setLoadingMessages] = useState(false);
   // Use more specific types instead of any
-  const [pendingAction, setPendingAction] = useState<Record<string, unknown> | null>(null); 
-  const [contextForNextRequest, setContextForNextRequest] = useState<Record<string, unknown> | null>(null); 
-  const messagesEndRef = useRef<HTMLDivElement>(null); // Ref for scrolling
+  const [pendingAction, setPendingAction] = useState<Record<string, unknown> | null>(null);
+  const [contextForNextRequest, setContextForNextRequest] = useState<Record<string, unknown> | null>(null);
 
   // Persist activeChatId to localStorage whenever it changes
   useEffect(() => {
@@ -247,57 +245,123 @@ export default function ChatPage() {
   const [refreshingDashboard, setRefreshingDashboard] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
 
-  // Load history from localStorage if available, otherwise from backend
-  useEffect(() => {
-    if (typeof window !== 'undefined' && user && activeChatId) {
-      const savedHistory = localStorage.getItem(storageKey);
-      if (savedHistory) {
-        try {
-          const parsedHistory = JSON.parse(savedHistory);
-          if (Array.isArray(parsedHistory)) {
-            setChatHistory(parsedHistory);
-            setLoadingMessages(false);
-            return; // Don't fetch from backend if we have local data
+  // --- Fetch chat sessions on load ---
+  const fetchChatSessions = useCallback(async () => {
+    if (!user || !supabase) return;
+    setLoadingChats(true);
+    supabase
+      .from('chat_sessions')
+      .select('chat_id, title, updated_at')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setChatSessions(data);
+          if (data.length > 0 && !activeChatId) {
+            setActiveChatId(data[0].chat_id);
           }
-        } catch (error) {
-          console.error('Failed to parse chat history from localStorage:', error);
-          localStorage.removeItem(storageKey);
         }
-      }
-      // If no localStorage, fetch from backend
-      setLoadingMessages(true);
-      supabase
-        .from('chat_messages')
-        .select('id, sender, message')
-        .eq('chat_id', activeChatId)
-        .order('created_at', { ascending: true })
-        .then(({ data, error }) => {
-          if (!error && data) {
-            setChatHistory(
-              data.map((msg) => ({
-                id: msg.id,
-                sender: msg.sender,
-                text: msg.message,
-              }))
-            );
-          }
-          setLoadingMessages(false);
-        });
-    }
-  }, [user, activeChatId, storageKey, supabase]);
+        setLoadingChats(false);
+      });
+  }, [user, supabase]);
 
-  // Save history to localStorage whenever it changes
+  // --- Keep useEffect for fetching chat sessions --- 
   useEffect(() => {
-    if (typeof window !== 'undefined' && user && activeChatId && chatHistory.length > 0) {
-      try {
-        localStorage.setItem(storageKey, JSON.stringify(chatHistory));
-      } catch (error) {
-        console.error('Failed to save chat history to localStorage:', error);
-      }
+    if (user && supabase) {
+      fetchChatSessions();
     }
-  }, [chatHistory, user, activeChatId, storageKey]);
+  }, [user, supabase, fetchChatSessions]);
 
-  // --- Process Bot Reply (MODIFIED) ---
+  // --- Fetch dashboard data ---
+  const fetchDashboardData = useCallback(async (forceRefresh = false) => {
+    if (!user || !supabase) {
+        setLoadingDashboardData(false);
+        setRefreshingDashboard(false);
+        return;
+    }
+    if (!forceRefresh) setLoadingDashboardData(true);
+    else setRefreshingDashboard(true);
+    setDashboardError(null);
+
+    const today = new Date();
+    const dateString = formatDate(today);
+    const startOfDay = `${dateString}T00:00:00.000Z`;
+    const endOfDay = `${dateString}T23:59:59.999Z`;
+
+    try {
+        const [goalsResponse, logsResponse] = await Promise.all([
+            supabase
+                .from('user_goals')
+                .select('nutrient, target_value, unit, goal_type')
+                .eq('user_id', user.id),
+            supabase
+                .from('food_log')
+                .select('*')
+                .eq('user_id', user.id)
+                .gte('timestamp', startOfDay)
+                .lte('timestamp', endOfDay)
+                .order('timestamp', { ascending: false })
+        ]);
+
+        if (goalsResponse.error) throw goalsResponse.error;
+        if (logsResponse.error) throw logsResponse.error;
+
+        const fetchedGoals = goalsResponse.data || [];
+        const fetchedLogs = logsResponse.data || [];
+
+        setUserGoals(fetchedGoals);
+        // Keep track of recent logs for potential future use, but dashboard panel might only show totals
+        setRecentLogs(fetchedLogs.slice(0, 5));
+
+        // Calculate totals based on fetched goals and logs for today
+        const totals: DailyTotals = {};
+        fetchedGoals.forEach(goal => {
+            let currentIntake = 0;
+            fetchedLogs.forEach(log => {
+                const logValue = log[goal.nutrient];
+                if (typeof logValue === 'number' && !isNaN(logValue)) {
+                    currentIntake += logValue;
+                }
+            });
+            totals[goal.nutrient] = currentIntake;
+        });
+        // Ensure calories total is calculated even if not an explicit goal
+        if (!totals['calories']) {
+             let calorieTotal = 0;
+             fetchedLogs.forEach(log => {
+                 if (typeof log.calories === 'number' && !isNaN(log.calories)) {
+                     calorieTotal += log.calories;
+                 }
+             });
+             totals['calories'] = calorieTotal;
+        }
+        setDailyTotals(totals);
+
+        console.log("Dashboard data fetched for chat view:", { fetchedGoals, fetchedLogs, totals });
+
+    } catch (err: unknown) {
+        console.error("Error fetching dashboard data for chat view:", err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        setDashboardError(`Failed to load dashboard data: ${errorMessage}`);
+        // Reset dashboard specific state on error
+        setUserGoals([]);
+        setDailyTotals({});
+        setRecentLogs([]);
+    } finally {
+        setLoadingDashboardData(false);
+        setRefreshingDashboard(false);
+    }
+
+  }, [user, supabase]);
+
+  // --- Keep useEffect for fetching dashboard data ---
+  useEffect(() => {
+    if (user && supabase) {
+      fetchDashboardData();
+    }
+  }, [user, supabase, fetchDashboardData]);
+
+  // --- Process Bot Reply ---
   const processBotReply = (responseData: Record<string, unknown>): ChatMessage => {
     let replyText = (responseData.message as string) || 'Sorry, I received an empty response.';
     const responseType = responseData.response_type;
@@ -394,34 +458,6 @@ export default function ChatPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [menuOpen]);
 
-  // == Auto Scroll to Bottom ==
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-  useEffect(() => {
-    scrollToBottom();
-  }, [chatHistory]); // Scroll when history changes
-
-  // --- Fetch chat sessions on load ---
-  useEffect(() => {
-    if (!user || !supabase) return;
-    setLoadingChats(true);
-    supabase
-      .from('chat_sessions')
-      .select('chat_id, title, updated_at')
-      .eq('user_id', user.id)
-      .order('updated_at', { ascending: false })
-      .then(({ data, error }) => {
-        if (!error && data) {
-          setChatSessions(data);
-          if (data.length > 0 && !activeChatId) {
-            setActiveChatId(data[0].chat_id);
-          }
-        }
-        setLoadingChats(false);
-      });
-  }, [user, supabase]);
-
   // --- Create new chat session ---
   const handleNewChat = async () => {
     if (!user || !supabase) return;
@@ -435,377 +471,176 @@ export default function ChatPage() {
     if (!error && data) {
       setChatSessions((prev) => [data, ...prev]);
       setActiveChatId(data.chat_id);
-      setChatHistory([]);
+      setMessage('');
+      setPendingAction(null);
+      setContextForNextRequest(null);
     }
   };
 
   // --- Switch chat ---
   const handleSelectChat = (chatId: string) => {
     setActiveChatId(chatId);
-    setChatHistory([]);
-  };
-
-  // --- ADDED: Handlers for UI Action Buttons ---
-
-  // Generic function to send action results back to the backend
-  const sendActionResponse = useCallback(async (requestBody: Record<string, any>) => {
-    if (!supabase || !user) {
-      console.error("Supabase client or user not available for action response.");
-      const errorMessage: ChatMessage = { id: Date.now(), sender: 'error', text: 'Could not send action, please try refreshing.' };
-      setChatHistory(prev => [...prev, errorMessage]);
-      return;
-    }
-
-    setSending(true);
-    setCurrentUiAction(null); // Clear UI buttons immediately
-
-    // Construct the body, including user_id and potentially chat_id if needed
-    const body = {
-        user_id: user.id,
-        chat_id: activeChatId,
-        ...requestBody // Include message, action, context etc.
-    };
-
-    try {
-      const { data, error } = await supabase.functions.invoke('ai-handler-v2', { body });
-
-      if (error) throw new Error(error.message);
-
-      if (data && data.message) {
-        const botMessage = processBotReply(data);
-        setChatHistory(prev => [...prev, botMessage]);
-      } else {
-        console.error('Unexpected response format after action:', data);
-        const errorMessage: ChatMessage = { id: Date.now() + 1, sender: 'error', text: 'Sorry, I received an unexpected response after your action. Please try again.' };
-        setChatHistory(prev => [...prev, errorMessage]);
-      }
-    } catch (error) {
-      console.error('Error sending action response:', error);
-      const errorMessage: ChatMessage = { id: Date.now() + 1, sender: 'error', text: `Error processing action: ${error instanceof Error ? error.message : 'Unknown error'}` };
-      setChatHistory(prev => [...prev, errorMessage]);
-    } finally {
-      setSending(false);
-    }
-  }, [supabase, user, activeChatId, processBotReply]); // Include dependencies
-
-  const handleTypoConfirm = useCallback((useSuggestion: boolean) => {
-    if (!currentUiAction || currentUiAction.actionType !== 'CONFIRM_TYPO') return;
-
-    const payload = currentUiAction.payload;
-    const confirmedMessage = useSuggestion ? payload.suggestion : payload.original;
-
-    // Add user's explicit confirmation choice to history
-    const userChoiceMessage: ChatMessage = { 
-        id: Date.now(), 
-        sender: 'user', 
-        text: `(Selected: ${confirmedMessage})` // Indicate the choice clearly
-    };
-    setChatHistory(prev => [...prev, userChoiceMessage]);
-
-    sendActionResponse({
-        message: confirmedMessage, // Send the chosen spelling as the new message
-        context: { confirmed_typo: payload } // Provide context about the typo confirmation
-    });
-  }, [currentUiAction, sendActionResponse]);
-
-  const handleSavedRecipeConfirm = useCallback((confirm: boolean) => {
-    if (!currentUiAction || currentUiAction.actionType !== 'CONFIRM_LOG_SAVED_RECIPE') return;
-
-    const payload = currentUiAction.payload;
-    
-    // Add user's choice to history
-    const userChoiceMessage: ChatMessage = { 
-        id: Date.now(), 
-        sender: 'user', 
-        text: confirm ? `(Selected: Log recipe '${payload.recipe_name}')` : `(Selected: Cancel)` 
-    };
-    setChatHistory(prev => [...prev, userChoiceMessage]);
-
-    // --- Clear pending actions/context when a new recipe is selected ---
+    setMessage('');
     setPendingAction(null);
     setContextForNextRequest(null);
-
-    if (confirm) {
-        // Use the existing direct action pattern the backend expects
-        sendActionResponse({
-            action: 'confirm_log_saved_recipe', // Specific action key
-            context: { // Pass the payload needed by the backend action
-                recipe_id: payload.recipe_id,
-                recipe_name: payload.recipe_name
-            }
-        });
-    } else {
-        // If cancelling, just clear the buttons and maybe send a cancel message
-        setCurrentUiAction(null); 
-        // Optionally send a "User cancelled" message to backend if needed for history
-        // sendActionResponse({ message: "User cancelled recipe log confirmation" }); 
-    }
-  }, [currentUiAction, sendActionResponse]);
+  };
 
   // --- Send message (user) ---
-  const handleSend = async (e?: React.FormEvent<HTMLFormElement>) => {
-    if (e) e.preventDefault(); // Prevent default form submission
-    const currentMessage = message.trim();
-    if (!currentMessage || sending || !supabase || !user) return; // Prevent sending empty or while processing
+  const handleSend = async (e?: React.FormEvent<HTMLFormElement>, actionPayload?: string) => {
+    if (e) e.preventDefault();
+    const textToSend = actionPayload || message.trim();
+    if (!textToSend || sending || authLoading || !activeChatId) return;
 
-    setMessage(''); // Clear input field
     setSending(true);
-    setCurrentUiAction(null); // --- ADDED: Clear any existing UI action buttons ---
+    const userMessage: ChatMessage = { id: Date.now(), sender: 'user', text: textToSend };
 
-    // --- Clear pending actions/context if starting a new log ---
-    if (/^(log |add )/i.test(currentMessage)) {
-      setPendingAction(null);
-      setContextForNextRequest(null);
-    }
+    // --- OPTION A: Update ChatMessageList via re-render --- 
+    // (Simplest) ChatMessageList will re-fetch when activeChatId changes (or manually trigger?) - Less ideal for immediate display
+    
+    // --- OPTION B: Pass a function to add message to ChatMessageList (More Complex Setup) ---
+    // Example: Pass `addMessageToDisplay` prop to ChatMessageList
+    // addMessageToDisplay(userMessage);
 
-    const newUserMessage: ChatMessage = { id: Date.now(), sender: 'user', text: currentMessage };
-    const updatedHistory = [...chatHistory, newUserMessage];
-    setChatHistory(updatedHistory);
+    // --- OPTION C: Assume ChatMessageList might not show user message immediately, 
+    //             but backend will store it and it shows on next fetch. (Current approach - simplest)
 
-    // Prepare conversation history for the API
-    // Include only user/bot messages, map to required format
-    const conversation_history = updatedHistory
-      .filter(msg => msg.sender === 'user' || msg.sender === 'bot')
-      .slice(-10) // Limit history length if needed
-      .map(({ sender, text }) => ({ role: sender === 'user' ? 'user' : 'assistant', content: text }));
-
-    // Prepare context (if any)
-    let requestContext: Record<string, unknown> | undefined = undefined;
-    if (pendingAction) requestContext = { pending_action: pendingAction };
-    // contextForNextRequest might be set by previous bot replies if not using markers fully
-    if (contextForNextRequest) requestContext = { ...requestContext, ...contextForNextRequest }; 
+    setMessage(''); // Clear input
 
     try {
-      const { data: responseData, error } = await supabase.functions.invoke('ai-handler-v2', {
-        body: {
-          message: currentMessage,
-          chat_id: activeChatId,
-          user_id: user.id,
-          conversation_history,
-          ...(requestContext ? { context: requestContext } : {}),
-        },
-      });
+        const response = await fetch('/api/chat', { // Assuming API route exists
+             method: 'POST',
+             headers: {
+                 'Content-Type': 'application/json',
+                 Authorization: `Bearer ${session?.access_token}`,
+             },
+             body: JSON.stringify({ 
+                 message: textToSend,
+                 chat_id: activeChatId,
+                 context: contextForNextRequest, // Send current context
+                 pending_action: pendingAction, // Send pending action
+              }),
+        });
 
-      if (error) {
-        throw new Error(error.message);
-      }
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: 'Failed to parse error response.' }));
+            throw new Error(errorData.message || `Network response was not ok (${response.status})`);
+        }
 
-      if (responseData && responseData.message) {
-        const botMessage = processBotReply(responseData); // Process reply (handles markers)
-        setChatHistory(prev => [...prev, botMessage]);
-      } else {
-        // Handle unexpected response format
-        const errorMessage: ChatMessage = { id: Date.now() + 1, sender: 'error', text: 'Sorry, I received an unexpected response. Please try again.' };
-        setChatHistory(prev => [...prev, errorMessage]);
-      }
-    } catch (error) {
-      // Handle fetch/network errors or errors thrown from the function
-      const errorMessage: ChatMessage = { id: Date.now() + 1, sender: 'error', text: error instanceof Error ? error.message : 'An unknown error occurred calling the AI handler.' };
-      setChatHistory(prev => [...prev, errorMessage]);
+        const data = await response.json();
+
+        // Process reply and update context/pending state
+        const botMessage = processBotReply(data);
+        setContextForNextRequest(data.context || null); // Update context for next request
+        setPendingAction(data.pending_action || null); // Update pending action
+
+        // --- Here you need to update the list in ChatMessageList --- 
+        // Simplest way is just let ChatMessageList re-fetch/handle its own updates
+        // If you need immediate updates, need Option B (pass down function)
+
+         // If dashboard data might change (e.g., food logged), refresh it
+         if (data.response_type?.includes('log')) {
+             fetchDashboardData(true); // Force refresh
+         }
+
+    } catch (error: any) {
+      console.error('Error sending message:', error);
+      const errorMessage: ChatMessage = {
+        id: Date.now() + 2,
+        sender: 'error',
+        text: `Error: ${error.message}`,
+      };
+      // Update ChatMessageList (Option B or C)
     } finally {
       setSending(false);
     }
   };
-
-  // --- Dashboard Data Fetching Logic ---
-  const fetchDashboardData = useCallback(async (isRefreshing = false) => {
-    if (!user || !supabase) {
-        setLoadingDashboardData(false);
-        setRefreshingDashboard(false);
-        return;
-    }
-    if (!isRefreshing) setLoadingDashboardData(true);
-    else setRefreshingDashboard(true);
-    setDashboardError(null);
-
-    const today = new Date();
-    const dateString = formatDate(today);
-    const startOfDay = `${dateString}T00:00:00.000Z`;
-    const endOfDay = `${dateString}T23:59:59.999Z`;
-
-    try {
-        const [goalsResponse, logsResponse] = await Promise.all([
-            supabase
-                .from('user_goals')
-                .select('nutrient, target_value, unit, goal_type')
-                .eq('user_id', user.id),
-            supabase
-                .from('food_log')
-                .select('*')
-                .eq('user_id', user.id)
-                .gte('timestamp', startOfDay)
-                .lte('timestamp', endOfDay)
-                .order('timestamp', { ascending: false })
-        ]);
-
-        if (goalsResponse.error) throw goalsResponse.error;
-        if (logsResponse.error) throw logsResponse.error;
-
-        const fetchedGoals = goalsResponse.data || [];
-        const fetchedLogs = logsResponse.data || [];
-
-        setUserGoals(fetchedGoals);
-        // Keep track of recent logs for potential future use, but dashboard panel might only show totals
-        setRecentLogs(fetchedLogs.slice(0, 5));
-
-        // Calculate totals based on fetched goals and logs for today
-        const totals: DailyTotals = {};
-        fetchedGoals.forEach(goal => {
-            let currentIntake = 0;
-            fetchedLogs.forEach(log => {
-                const logValue = log[goal.nutrient];
-                if (typeof logValue === 'number' && !isNaN(logValue)) {
-                    currentIntake += logValue;
-                }
-            });
-            totals[goal.nutrient] = currentIntake;
-        });
-        // Ensure calories total is calculated even if not an explicit goal
-        if (!totals['calories']) {
-             let calorieTotal = 0;
-             fetchedLogs.forEach(log => {
-                 if (typeof log.calories === 'number' && !isNaN(log.calories)) {
-                     calorieTotal += log.calories;
-                 }
-             });
-             totals['calories'] = calorieTotal;
-        }
-        setDailyTotals(totals);
-
-        console.log("Dashboard data fetched for chat view:", { fetchedGoals, fetchedLogs, totals });
-
-    } catch (err: unknown) {
-        console.error("Error fetching dashboard data for chat view:", err);
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        setDashboardError(`Failed to load dashboard data: ${errorMessage}`);
-        // Reset dashboard specific state on error
-        setUserGoals([]);
-        setDailyTotals({});
-        setRecentLogs([]);
-    } finally {
-        setLoadingDashboardData(false);
-        setRefreshingDashboard(false);
-    }
-
-  }, [user, supabase]);
-
-  // --- Initial Data Fetch Trigger ---
-  useEffect(() => {
-    if (!authLoading) {
-      if (user) {
-        console.log("ChatPage Effect: Auth loaded, user found. Fetching dashboard data...");
-        fetchDashboardData(); // Fetch dashboard data when user is available
-      } else {
-        console.log("ChatPage Effect: Auth loaded, no user. Clearing data.");
-        setLoadingDashboardData(false);
-        setUserGoals([]);
-        setDailyTotals({});
-        setRecentLogs([]);
-        setDashboardError(null);
-        // Clear chat history on logout? Optional.
-        // if (typeof window !== 'undefined') localStorage.removeItem(storageKey);
-        // setChatHistory([]);
-      }
-    }
-     // Depend only on authLoading and user existence status
-  }, [authLoading, user, fetchDashboardData]); // Added fetchDashboardData to deps
 
   // Auth Loading State
   if (authLoading) {
-    return <div className="flex h-screen items-center justify-center"><p>Loading Authentication...</p></div>;
+    return <div className="flex justify-center items-center h-screen"><TypingIndicator /></div>;
   }
 
   // Not Logged In State
   if (!user || !session) {
-    return <div className="flex h-screen items-center justify-center"><p>Please <Link href="/login" className="text-blue-600 hover:underline">log in</Link> to use the chat.</p></div>;
+    return (
+      <div className="flex flex-col justify-center items-center h-screen bg-gray-100">
+        <h1 className="text-2xl font-semibold mb-4">Welcome to NutriPal</h1>
+        <p className="mb-6 text-gray-600">Please log in to access your chat and dashboard.</p>
+        <Link href="/login" legacyBehavior>
+          <a className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
+            Log In
+          </a>
+        </Link>
+      </div>
+    );
   }
 
-  // --- Define Content for Each Panel --- 
-
-  // --- JSX for Chat Panel ---
+  // --- Construct Panels for Layout ---
   const chatPanelContent = (
-    <div className="flex flex-col h-full bg-white overflow-hidden"> {/* Main container for chat panel */}
-      {/* Message List - Make this scrollable */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50"> {/* Scrollable message area */}
-        {chatHistory.map((msg) => (
-           <div key={msg.id} className={`flex mb-3 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div
-                className={`max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-lg shadow-sm ${ 
-                  msg.sender === 'user' 
-                    ? 'bg-blue-500 text-white' 
-                    : msg.sender === 'bot' 
-                    ? 'bg-gray-100 text-gray-800' 
-                    : 'bg-red-100 text-red-700' // Error style
-                }`}
-              >
-                <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
-              </div>
-           </div>
-         ))} 
-         {sending && <TypingIndicator />} 
-         <div ref={messagesEndRef} /> 
-       </div> 
+      <div className="flex-1 flex flex-col h-full bg-gray-100 overflow-hidden"> {/* Ensure vertical flex and hide overflow */}
+        {/* Message Display Area - Use the new component */}
+        <ChatMessageList activeChatId={activeChatId} />
+        
+        {/* Typing Indicator */}
+        {sending && (
+          <div className="px-4 py-2 flex items-center justify-start">
+            <TypingIndicator />
+          </div>
+        )}
 
-       {/* Input Area - Fixed at the bottom */}
-       <div className="p-4 border-t border-gray-200 bg-white flex-shrink-0"> {/* Input area container */}
-         <form onSubmit={handleSend} className="flex items-center space-x-3"> 
-           <input 
-             type="text" 
-             value={message} 
-             onChange={(e) => setMessage(e.target.value)} 
-             placeholder="Ask NutriPal anything or log food..." 
-             disabled={sending} 
-             className="flex-1 border border-gray-300 rounded-md px-4 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
-             name="message" // Added name for accessibility/autofill
-             id="chat-input" // Added id
-           /> 
-           <button 
-             type="submit" 
-             disabled={sending || message.trim().length === 0} 
-             className="px-5 py-2 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-           > 
-             {sending ? 'Sending...' : 'Send'} 
-           </button> 
-         </form> 
-       </div> 
-    </div>
-  );
-
-  // --- JSX for Dashboard Panel (UPDATED) ---
-  const dashboardPanelContent = (
-    // Removed outer flex container, apply scroll directly here
-    <div className="flex-1 p-4 overflow-y-auto"> {/* Scrollable dashboard content area */}
-      <DashboardSummaryTable
-        userGoals={userGoals}
-        dailyTotals={dailyTotals}
-        loading={loadingDashboardData}
-        error={dashboardError}
-        refreshing={refreshingDashboard}
-        onRefresh={() => fetchDashboardData(true)}
-      />
-    </div>
-  );
-
-  // --- Final Render using DashboardShell ---
-  return (
-    <DashboardShell
-      headerTitle="Chat"
-      chatSessions={chatSessions}
-      activeChatId={activeChatId || undefined}
-      onSelectChat={handleSelectChat}
-      onNewChat={handleNewChat}
-    >
-      <div className="flex h-[calc(100vh-56px)]"> {/* Full viewport minus header */}
-        {/* Chat Panel takes half the width */}
-        <div className="flex-1 min-w-0 flex flex-col border-r border-gray-200"> {/* Added flex-1 and border */}
-          {/* chatPanelContent now handles its own internal flex/scroll */}
-          {chatPanelContent} 
-        </div>
-        {/* Dashboard Panel takes the other half */}
-        <div className="flex-1 border-l border-gray-200 bg-gray-100 p-4 overflow-y-auto"> {/* Changed w-96 to flex-1. Added overflow-y-auto back for safety. */}
-          {dashboardPanelContent} 
+        {/* Input Area */}
+        <div className="p-4 bg-white border-t border-gray-200 flex-shrink-0"> {/* Prevent input from shrinking */}
+          <form onSubmit={handleSend} className="flex items-center space-x-3">
+            <input
+              type="text"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder={sending ? "Waiting for response..." : "Type your message..."}
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
+              disabled={sending || !activeChatId}
+              aria-label="Chat message input"
+            />
+            <button
+              type="submit"
+              disabled={sending || !message.trim() || !activeChatId}
+              className="px-5 py-2 bg-blue-600 text-white rounded-full hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+              aria-label="Send message"
+            >
+              Send
+            </button>
+          </form>
         </div>
       </div>
-    </DashboardShell>
+  );
+
+  const dashboardPanelContent = (
+       <div className="flex-1 p-4 overflow-y-auto bg-gray-50"> {/* Scrollable dashboard content area */}
+         <DashboardSummaryTable
+           userGoals={userGoals}
+           dailyTotals={dailyTotals}
+           loading={loadingDashboardData}
+           error={dashboardError}
+           refreshing={refreshingDashboard}
+           onRefresh={() => fetchDashboardData(true)}
+         />
+       </div>
+  );
+
+  // --- Main Render --- 
+  return (
+      // Use DashboardShell for overall page structure (header, sidebar)
+      <DashboardShell
+          headerTitle="Chat & Dashboard"
+          chatSessions={chatSessions}
+          activeChatId={activeChatId || undefined}
+          onSelectChat={handleSelectChat}
+          onNewChat={handleNewChat}
+      >
+          {/* Pass the constructed panels to the ChatDashboardLayout */}
+          <ChatDashboardLayout
+              chatPanel={chatPanelContent}
+              dashboardPanel={dashboardPanelContent}
+          />
+      </DashboardShell>
   );
 } 
