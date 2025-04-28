@@ -41,6 +41,7 @@ Examples:
 - If multiple matches are found, prompt the user to clarify which one they meant (show up to 5 options).
 - If no matches are found, suggest the user provide ingredients or clarify.
 - Handle empty or vague queries gracefully.
+- **Context Handling:** If this tool finds a single recipe match, the system will prompt the user for confirmation. If the user confirms, the handler will automatically call 'logExistingSavedRecipe' using the correct details.
 Examples:
   - 'log my chili' → findSavedRecipeByName('chili')
   - 'log smoothie' → findSavedRecipeByName('smoothie')
@@ -64,10 +65,11 @@ Examples:
             description: `Analyzes the ingredients of a recipe to estimate nutrition. Use this tool when:
 1) The user provides a list of ingredients for a dish.
 2) The user mentions making a dish themselves (e.g., 'my homemade soup').
-3) The user confirms they want to analyze a dish that typically requires multiple ingredients (like 'fried rice', 'soup', 'salad', 'pasta', 'smoothie') after being asked for clarification.
-- The ingredients_list should be a comma-separated or newline-separated list of ingredients (e.g., '1 tbsp olive oil, 1 onion chopped, 2 eggs').
+3) The user confirms they want to analyze a dish that typically requires multiple ingredients.
+- The ingredients_list should be a comma-separated or newline-separated list of ingredients.
 - Validate that both recipe_name and ingredients_list are present and parseable.
 - Summarize the analysis and offer next steps (save, log, etc.).
+- **Context Handling:** After presenting the analysis, the system will prompt the user about saving/logging. If the user confirms, the handler will automatically call 'saveAndLogRecipe' or 'logOnlyAnalyzedRecipe' using the correct analysis data.
 Examples:
   - 'analyze my soup: 1L broth, 2 carrots, 1 potato' → analyzeRecipeIngredients('soup', '1L broth, 2 carrots, 1 potato')
 `,
@@ -112,12 +114,7 @@ Examples of ambiguous dishes: 'sandwich', 'wrap', 'casserole', 'stir fry', 'bake
         type: 'function',
         function: {
             name: 'logExistingSavedRecipe',
-            description: `Logs a specific saved recipe identified by its ID to the user's food diary. This function is typically called after findSavedRecipeByName has confirmed a specific recipe and the user agrees to log it.
-- Validate that the recipe exists and belongs to the user before logging.
-- Confirm with the user what was logged and handle errors gracefully.
-Examples:
-  - 'log my chili recipe' (after confirmation) → logExistingSavedRecipe(recipe_id, 'chili')
-`,
+            description: `Logs a specific saved recipe identified by its ID to the user's food diary. **Important:** This tool is normally called automatically by the system handler after the user confirms logging a recipe found by 'findSavedRecipeByName'. You should generally not need to call this tool directly unless specifically instructed or in complex recovery scenarios.`,
             parameters: {
                 type: 'object',
                 properties: {

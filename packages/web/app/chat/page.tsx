@@ -210,6 +210,7 @@ export default function ChatPage() {
   const [chatSessions, setChatSessions] = useState<ChatSessionMeta[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [loadingChats, setLoadingChats] = useState(false);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]); // <-- Reinstate chatHistory state
   // Use more specific types instead of any
   const [pendingAction, setPendingAction] = useState<Record<string, unknown> | null>(null);
   const [contextForNextRequest, setContextForNextRequest] = useState<Record<string, unknown> | null>(null);
@@ -244,6 +245,49 @@ export default function ChatPage() {
   const [loadingDashboardData, setLoadingDashboardData] = useState(true);
   const [refreshingDashboard, setRefreshingDashboard] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
+
+  // Fetch initial messages when activeChatId changes
+  useEffect(() => {
+    const fetchInitialMessages = async () => {
+      if (!activeChatId || !supabase) {
+        setChatHistory([]); // Clear messages if no active chat
+        return;
+      }
+
+      console.log(`Fetching initial messages for chat ID: ${activeChatId}`); // Debug log
+
+      try {
+        // Set loading state if needed
+        const { data, error: dbError } = await supabase
+          .from('chat_messages') // Ensure this table name is correct
+          .select('id, sender, message, created_at') // Select necessary fields
+          .eq('chat_id', activeChatId)
+          .order('created_at', { ascending: true }); // Order by creation time
+
+        if (dbError) {
+          throw dbError;
+        }
+
+        // Transform data to ChatMessage interface
+        const formattedMessages: ChatMessage[] = data?.map((msg: any, index: number) => ({
+          id: msg.id ?? `msg-${activeChatId}-${index}-${Date.now()}`,
+          sender: msg.sender as 'user' | 'bot' | 'error', // Cast sender type
+          text: msg.message,
+        })) || [];
+
+        setChatHistory(formattedMessages);
+
+      } catch (err: any) {
+        console.error('Error fetching initial chat messages:', err);
+        setChatHistory([]); // Clear messages on error
+        // Optionally set an error state to display to the user
+      } finally {
+        // Set loading state to false if needed
+      }
+    };
+
+    fetchInitialMessages();
+  }, [activeChatId, supabase]); // Fetch only when chat ID or supabase client changes
 
   // --- Fetch chat sessions on load ---
   const fetchChatSessions = useCallback(async () => {
@@ -289,6 +333,7 @@ export default function ChatPage() {
     const endOfDay = `${dateString}T23:59:59.999Z`;
 
     try {
+        console.log(`[ChatPage] fetchDashboardData called. Force refresh: ${forceRefresh}`); // Log start
         const [goalsResponse, logsResponse] = await Promise.all([
             supabase
                 .from('user_goals')
@@ -337,7 +382,7 @@ export default function ChatPage() {
         }
         setDailyTotals(totals);
 
-        console.log("Dashboard data fetched for chat view:", { fetchedGoals, fetchedLogs, totals });
+        console.log("[ChatPage] Dashboard data fetched successfully. Goals:", JSON.stringify(fetchedGoals)); // Log fetched goals content
 
     } catch (err: unknown) {
         console.error("Error fetching dashboard data for chat view:", err);
@@ -365,84 +410,40 @@ export default function ChatPage() {
   const processBotReply = (responseData: Record<string, unknown>): ChatMessage => {
     let replyText = (responseData.message as string) || 'Sorry, I received an empty response.';
     const responseType = responseData.response_type;
+    let actions: Array<{ label: string; payload: string }> | undefined = undefined;
 
-    // --- ADDED: Marker Processing --- 
+    // Marker Processing logic remains here to potentially set pending actions/context
     const markerRegex = /\s*\[UI_ACTION:([A-Z_]+):(.+)\]$/;
-    console.log("Checking for UI_ACTION marker in:", replyText); // <-- Log 1: Check message
     const match = replyText.match(markerRegex);
-
     if (match) {
-        console.log("UI_ACTION Marker FOUND!"); // <-- Log 2: Confirm match
         const actionType = match[1];
         const payloadString = match[2];
-        console.log(`Extracted ActionType: ${actionType}, PayloadString: ${payloadString}`); // <-- Log 3: Show extracted parts
-        const cleanedMessage = replyText.replace(markerRegex, '').trim(); // Remove marker for display
-        replyText = cleanedMessage; // Update replyText to be the cleaned version
-
+        replyText = replyText.replace(markerRegex, '').trim();
         try {
             const payload = JSON.parse(payloadString);
-            console.log("Parsed Payload:", payload); // <-- Log 4: Show parsed payload
-            console.log("Setting currentUiAction state..."); // <-- Log 5: Confirm state set attempt
-            setCurrentUiAction({ actionType, payload });
-            // Create the message object with the cleaned text
-            const botMessage: ChatMessage = { 
-                id: Date.now() + 1, 
-                sender: 'bot', 
-                text: replyText 
-            };
-            console.log("Returning bot message after setting UI action."); // <-- Log 6: Confirm early return
-            return botMessage; // Return immediately after setting UI action state
+            // This function shouldn't set currentUiAction directly anymore,
+            // handleSend will manage the state based on the returned message.
+            // We might need to pass back the parsed action/payload if needed.
+            // For now, just return the cleaned message.
         } catch (e) {
-            console.error('Failed to parse UI_ACTION payload:', e, payloadString); // <-- Log Error
-            // If parsing fails, fall through to display the original message (including the marker)
+            console.error('Failed to parse UI_ACTION payload:', e, payloadString);
         }
-    } else {
-        console.log("No UI_ACTION marker found."); // <-- Log 7: Confirm no match
     }
-    // --- End Marker Processing ---
 
-    // Original context/action handling (can be removed/refactored if markers cover all cases)
-    setPendingAction(null);
-    setContextForNextRequest(null);
+    // Update context/pending based on the full response data
+    const nextContext = responseData.context && typeof responseData.context === 'object' && Object.keys(responseData.context).length > 0 ? responseData.context as Record<string, unknown> : null;
+    const nextPending = responseData.pending_action && typeof responseData.pending_action === 'object' && Object.keys(responseData.pending_action).length > 0 ? responseData.pending_action as Record<string, unknown> : null;
+    setContextForNextRequest(nextContext);
+    setPendingAction(nextPending);
 
-    const botMessage: ChatMessage = { 
-        id: Date.now() + 1, 
-        sender: 'bot', 
-        text: replyText 
+    const newBotMessage: ChatMessage = {
+        id: Date.now() + 1, // Ensure unique ID generation
+        sender: responseData.status === 'error' ? 'error' : 'bot',
+        text: replyText,
+        actions: actions, // Add actions if parsed or based on responseType
     };
 
-    // Keep existing specific handling for now as fallback or transition 
-    // (Ideally, backend markers should handle these)
-    if (responseType === 'recipe_analysis_prompt' && responseData.pending_action) {
-        console.log("Setting pending action based on recipe_analysis_prompt");
-        const action = responseData.pending_action;
-        setPendingAction(action && typeof action === 'object' ? action as Record<string, unknown> : null);
-        if (!botMessage.actions) { 
-            botMessage.actions = [
-                { label: 'Save & Log', payload: 'User selects Save & Log' },
-                { label: 'Log Only', payload: 'User selects Log Only' },
-                { label: 'Cancel', payload: 'User selects Cancel' },
-            ];
-        }
-    } else if ((responseType === 'saved_recipe_confirmation_prompt' /* || responseType === 'saved_recipe_proactive_confirm' */) && responseData.context_for_reply) {
-         // This might be superseded by the CONFIRM_LOG_SAVED_RECIPE marker 
-        console.warn("Legacy context handling for saved_recipe_confirmation_prompt triggered. Should markers handle this?");
-        const context = responseData.context_for_reply;
-        setContextForNextRequest(context && typeof context === 'object' ? context as Record<string, unknown> : null);
-        // ... (button adding logic, potentially removable if markers work) ...
-    } else if (responseType === 'clarification_needed_recipe' && responseData.context_for_reply) {
-         console.warn("Legacy context handling for clarification_needed_recipe triggered. Should markers handle this?");
-         // ... (context/button logic, potentially removable) ...
-    } else if ((responseType === 'saved_recipe_found_multiple' /* || responseType === 'saved_recipe_proactive_multiple' */) && responseData.context_for_reply) {
-          console.warn("Legacy context handling for saved_recipe_found_multiple triggered. Should markers handle this?");
-          // ... (context/button logic, potentially removable) ...
-    } else if (responseType === 'clarification_needed_typo' && responseData.context_for_reply) {
-         // This should be handled by the CONFIRM_TYPO marker now.
-         console.warn("Legacy context handling for clarification_needed_typo triggered. Should CONFIRM_TYPO marker handle this?");
-        // ... (context/button logic, potentially removable) ...
-    }
-
-    return botMessage;
+    return newBotMessage;
   };
 
   // --- Mobile Menu Logic (Copied from Profile/Dashboard) ---
@@ -471,6 +472,7 @@ export default function ChatPage() {
     if (!error && data) {
       setChatSessions((prev) => [data, ...prev]);
       setActiveChatId(data.chat_id);
+      setChatHistory([]); // <-- Clear history when starting new chat
       setMessage('');
       setPendingAction(null);
       setContextForNextRequest(null);
@@ -494,20 +496,15 @@ export default function ChatPage() {
     setSending(true);
     const userMessage: ChatMessage = { id: Date.now(), sender: 'user', text: textToSend };
 
-    // --- OPTION A: Update ChatMessageList via re-render --- 
-    // (Simplest) ChatMessageList will re-fetch when activeChatId changes (or manually trigger?) - Less ideal for immediate display
-    
-    // --- OPTION B: Pass a function to add message to ChatMessageList (More Complex Setup) ---
-    // Example: Pass `addMessageToDisplay` prop to ChatMessageList
-    // addMessageToDisplay(userMessage);
-
-    // --- OPTION C: Assume ChatMessageList might not show user message immediately, 
-    //             but backend will store it and it shows on next fetch. (Current approach - simplest)
+    // Immediately add user message to local state for optimistic update
+    setChatHistory(prev => [...prev, userMessage]);
 
     setMessage(''); // Clear input
+    // Clear UI Actions when sending a new message
+    setCurrentUiAction(null);
 
     try {
-        const response = await fetch('/api/chat', { // Assuming API route exists
+        const response = await fetch('/api/chat', { 
              method: 'POST',
              headers: {
                  'Content-Type': 'application/json',
@@ -516,8 +513,8 @@ export default function ChatPage() {
              body: JSON.stringify({ 
                  message: textToSend,
                  chat_id: activeChatId,
-                 context: contextForNextRequest, // Send current context
-                 pending_action: pendingAction, // Send pending action
+                 context: contextForNextRequest, 
+                 pending_action: pendingAction, 
               }),
         });
 
@@ -528,18 +525,24 @@ export default function ChatPage() {
 
         const data = await response.json();
 
-        // Process reply and update context/pending state
+        // Process reply and add bot message to local state
         const botMessage = processBotReply(data);
-        setContextForNextRequest(data.context || null); // Update context for next request
-        setPendingAction(data.pending_action || null); // Update pending action
+        setChatHistory(prev => [...prev, botMessage]);
 
-        // --- Here you need to update the list in ChatMessageList --- 
-        // Simplest way is just let ChatMessageList re-fetch/handle its own updates
-        // If you need immediate updates, need Option B (pass down function)
+        // Update context/pending state (handled within processBotReply now)
+        // setContextForNextRequest(data.context || null);
+        // setPendingAction(data.pending_action || null);
 
-         // If dashboard data might change (e.g., food logged), refresh it
-         if (data.response_type?.includes('log')) {
-             fetchDashboardData(true); // Force refresh
+         // Handle potential UI actions returned implicitly by processBotReply (if needed)
+         // This logic depends on how processBotReply is structured
+
+         // If dashboard data might change (log, goal update), refresh it
+         const responseType = data.response_type as string; // Get response type
+         console.log(`[ChatPage] Received API response type: ${responseType}`); // Log the response type
+         if (responseType?.includes('log') || responseType?.includes('goal')) {
+             console.log(`[ChatPage] Condition met. Calling fetchDashboardData(true)...`); // Log before call
+             await fetchDashboardData(true); // Ensure await if async
+             console.log(`[ChatPage] fetchDashboardData(true) completed.`); // Log after call
          }
 
     } catch (error: any) {
@@ -549,9 +552,12 @@ export default function ChatPage() {
         sender: 'error',
         text: `Error: ${error.message}`,
       };
-      // Update ChatMessageList (Option B or C)
+      // Add error message to local state
+      setChatHistory(prev => [...prev, errorMessage]);
     } finally {
       setSending(false);
+      // No longer need refresh trigger
+      // setRefreshTrigger(prev => prev + 1);
     }
   };
 
@@ -578,8 +584,8 @@ export default function ChatPage() {
   // --- Construct Panels for Layout ---
   const chatPanelContent = (
       <div className="flex-1 flex flex-col h-full bg-gray-100 overflow-hidden"> {/* Ensure vertical flex and hide overflow */}
-        {/* Message Display Area - Use the new component */}
-        <ChatMessageList activeChatId={activeChatId} />
+        {/* Pass chatHistory directly */}
+        <ChatMessageList activeChatId={activeChatId} messages={chatHistory} /> 
         
         {/* Typing Indicator */}
         {sending && (
@@ -596,7 +602,7 @@ export default function ChatPage() {
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               placeholder={sending ? "Waiting for response..." : "Type your message..."}
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-full text-black placeholder-black focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
               disabled={sending || !activeChatId}
               aria-label="Chat message input"
             />
@@ -614,7 +620,7 @@ export default function ChatPage() {
   );
 
   const dashboardPanelContent = (
-       <div className="flex-1 p-4 overflow-y-auto bg-gray-50"> {/* Scrollable dashboard content area */}
+       <div className="flex-1 p-4 bg-gray-50"> {/* Removed overflow-y-auto */}
          <DashboardSummaryTable
            userGoals={userGoals}
            dailyTotals={dailyTotals}

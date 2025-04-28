@@ -236,13 +236,13 @@ export default function ProfilePage() {
                   <div>
                     <label htmlFor="age" className="block text-sm font-medium text-gray-700 mb-1">Age</label>
                     <input type="number" id="age" name="age" value={age} onChange={handleChange} placeholder="Years"
-                           className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-gray-900" disabled={saving} />
+                           className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black placeholder-black" disabled={saving} />
                   </div>
                   {/* Sex Select (value/onChange from Skeleton state, styling from User UI) */}
                   <div>
                     <label htmlFor="sex" className="block text-sm font-medium text-gray-700 mb-1">Biological Sex</label>
                     <select id="sex" name="sex" value={sex} onChange={handleChange}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-gray-900" disabled={saving}>
+                            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black" disabled={saving}>
                       <option value="">Select</option>
                       <option value="male">Male</option>
                       <option value="female">Female</option>
@@ -254,7 +254,7 @@ export default function ProfilePage() {
                      <label htmlFor="weight" className="block text-sm font-medium text-gray-700 mb-1">Weight</label>
                      <div className="flex">
                       <input type="number" id="weight" name="weight" value={weight} onChange={handleChange} placeholder="Weight" step="0.1"
-                             className="flex-1 px-4 py-2 border border-gray-300 rounded-l-md focus:ring-blue-500 focus:border-blue-500 text-gray-900" disabled={saving} />
+                             className="flex-1 px-4 py-2 border border-gray-300 rounded-l-md focus:ring-blue-500 focus:border-blue-500 text-black placeholder-black" disabled={saving} />
                       <span className="inline-flex items-center px-3 py-2 text-gray-500 bg-gray-100 border border-l-0 border-gray-300 rounded-r-md">kg</span>
                      </div>
                   </div>
@@ -263,7 +263,7 @@ export default function ProfilePage() {
                      <label htmlFor="height" className="block text-sm font-medium text-gray-700 mb-1">Height</label>
                      <div className="flex">
                       <input type="number" id="height" name="height" value={height} onChange={handleChange} placeholder="Height"
-                             className="flex-1 px-4 py-2 border border-gray-300 rounded-l-md focus:ring-blue-500 focus:border-blue-500 text-gray-900" disabled={saving} />
+                             className="flex-1 px-4 py-2 border border-gray-300 rounded-l-md focus:ring-blue-500 focus:border-blue-500 text-black placeholder-black" disabled={saving} />
                       <span className="inline-flex items-center px-3 py-2 text-gray-500 bg-gray-100 border border-l-0 border-gray-300 rounded-r-md">cm</span>
                      </div>
                   </div>
@@ -271,7 +271,7 @@ export default function ProfilePage() {
                   <div>
                      <label htmlFor="activityLevel" className="block text-sm font-medium text-gray-700 mb-1">Activity Level</label>
                      <select id="activityLevel" name="activityLevel" value={activityLevel} onChange={handleChange}
-                             className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-gray-900" disabled={saving}>
+                             className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black" disabled={saving}>
                       <option value="">Select</option>
                       <option value="sedentary">Sedentary (little to no exercise)</option>
                       <option value="lightly_active">Lightly active (light exercise 1-3 days/wk)</option>
@@ -284,7 +284,7 @@ export default function ProfilePage() {
                   <div>
                      <label htmlFor="healthGoal" className="block text-sm font-medium text-gray-700 mb-1">Health Goal</label>
                      <select id="healthGoal" name="healthGoal" value={healthGoal} onChange={handleChange}
-                             className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-gray-900" disabled={saving}>
+                             className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black" disabled={saving}>
                       <option value="">Select</option>
                       <option value="weight_loss">Lose weight</option>
                       <option value="maintenance">Maintain weight</option>

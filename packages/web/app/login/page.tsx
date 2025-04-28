@@ -39,17 +39,22 @@ export default function LoginPage() {
       }
 
       console.log('[handleLogin] Login successful.');
-      setLoading(false); 
+      // setLoading(false); // Keep loading true during the short delay
 
-      // Re-introduce redirect after successful login
-      console.log('[handleLogin] Calling router.replace(\'/dashboard\')...');
-      router.replace('/dashboard');
+      // Re-introduce redirect after successful login WITH a small delay
+      console.log('[handleLogin] Waiting briefly before redirecting...');
+      setTimeout(() => {
+          console.log('[handleLogin] Calling router.push(\'/dashboard\')...');
+          router.push('/dashboard'); 
+          // Optionally set loading false *after* starting redirect
+          // setLoading(false); 
+      }, 100); // 100ms delay - adjust if needed
 
     } catch (err: unknown) {
       console.error('[handleLogin] Error caught:', err);
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(errorMessage || 'An unexpected error occurred during login.');
-      setLoading(false);
+      setLoading(false); // Ensure loading is set to false on error
     }
   };
 
@@ -75,7 +80,7 @@ export default function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-black placeholder-black focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
               placeholder="you@example.com"
               disabled={loading}
             />
@@ -94,7 +99,7 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-black placeholder-black focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
               placeholder="••••••••"
               disabled={loading}
             />

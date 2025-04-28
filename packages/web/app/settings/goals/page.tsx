@@ -433,7 +433,7 @@ export default function GoalSettingsPage() {
                                                 id={`goalType-${key}`}
                                                 value={goalState.goalType}
                                                 onChange={(e) => handleGoalTypeChange(key, e.target.value as 'goal' | 'limit')}
-                                                className="h-9 block w-24 py-1.5 px-2 border border-gray-300 bg-white rounded-md shadow-sm text-sm text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                                                className="h-9 block w-24 py-1.5 px-2 border border-gray-300 bg-white rounded-md shadow-sm text-sm text-black focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                                             >
                                                 <option value="goal">Goal</option>
                                                 <option value="limit">Limit</option>
@@ -444,7 +444,7 @@ export default function GoalSettingsPage() {
                                                 value={goalState.target}
                                                 onChange={(e) => handleTargetChange(key, e.target.value)}
                                                 placeholder={`Target`}
-                                                className="h-9 block w-28 py-1.5 px-3 border border-gray-300 rounded-md shadow-sm text-sm text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                                                className="h-9 block w-28 py-1.5 px-3 border border-gray-300 rounded-md shadow-sm text-sm text-black placeholder-black focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                                                 inputMode="decimal"
                                             />
                                             <span className="text-sm text-gray-500 w-12 text-left">{nutrient.unit}</span>

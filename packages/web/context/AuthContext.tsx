@@ -1,8 +1,9 @@
 'use client'; // This component uses hooks and interacts with browser APIs (via Supabase)
 
 import React, { createContext, useState, useEffect, useContext, ReactNode, useMemo, useCallback } from 'react';
-// Import the SSR helper for browser clients
+// --- Revert back to @supabase/ssr ---
 import { createBrowserClient } from '@supabase/ssr'; 
+// import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'; 
 // We no longer need the shared client here
 // import { getSupabaseClient } from 'shared'; 
 import type { AuthSession, AuthUser } from 'shared'; // Still use shared types
@@ -61,18 +62,14 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       return;
     }
 
-    console.log("AuthProvider: Creating Supabase browser client on mount...");
-    const client = createBrowserClient(
-      supabaseUrl,
-      supabaseAnonKey
+    console.log("AuthProvider: Creating Supabase browser client (SSR) on mount...");
+    const client = createBrowserClient( 
+        supabaseUrl!, // Use non-null assertion if check already happened
+        supabaseAnonKey! // Use non-null assertion if check already happened
     );
     setSupabase(client);
 
-    // Initial loading state set to false here might be premature 
-    // if we want to wait for the session fetch below.
-    // We'll let the next effect handle setting loading to false.
-
-  }, []); // Empty dependency array ensures this runs only once on mount
+  }, []);
 
   // Effect to fetch initial session and listen for auth changes
   // Runs *after* the supabase client is created
@@ -115,7 +112,24 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       // Add explicit types for callback parameters
       (_event: string, session: Session | null) => {
         if (isMounted) {
-          console.log("AuthProvider state changed:", _event, session ? 'Got session' : 'No session');
+          console.log(`[AuthContext] onAuthStateChange Event: ${_event}`); // Log event type
+          // --- ADD DETAILED SESSION LOGGING ---
+          if (session) {
+              console.log('[AuthContext] New Session Received:', {
+                  userId: session.user?.id,
+                  accessTokenSnippet: session.access_token?.substring(0, 30) + '...',
+                  refreshTokenSnippet: session.refresh_token?.substring(0, 10) + '...',
+                  expiresAt: session.expires_at ? new Date(session.expires_at * 1000).toISOString() : null,
+                  hasUser: !!session.user
+              });
+              // Check for manual cookie setting (shouldn't exist)
+              if (typeof document !== 'undefined' && document.cookie.includes('base64-')) {
+                  console.warn('[AuthContext] Detected base64- prefix in document.cookie AFTER auth state change!');
+              }
+          } else {
+               console.log('[AuthContext] Session Cleared (null).');
+          }
+          // --- END LOGGING ---
           setSession(session);
           setUser(session?.user ?? null);
           setError(null); // Clear previous errors on successful auth change

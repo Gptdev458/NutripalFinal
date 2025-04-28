@@ -10,13 +10,13 @@ interface ChatDashboardLayoutProps {
 const ChatDashboardLayout: React.FC<ChatDashboardLayoutProps> = ({ chatPanel, dashboardPanel }) => {
   return (
     <div className="flex flex-1 h-full overflow-hidden"> {/* Ensure layout takes full height */}
-      {/* Left Panel (Chat) - Takes up more space */}
-      <div className="w-3/5 flex flex-col h-full border-r border-gray-200 overflow-hidden">
+      {/* Left Panel (Chat) - 50% */}
+      <div className="w-1/2 flex flex-col h-full border-r border-gray-200 overflow-hidden">
         {chatPanel}
       </div>
 
-      {/* Right Panel (Dashboard) */}
-      <div className="w-2/5 flex flex-col h-full overflow-hidden">
+      {/* Right Panel (Dashboard) - 50% */}
+      <div className="w-1/2 flex flex-col h-full overflow-y-auto">
         {dashboardPanel}
       </div>
     </div>

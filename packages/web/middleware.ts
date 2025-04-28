@@ -17,18 +17,53 @@ const createSupabaseMiddlewareClient = (request: NextRequest, response: NextResp
     }
 
     return createServerClient(
-        supabaseUrl || '', // Provide fallback or handle error if missing
-        supabaseAnonKey || '', // Provide fallback or handle error if missing
+        supabaseUrl || '', 
+        supabaseAnonKey || '',
         {
             cookies: {
                 get(name: string) {
-                    return request.cookies.get(name)?.value;
+                    let value = request.cookies.get(name)?.value;
+                    // Patch: If the value starts with 'base64-', decode it
+                    if (value && value.startsWith('base64-')) {
+                        try {
+                            const b64 = value.slice(7); // Remove 'base64-'
+                            // atob is not available in Node.js, use Buffer
+                            value = Buffer.from(b64, 'base64').toString('utf-8');
+                            console.log(`[middleware.cookies.get] Decoded base64- cookie for ${name}`);
+                        } catch (e) {
+                            console.error(`[middleware.cookies.get] Failed to decode base64- cookie for ${name}:`, e);
+                        }
+                    }
+                    return value;
                 },
                 set(name: string, value: string, options: any) {
-                    request.cookies.set({ name, value, ...options }); // Apply cookie to the request for server components
-                    response.cookies.set({ name, value, ...options }); // Apply cookie to the response to send back to browser
+                    // --- ADD LOGGING --- 
+                    console.log(`[middleware.setCookie] Attempting to set cookie: Name=${name}`);
+                    // Log only a snippet of the value to avoid flooding logs with huge tokens
+                    const valueSnippet = value.substring(0, 50) + (value.length > 50 ? '...' : '');
+                    console.log(`[middleware.setCookie] Value Snippet: ${valueSnippet}`); 
+                    console.log(`[middleware.setCookie] Options:`, options);
+                    // Check for the specific auth token cookie name
+                    if (name.includes('-auth-token')) {
+                        // Is the value being provided already corrupted?
+                        if (value.startsWith('base64-')) {
+                            console.error(`[middleware.setCookie] CRITICAL: Value for ${name} provided by Supabase helper ALREADY starts with 'base64-'!`);
+                        }
+                        try {
+                           // Try parsing the value Supabase helper provides
+                           JSON.parse(value);
+                           console.log(`[middleware.setCookie] Value for ${name} IS valid JSON.`);
+                        } catch (e) {
+                           console.error(`[middleware.setCookie] CRITICAL: Value for ${name} provided by Supabase helper IS NOT valid JSON! Error: ${e instanceof Error ? e.message : String(e)}`);
+                        }
+                    }
+                    // --- END LOGGING ---
+                    request.cookies.set({ name, value, ...options }); 
+                    response.cookies.set({ name, value, ...options }); 
                 },
                 remove(name: string, options: any) {
+                    // Optional: Add logging here too if needed
+                    console.log(`[middleware.removeCookie] Removing cookie: ${name}`);
                     request.cookies.set({ name, value: '', ...options });
                     response.cookies.set({ name, value: '', ...options });
                 },

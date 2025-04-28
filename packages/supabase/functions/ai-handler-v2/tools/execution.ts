@@ -1,6 +1,42 @@
 // Tool execution functions for AI handler
 // Export all tool execution functions
 
+import { setPendingAction } from '../utils/pendingAction.ts'; // Import the helper
+
+// Helper function to normalize nutrient names to keys used in DB
+const normalizeNutrientKey = (name: string): string => {
+    const lowerName = name.toLowerCase().trim();
+    // Simple mapping for common cases
+    const mapping: { [key: string]: string } = {
+        calories: 'calories',
+        calorie: 'calories',
+        protein: 'protein_g',
+        fat: 'fat_total_g',
+        total_fat: 'fat_total_g',
+        carbs: 'carbs_g',
+        carbohydrate: 'carbs_g',
+        carbohydrates: 'carbs_g',
+        fiber: 'fiber_g',
+        sugar: 'sugar_g',
+        sugars: 'sugar_g',
+        sodium: 'sodium_mg',
+        // Add more mappings as needed based on MASTER_NUTRIENT_LIST and expected user inputs
+    };
+
+    if (mapping[lowerName]) {
+        return mapping[lowerName];
+    }
+    
+    // If no direct map, check if it already ends with _g, _mg, _mcg
+    if (lowerName.match(/_(g|mg|mcg|mcg_rae|mcg_dfe)$/)) {
+        return lowerName; // Assume it's already a valid key
+    }
+
+    // Fallback: return original if no mapping found (might need refinement)
+    console.warn(`[normalizeNutrientKey] Could not normalize: ${name}. Using original.`);
+    return name; 
+};
+
 export async function filterNutritionDataForUserGoals(nutritionData: Record<string, any>, userId: string, supabaseClient: any): Promise<Record<string, any>> {
     console.log(`Filtering nutrition data for user ${userId}`);
     try {
@@ -410,13 +446,19 @@ export async function executeAnalyzeRecipeIngredients(recipeName: string, ingred
         }
         // Filter based on user goals before presenting for confirmation
         const filteredAnalysis = await filterNutritionDataForUserGoals(analysisData, userId, supabaseClient);
+
+        // *** SET PENDING ACTION before returning ***
+        const pendingRecipeAction = { type: 'log_analyzed_recipe', analysis: analysisData };
+        await setPendingAction(userId, pendingRecipeAction, supabaseClient);
+        console.log('[EXECUTION DEBUG] Set pending_action for log_analyzed_recipe:', JSON.stringify(pendingRecipeAction)); // DEBUG LOG
+
         return {
             status: 'success',
-            analysis: filteredAnalysis,
-            full_analysis: analysisData,
-            message: 'Recipe analyzed.',
+            analysis: filteredAnalysis, // Return filtered data for display
+            message: 'Recipe analyzed. Please confirm if you want to log or save it.', // Adjusted message slightly
             response_type: 'recipe_analysis_prompt',
-            pending_action: { type: 'log_analyzed_recipe', analysis: analysisData }
+            // pending_action is now set in the DB, no need to return it here explicitly
+            // pending_action: pendingRecipeAction 
         };
     } catch (error) {
         return {
@@ -498,7 +540,8 @@ export async function executeAnswerGeneralQuestion(question: string, userId: str
 }
 
 export async function saveAndLogRecipe(analysisData: any, userId: string, supabaseClient: any): Promise<any> {
-    console.log(`Saving and logging analyzed recipe for user ${userId}`);
+    console.log(`[EXECUTION] saveAndLogRecipe called for user ${userId}`);
+    console.log(`[EXECUTION] Received analysisData:`, JSON.stringify(analysisData, null, 2));
     if (!analysisData || !analysisData.recipe_name || !analysisData.calories) {
         return {
             status: 'error',
@@ -602,7 +645,8 @@ export async function saveAndLogRecipe(analysisData: any, userId: string, supaba
 }
 
 export async function logOnlyAnalyzedRecipe(analysisData: any, userId: string, supabaseClient: any): Promise<any> {
-    console.log(`Logging analyzed recipe (without saving) for user ${userId}`);
+    console.log(`[EXECUTION] logOnlyAnalyzedRecipe called for user ${userId}`);
+    console.log(`[EXECUTION] Received analysisData:`, JSON.stringify(analysisData, null, 2));
     if (!analysisData || !analysisData.recipe_name || !analysisData.calories) {
         return {
             status: 'error',
@@ -792,42 +836,118 @@ export async function executeUndoLastAction(userId: string, supabaseClient: any)
 }
 
 export async function executeUpdateUserGoal(nutrient: string, targetValue: number, unit: string | undefined, userId: string, supabaseClient: any): Promise<any> {
-    console.log(`Executing tool: updateUserGoal for user ${userId} - ${nutrient}: ${targetValue}${unit || ''}`);
-    if (!nutrient || !targetValue) {
+    // Normalize the nutrient key FIRST
+    const normalizedNutrientKey = normalizeNutrientKey(nutrient);
+    console.log(`[EXECUTION] executeUpdateUserGoal called for user ${userId} - Original Nutrient: ${nutrient}, Normalized Key: ${normalizedNutrientKey}, Target: ${targetValue}, Unit: ${unit}`);
+    
+    if (!normalizedNutrientKey || targetValue === null || targetValue === undefined) {
+        console.error('[EXECUTION] executeUpdateUserGoal: Missing normalized nutrient key or targetValue.');
         return {
             status: 'error',
             message: 'Nutrient and target value are required to update goal.',
             response_type: 'error_parsing_args'
         };
     }
-    try {
-        // Upsert the goal
-        const { data, error } = await supabaseClient
-            .from('user_goals')
-            .upsert({
-                user_id: userId,
-                nutrient,
-                target_value: targetValue,
-                unit: unit || null
-            }, { onConflict: ['user_id', 'nutrient'] })
-            .select();
-        if (error) {
+
+    // --- BEGIN UNIT INFERENCE/DEFAULT LOGIC ---
+    let finalUnit = unit; // Start with the provided unit
+
+    // If unit is missing, try to infer or default
+    if (!finalUnit) {
+        console.log(`[EXECUTION] Unit not provided for ${normalizedNutrientKey}. Attempting to infer/default.`);
+        // Add specific defaults first
+        if (normalizedNutrientKey === 'protein_g' || nutrient.toLowerCase() === 'protein') {
+            finalUnit = 'g';
+            console.log(`[EXECUTION] Defaulting unit to 'g' for protein.`);
+        } else if (normalizedNutrientKey === 'calories' || nutrient.toLowerCase() === 'calories') {
+            finalUnit = 'kcal';
+             console.log(`[EXECUTION] Defaulting unit to 'kcal' for calories.`);
+        } else if (normalizedNutrientKey === 'water_g' || nutrient.toLowerCase() === 'water') {
+             finalUnit = 'g'; // Or 'ml'? Assuming 'g' for consistency
+             console.log(`[EXECUTION] Defaulting unit to 'g' for water.`);
+        }
+        // Then try inferring from the key suffix
+        else if (normalizedNutrientKey.endsWith('_g')) {
+             finalUnit = 'g';
+             console.log(`[EXECUTION] Inferring unit 'g' from key ${normalizedNutrientKey}.`);
+        } else if (normalizedNutrientKey.endsWith('_mg')) {
+             finalUnit = 'mg';
+             console.log(`[EXECUTION] Inferring unit 'mg' from key ${normalizedNutrientKey}.`);
+        } else if (normalizedNutrientKey.endsWith('_mcg')) {
+             finalUnit = 'mcg';
+             console.log(`[EXECUTION] Inferring unit 'mcg' from key ${normalizedNutrientKey}.`);
+        } else if (normalizedNutrientKey.endsWith('_mcg_rae')) {
+             finalUnit = 'mcg_rae';
+             console.log(`[EXECUTION] Inferring unit 'mcg_rae' from key ${normalizedNutrientKey}.`);
+        } else if (normalizedNutrientKey.endsWith('_mcg_dfe')) {
+             finalUnit = 'mcg_dfe';
+             console.log(`[EXECUTION] Inferring unit 'mcg_dfe' from key ${normalizedNutrientKey}.`);
+        }
+
+        // If still no unit after checks, return an error
+        if (!finalUnit) {
+            console.error(`[EXECUTION] Could not determine unit for ${normalizedNutrientKey}. Unit is required.`);
             return {
                 status: 'error',
-                message: 'Could not update user goal.',
-                response_type: 'error_db_upsert'
+                message: `I need a unit (like g, mg, kcal) for the nutrient '${nutrient}'. Please specify the unit.`,
+                response_type: 'error_missing_unit'
             };
         }
-        return {
-            status: 'success',
-            updated_goal: data,
-            message: 'User goal updated.',
-            response_type: 'goal_updated'
-        };
+    }
+    // --- END UNIT INFERENCE/DEFAULT LOGIC ---
+
+    const goalData = {
+        user_id: userId,
+        nutrient: normalizedNutrientKey, // Use normalized key
+        target_value: targetValue,
+        unit: finalUnit, // Use the determined or provided unit (guaranteed non-null here)
+        goal_type: targetValue > 0 ? 'goal' : 'limit'
+    };
+
+    try {
+        // --- Use UPSERT instead of separate UPDATE/INSERT ---
+        console.log('[EXECUTION] Attempting UPSERT for goal:', JSON.stringify(goalData, null, 2));
+
+        const { data: upsertData, error: upsertError } = await supabaseClient
+            .from('user_goals')
+            .upsert(goalData, {
+                onConflict: 'user_id, nutrient' // Specify the columns that define uniqueness
+            })
+            .select(); // Select the upserted row
+
+        if (upsertError) {
+            console.error('[EXECUTION] Supabase UPSERT error:', JSON.stringify(upsertError, null, 2));
+            // Check for specific errors if needed, though upsert should handle conflicts
+            throw upsertError; // Throw to be caught by the outer catch block
+        }
+
+        // Check if data was returned (successful upsert)
+        if (upsertData && upsertData.length > 0) {
+            console.log('[EXECUTION] Supabase UPSERT successful. Data:', JSON.stringify(upsertData, null, 2));
+            // Determine if it was an insert or update based on creation time vs now (optional, usually not needed)
+            // For simplicity, just return a generic success message.
+            return {
+                status: 'success',
+                updated_goal: upsertData[0],
+                message: 'User goal saved successfully.', // Generic message for upsert
+                response_type: 'goal_updated'
+            };
+        } else {
+             // This case might indicate an issue if no data is returned after upsert
+             console.error('[EXECUTION] Supabase UPSERT completed but returned no data.');
+             return {
+                 status: 'error',
+                 message: 'Failed to save goal. The operation completed but returned no confirmation.',
+                 response_type: 'error_db_no_data'
+             };
+        }
+        // --- End UPSERT logic ---
+
     } catch (error) {
+        console.error(`[EXECUTION] Error in executeUpdateUserGoal: ${error instanceof Error ? error.message : String(error)}`);
         return {
             status: 'error',
-            message: `Sorry, something went wrong updating your goal. Please try again or ask for help. (${error instanceof Error ? error.message : String(error)})`,
+            message: `Sorry, something went wrong updating your goal. Please try again. (${error instanceof Error ? error.message : String(error)})`,
             response_type: 'error_unexpected'
         };
     }

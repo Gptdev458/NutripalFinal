@@ -95,7 +95,7 @@ export default function SignUpPage() {
             <label htmlFor="email" className="mb-2 block text-sm font-medium text-gray-700">Email Address</label>
             <input
               type="email" id="email" value={email} onChange={(e) => setEmail(e.target.value)} required
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-black placeholder-black focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
               placeholder="you@example.com" disabled={loading}
             />
           </div>
@@ -104,7 +104,7 @@ export default function SignUpPage() {
             <label htmlFor="password" className="mb-2 block text-sm font-medium text-gray-700">Password</label>
             <input
               type="password" id="password" value={password} onChange={(e) => setPassword(e.target.value)} required
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-black placeholder-black focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
               placeholder="••••••••" disabled={loading} minLength={6} // Supabase default minimum
             />
           </div>
@@ -113,7 +113,7 @@ export default function SignUpPage() {
             <label htmlFor="confirmPassword" className="mb-2 block text-sm font-medium text-gray-700">Confirm Password</label>
             <input
               type="password" id="confirmPassword" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-black placeholder-black focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
               placeholder="••••••••" disabled={loading} minLength={6}
             />
           </div>
