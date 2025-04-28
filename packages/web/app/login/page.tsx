@@ -41,14 +41,16 @@ export default function LoginPage() {
       console.log('[handleLogin] Login successful.');
       // setLoading(false); // Keep loading true during the short delay
 
+      // --- REMOVE TIMEOUT --- 
       // Re-introduce redirect after successful login WITH a small delay
-      console.log('[handleLogin] Waiting briefly before redirecting...');
-      setTimeout(() => {
+      // console.log('[handleLogin] Waiting briefly before redirecting...');
+      // setTimeout(() => {
           console.log('[handleLogin] Calling router.push(\'/dashboard\')...');
           router.push('/dashboard'); 
           // Optionally set loading false *after* starting redirect
           // setLoading(false); 
-      }, 100); // 100ms delay - adjust if needed
+      // }, 100); // 100ms delay - adjust if needed
+      // --------------------
 
     } catch (err: unknown) {
       console.error('[handleLogin] Error caught:', err);

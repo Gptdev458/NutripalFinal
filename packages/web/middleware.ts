@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createServerClient } from '@supabase/ssr';
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
 
 // Helper function to create a Supabase client for middleware/server components
 const createSupabaseMiddlewareClient = (request: NextRequest, response: NextResponse) => {
@@ -11,60 +11,25 @@ const createSupabaseMiddlewareClient = (request: NextRequest, response: NextResp
 
     if (!supabaseUrl || !supabaseAnonKey) {
         console.error('Middleware Error: Missing Supabase URL or Anon Key in environment variables.');
-        // Handle appropriately, maybe throw or return a response indicating server error
-        // For simplicity here, we might let it proceed and fail later, but logging is crucial.
-        // Or throw new Error('Missing Supabase credentials for middleware');
+        // Return null or throw to indicate failure upstream
+        return null; 
     }
 
     return createServerClient(
-        supabaseUrl || '', 
-        supabaseAnonKey || '',
+        supabaseUrl,
+        supabaseAnonKey,
         {
             cookies: {
+                // A simple implementation using the NextRequest and NextResponse cookies
                 get(name: string) {
-                    let value = request.cookies.get(name)?.value;
-                    // Patch: If the value starts with 'base64-', decode it
-                    if (value && value.startsWith('base64-')) {
-                        try {
-                            const b64 = value.slice(7); // Remove 'base64-'
-                            // atob is not available in Node.js, use Buffer
-                            value = Buffer.from(b64, 'base64').toString('utf-8');
-                            console.log(`[middleware.cookies.get] Decoded base64- cookie for ${name}`);
-                        } catch (e) {
-                            console.error(`[middleware.cookies.get] Failed to decode base64- cookie for ${name}:`, e);
-                        }
-                    }
-                    return value;
+                    return request.cookies.get(name)?.value;
                 },
-                set(name: string, value: string, options: any) {
-                    // --- ADD LOGGING --- 
-                    console.log(`[middleware.setCookie] Attempting to set cookie: Name=${name}`);
-                    // Log only a snippet of the value to avoid flooding logs with huge tokens
-                    const valueSnippet = value.substring(0, 50) + (value.length > 50 ? '...' : '');
-                    console.log(`[middleware.setCookie] Value Snippet: ${valueSnippet}`); 
-                    console.log(`[middleware.setCookie] Options:`, options);
-                    // Check for the specific auth token cookie name
-                    if (name.includes('-auth-token')) {
-                        // Is the value being provided already corrupted?
-                        if (value.startsWith('base64-')) {
-                            console.error(`[middleware.setCookie] CRITICAL: Value for ${name} provided by Supabase helper ALREADY starts with 'base64-'!`);
-                        }
-                        try {
-                           // Try parsing the value Supabase helper provides
-                           JSON.parse(value);
-                           console.log(`[middleware.setCookie] Value for ${name} IS valid JSON.`);
-                        } catch (e) {
-                           console.error(`[middleware.setCookie] CRITICAL: Value for ${name} provided by Supabase helper IS NOT valid JSON! Error: ${e instanceof Error ? e.message : String(e)}`);
-                        }
-                    }
-                    // --- END LOGGING ---
-                    request.cookies.set({ name, value, ...options }); 
-                    response.cookies.set({ name, value, ...options }); 
+                set(name: string, value: string, options: CookieOptions) {
+                    // Use the response's cookie setting method
+                    response.cookies.set({ name, value, ...options });
                 },
-                remove(name: string, options: any) {
-                    // Optional: Add logging here too if needed
-                    console.log(`[middleware.removeCookie] Removing cookie: ${name}`);
-                    request.cookies.set({ name, value: '', ...options });
+                remove(name: string, options: CookieOptions) {
+                    // Use the response's cookie setting method to delete the cookie
                     response.cookies.set({ name, value: '', ...options });
                 },
             },
@@ -74,8 +39,21 @@ const createSupabaseMiddlewareClient = (request: NextRequest, response: NextResp
 
 export async function middleware(request: NextRequest) {
     // Create a response object to potentially modify cookies
-    const response = NextResponse.next();
+    let response = NextResponse.next({
+      request: {
+        headers: new Headers(request.headers), // Ensure headers are passed along
+      },
+    });
+    
+    // Create the Supabase client using the simplified helper
     const supabase = createSupabaseMiddlewareClient(request, response);
+
+    // If client creation failed (e.g., missing env vars), return an error response
+    if (!supabase) {
+        console.error("[middleware] Failed to create Supabase client. Check environment variables.");
+        // Optionally return a server error response
+        return new Response("Internal Server Error: Auth configuration issue", { status: 500 }); 
+    }
 
     console.log(`Middleware running for path: ${request.nextUrl.pathname}`);
 
@@ -134,7 +112,7 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(new URL('/dashboard', request.url)); // Redirect to /dashboard
     }
 
-    // If no redirect needed, continue to the requested page, returning the potentially modified response (with refreshed cookies)
+    // If no redirect needed, continue to the requested page, returning the response potentially modified with new cookies
     return response;
 }
 

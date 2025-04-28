@@ -83,28 +83,28 @@ export async function filterNutritionDataForUserGoals(nutritionData: Record<stri
     }
 }
 
-export async function executeLogExistingSavedRecipe(recipeId: string, recipeName: string, userId: string, supabaseClient: any): Promise<any> {
-    console.log(`Attempting to log saved recipe ID: ${recipeId} (Name: ${recipeName}) for user: ${userId}`);
+export async function executeLogExistingSavedRecipe(
+    recipeId: string, 
+    recipeName: string, 
+    userId: string, 
+    supabaseClient: any,
+    // Add consumedServings parameter with a default
+    consumedServings: number = 1 
+): Promise<any> {
+    console.log(`Attempting to log ${consumedServings} serving(s) of saved recipe ID: ${recipeId} (Name: ${recipeName}) for user: ${userId}`);
     try {
-        // Define nutrient columns that EXIST in BOTH user_recipes and food_log (based on provided schema)
-        // Excludes: omega_3_g, omega_6_g, fiber_soluble_g (missing from user_recipes)
-        const nutrientColumns = [
-          'calories', 'water_g', 'protein_g', 'fat_total_g', 'carbs_g',
-          'fat_saturated_g', 'fat_polyunsaturated_g', 'fat_monounsaturated_g', 'fat_trans_g',
-          'fiber_g', 'sugar_g', 'sugar_added_g', 'cholesterol_mg', 'sodium_mg',
-          'potassium_mg', 'calcium_mg', 'iron_mg', 'magnesium_mg', 'phosphorus_mg',
-          'zinc_mg', 'copper_mg', 'manganese_mg', 'selenium_mcg', 'vitamin_a_mcg_rae',
-          'vitamin_d_mcg', 'vitamin_e_mg', 'vitamin_k_mcg', 'vitamin_c_mg', 'thiamin_mg',
-          'riboflavin_mg', 'niacin_mg', 'pantothenic_acid_mg', 'vitamin_b6_mg',
-          'biotin_mcg', 'folate_mcg_dfe', 'vitamin_b12_mcg'
-          // Note: omega_3_g, omega_6_g, fiber_soluble_g exist in food_log but not user_recipes
-        ];
-        const selectColumns = ['recipe_name', ...nutrientColumns];
+        // Define nutrient columns that EXIST in the user_recipes table (already updated)
+        const nutrientColumns = Array.from(USER_RECIPES_VALID_COLUMNS).filter(
+            col => col !== 'user_id' && col !== 'recipe_name' && col !== 'description' && col !== 'serving_size_description'
+        ); // Filter out non-nutrient columns
+        
+        // Select all columns from user_recipes including the new serving info
+        const selectColumns = Array.from(USER_RECIPES_VALID_COLUMNS).filter(col => col !== 'user_id'); 
 
-        // Fetch recipe details using the defined columns from user_recipes
+        // Fetch recipe details including total_servings
         const { data: recipeData, error: recipeError } = await supabaseClient
           .from('user_recipes')
-          .select(selectColumns.join(', '))
+          .select(selectColumns.join(', ')) // Select all relevant columns
           .eq('id', recipeId)
           .eq('user_id', userId)
           .single();
@@ -117,60 +117,108 @@ export async function executeLogExistingSavedRecipe(recipeId: string, recipeName
           throw new Error(errorMsg);
         }
 
-        // Prepare the insert object for food_logs using columns that exist in food_logs
+        // --- Portion Calculation ---
+        const totalServings = recipeData.total_servings;
+        let nutritionDataForLog = { ...recipeData }; // Start with full recipe data
+        let nutrientsWereScaled = false;
+
+        // Check if scaling is possible and necessary
+        if (totalServings && typeof totalServings === 'number' && totalServings > 0 && 
+            typeof consumedServings === 'number' && consumedServings > 0 && 
+            // Only scale if consumed amount is different from total (or default assumption if totalServings=1)
+            (consumedServings !== totalServings || totalServings !== 1) 
+            ) {
+            console.log(`[executeLogExistingSavedRecipe] Scaling needed. Total: ${totalServings}, Consumed: ${consumedServings}`);
+            nutritionDataForLog = calculatePortionNutrition(recipeData, totalServings, consumedServings);
+            nutrientsWereScaled = true;
+        } else {
+            console.log(`[executeLogExistingSavedRecipe] Scaling not needed or possible. Total: ${totalServings}, Consumed: ${consumedServings}`);
+        }
+        // --- End Portion Calculation ---
+
+        // Prepare the insert object for food_log
         const logEntry: Record<string, any> = {
           user_id: userId,
-          food_name: recipeData.recipe_name,
-          // timestamp and created_at will default to now()
+          food_name: recipeData.recipe_name, // Use name from fetched data
           source: 'saved_recipe',
-          recipe_id: recipeId
+          recipe_id: recipeId,
+          // Add consumed portion details
+          consumed_servings: consumedServings,
+          consumed_unit: 'serving', // Initially hardcode to serving
+          consumed_value: consumedServings
         };
 
-        // Add nutrient values from recipeData to logEntry
-        nutrientColumns.forEach(col => {
-          // Check if the column exists in recipeData and is not null/undefined
-          if (recipeData[col] !== null && recipeData[col] !== undefined) {
-            logEntry[col] = recipeData[col];
+        // Add nutrient values (potentially scaled) from nutritionDataForLog to logEntry
+        // Iterate through ALL potential nutrient columns in food_log, using scaled data if available
+        const allFoodLogNutrientColumns = [ /* Define or import the full list of food_log nutrient columns */ 
+            'calories', 'water_g', 'protein_g', 'fat_total_g', 'carbs_g',
+            'fat_saturated_g', 'fat_polyunsaturated_g', 'fat_monounsaturated_g', 'fat_trans_g',
+            'fiber_g', 'sugar_g', 'sugar_added_g', 'cholesterol_mg', 'sodium_mg',
+            'potassium_mg', 'calcium_mg', 'iron_mg', 'magnesium_mg', 'phosphorus_mg',
+            'zinc_mg', 'copper_mg', 'manganese_mg', 'selenium_mcg', 'vitamin_a_mcg_rae',
+            'vitamin_d_mcg', 'vitamin_e_mg', 'vitamin_k_mcg', 'vitamin_c_mg', 'thiamin_mg',
+            'riboflavin_mg', 'niacin_mg', 'pantothenic_acid_mg', 'vitamin_b6_mg',
+            'biotin_mcg', 'folate_mcg_dfe', 'vitamin_b12_mcg',
+            // Include columns present in food_log but potentially missing/null in user_recipes
+            'omega_3_g', 'omega_6_g', 'fiber_soluble_g'
+        ];
+        
+        allFoodLogNutrientColumns.forEach(col => {
+          if (nutritionDataForLog[col] !== null && nutritionDataForLog[col] !== undefined) {
+            logEntry[col] = nutritionDataForLog[col];
           }
         });
 
-        // Log the exact data being sent before attempting insert
-        console.log("Attempting to insert into food_log:", JSON.stringify(logEntry, null, 2)); // Keep this log for now
+        console.log("Attempting to insert into food_log (potentially scaled):", JSON.stringify(logEntry, null, 2));
 
-        // Insert the log entry with individual nutrient columns into food_log
         const { error: logError } = await supabaseClient
-          .from('food_log') // CORRECTED TABLE NAME (singular)
+          .from('food_log')
           .insert(logEntry);
 
         if (logError) {
           // Log the detailed error object from Supabase
           console.error(`Error inserting log for recipe ID ${recipeId} into food_log:`, JSON.stringify(logError, null, 2));
+          // -- Add back the errorMsg definition --
           const errorMsg = logError?.message?.includes('column') && logError?.message?.includes('does not exist')
             ? `Database schema mismatch inserting into food_log: ${logError.message}.`
             : logError?.message
             ? `Database error inserting log: ${logError.message}`
             : `Database error while trying to log '${recipeData.recipe_name}'.`;
+          // -------------------------------------
           throw new Error(errorMsg);
         }
 
-        console.log(`Successfully logged recipe ID ${recipeId} with individual nutrients into food_log for user ${userId}`);
+        console.log(`Successfully logged ${consumedServings} serving(s) of recipe ID ${recipeId} into food_log for user ${userId}`);
 
-        // Prepare confirmation data (filter nutrients for display)
+        // Prepare confirmation data using the SCALED nutrients
         const confirmationNutrition = await filterNutritionDataForUserGoals(logEntry, userId, supabaseClient);
 
         return {
           status: 'success',
-          message: 'Recipe logged successfully.',
+          message: `Logged ${consumedServings} serving(s) of '${recipeData.recipe_name}' successfully.`,
           logged_recipe_id: recipeId,
           logged_recipe_name: recipeData.recipe_name,
-          nutrition_data: confirmationNutrition, // Return filtered nutrients
+          nutrition_data: confirmationNutrition, // Return filtered SCALED nutrients
           response_type: 'saved_recipe_logged'
         };
     } catch (error) {
+       // Fetch error handling (ensure errorMsg definition is here too)
         console.error(`executeLogExistingSavedRecipe failed for recipe ID ${recipeId}:`, error);
+       // -- Add errorMsg definition here for the fetch error --
+       let errorMsg = 'An unknown error occurred while logging the recipe.';
+       if (error instanceof Error) {
+           errorMsg = error.message;
+           // Check specifically for the fetch error case (recipeError)
+           if (error.message.includes('Database schema mismatch') || error.message.includes('Could not find saved recipe details')) {
+              // errorMsg is already set correctly from the throw statement
+           } else {
+               // Keep the generic message for other types of errors in this catch block
+           } 
+       }
+       // ----------------------------------------------------
         return {
           status: 'error',
-          message: error instanceof Error ? error.message : 'An unknown error occurred while logging the recipe.',
+          message: errorMsg,
           response_type: 'error_logging_recipe'
         };
     }
@@ -429,9 +477,43 @@ export async function executeAnalyzeRecipeIngredients(recipeName: string, ingred
             };
         }
         let analysisData: Record<string, any> = {};
+        let finalRecipeName = cleanedName; // Start with provided name
+
         try {
             analysisData = JSON.parse(functionCall.arguments);
-            analysisData.recipe_name = cleanedName;
+
+            // --- FIX: Generate name if needed & ensure description ---
+            if (!finalRecipeName) {
+                console.log("[Tool Execution] Recipe name not provided, attempting generation...");
+                try {
+                    const nameGenPrompt = `Generate a concise, appealing recipe name (max 5 words) based on these ingredients. Respond ONLY with the name, nothing else. Ingredients: ${cleanedIngredients}`;
+                    const nameGenCompletion = await openai.chat.completions.create({
+                        model: "gpt-4o-mini",
+                        messages: [
+                             { role: "system", content: "You generate short recipe names from ingredients. Respond ONLY with the name." },
+                             { role: "user", content: nameGenPrompt }
+                        ],
+                        temperature: 0.6,
+                        max_tokens: 15
+                    });
+                    const generatedName = nameGenCompletion.choices[0].message?.content?.trim();
+                    if (generatedName) {
+                        console.log(`[Tool Execution] Generated recipe name: "${generatedName}"`);
+                        finalRecipeName = generatedName;
+                    } else {
+                         console.warn("[Tool Execution] OpenAI name generation returned empty/null. Falling back.");
+                         finalRecipeName = 'Analyzed Recipe';
+                    }
+                } catch (nameGenError) {
+                    console.error("[Tool Execution] Error calling OpenAI for name generation:", nameGenError);
+                    finalRecipeName = 'Analyzed Recipe'; // Fallback on error
+                }
+            }
+
+            analysisData.recipe_name = finalRecipeName;
+            analysisData.description = analysisData.description || `${finalRecipeName} - analyzed from ingredients.`; // Use final name in default desc
+            // -----------------------------------------------------
+
             analysisData.ingredients = cleanedIngredients;
             analysisData.user_id = userId;
             analysisData.omega_3_g = analysisData.omega_3_g ?? null;
@@ -444,21 +526,21 @@ export async function executeAnalyzeRecipeIngredients(recipeName: string, ingred
                 response_type: 'error_parsing_analysis'
             };
         }
+
         // Filter based on user goals before presenting for confirmation
         const filteredAnalysis = await filterNutritionDataForUserGoals(analysisData, userId, supabaseClient);
 
-        // *** SET PENDING ACTION before returning ***
-        const pendingRecipeAction = { type: 'log_analyzed_recipe', analysis: analysisData };
+        // *** FIX: SET PENDING ACTION for awaiting_serving_info using FULL analysisData ***
+        const pendingRecipeAction = { type: 'awaiting_serving_info', analysis: analysisData }; // Use the complete data
         await setPendingAction(userId, pendingRecipeAction, supabaseClient);
-        console.log('[EXECUTION DEBUG] Set pending_action for log_analyzed_recipe:', JSON.stringify(pendingRecipeAction)); // DEBUG LOG
+        console.log('[EXECUTION DEBUG] Set pending_action for awaiting_serving_info:', JSON.stringify(pendingRecipeAction)); // DEBUG LOG
 
         return {
             status: 'success',
-            analysis: filteredAnalysis, // Return filtered data for display
-            message: 'Recipe analyzed. Please confirm if you want to log or save it.', // Adjusted message slightly
-            response_type: 'recipe_analysis_prompt',
-            // pending_action is now set in the DB, no need to return it here explicitly
-            // pending_action: pendingRecipeAction 
+            analysis: filteredAnalysis, // Return filtered data for display (name doesn't need to be here for prompt)
+            message: 'Recipe analyzed. Please provide serving info.', // Simplified message for next step
+            response_type: 'recipe_analysis_awaiting_servings', // More specific type
+            // pending_action is now set in the DB
         };
     } catch (error) {
         return {
@@ -539,107 +621,217 @@ export async function executeAnswerGeneralQuestion(question: string, userId: str
     }
 }
 
-export async function saveAndLogRecipe(analysisData: any, userId: string, supabaseClient: any): Promise<any> {
-    console.log(`[EXECUTION] saveAndLogRecipe called for user ${userId}`);
-    console.log(`[EXECUTION] Received analysisData:`, JSON.stringify(analysisData, null, 2));
-    if (!analysisData || !analysisData.recipe_name || !analysisData.calories) {
-        return {
-            status: 'error',
-            message: 'Missing required analysis data to save and log recipe.',
-            response_type: 'error_missing_data'
-        };
+// --- Define valid columns specifically for the user_recipes table ---
+const USER_RECIPES_VALID_COLUMNS = new Set([
+  'user_id', 'recipe_name', 'description',
+  'calories', 'water_g', 'protein_g', 'fat_total_g', 'carbs_g',
+  'fat_saturated_g', 'fat_polyunsaturated_g', 'fat_monounsaturated_g', 'fat_trans_g',
+  'fiber_g', 'sugar_g', 'sugar_added_g', 'cholesterol_mg', 'sodium_mg',
+  'potassium_mg', 'calcium_mg', 'iron_mg', 'magnesium_mg', 'phosphorus_mg',
+  'zinc_mg', 'copper_mg', 'manganese_mg', 'selenium_mcg', 'vitamin_a_mcg_rae',
+  'vitamin_d_mcg', 'vitamin_e_mg', 'vitamin_k_mcg', 'vitamin_c_mg', 'thiamin_mg',
+  'riboflavin_mg', 'niacin_mg', 'pantothenic_acid_mg', 'vitamin_b6_mg',
+  'biotin_mcg', 'folate_mcg_dfe', 'vitamin_b12_mcg',
+  // Add the new columns
+  'total_servings', 'serving_size_description'
+]);
+// --- End definition ---
+
+// --- NEW HELPER FUNCTION for calculating portion nutrition ---
+function calculatePortionNutrition(
+  fullNutritionData: Record<string, any>,
+  totalServings: number | null | undefined,
+  consumedServings: number
+): Record<string, any> {
+  const scaledNutrition: Record<string, any> = {};
+
+  // Check if scaling is possible and necessary
+  if (totalServings && typeof totalServings === 'number' && totalServings > 0 && typeof consumedServings === 'number' && consumedServings > 0) {
+    const scaleFactor = consumedServings / totalServings;
+    console.log(`[calculatePortionNutrition] Scaling factor: ${consumedServings} / ${totalServings} = ${scaleFactor}`);
+
+    for (const key in fullNutritionData) {
+      const value = fullNutritionData[key];
+      // Scale only numeric nutrient values, ignore non-numeric like recipe_name, user_id etc.
+      if (typeof value === 'number') {
+        scaledNutrition[key] = parseFloat((value * scaleFactor).toFixed(2)); // Scale and round to 2 decimal places
+      } else {
+        // Keep non-numeric values as they are (e.g., recipe_name)
+        // This might not be strictly needed depending on how `fullNutritionData` is prepared
+        scaledNutrition[key] = value;
+      }
     }
+    return scaledNutrition;
+
+  } else {
+    // If scaling is not possible (missing totalServings, invalid inputs), return original data
+    console.warn(`[calculatePortionNutrition] Scaling not possible or needed. TotalServings: ${totalServings}, ConsumedServings: ${consumedServings}. Returning original nutrition data.`);
+    return { ...fullNutritionData }; // Return a copy
+  }
+}
+// --- END NEW HELPER FUNCTION ---
+
+export async function saveAndLogRecipe(
+    // Modify signature later if needed, for now assume serving info is IN analysisData
+    analysisData: any, 
+    userId: string, 
+    supabaseClient: any,
+    // Add parameter to control logging
+    logAfterSave: boolean = true 
+): Promise<any> {
+    console.log(`[Tool Execution] Attempting to SAVE${logAfterSave ? ' and LOG' : ' ONLY'} recipe for user ${userId}`);
+    // Basic validation: Ensure recipe_name exists.
+    // Validation for total_servings etc. will happen during filtering.
+    if (!analysisData || typeof analysisData !== 'object' || !analysisData.recipe_name) {
+        console.error('[Tool Execution] Invalid or missing analysisData for saveAndLogRecipe.', analysisData);
+        return { status: 'error', message: 'Missing recipe data for saving.', response_type: 'error_invalid_data' };
+    }
+
+    // Destructure potentially including new serving fields
+    const { recipe_name, description, total_servings, serving_size_description, ...nutrients } = analysisData;
+
+    // --- 1. Save the recipe to user_recipes ---
+    let savedRecipeId: string | null = null;
+    let filteredDataForSave: Record<string, any> = {};
+
     try {
-        // Save as recipe - ONLY insert columns that EXIST in user_recipes
-        const { data: savedRecipe, error: saveError } = await supabaseClient
-            .from('user_recipes')
-            .insert({
-                user_id: userId,
-                recipe_name: analysisData.recipe_name,
-                calories: analysisData.calories,
-                protein_g: analysisData.protein_g,
-                fat_total_g: analysisData.fat_total_g,
-                carbs_g: analysisData.carbs_g,
-                fat_saturated_g: analysisData.fat_saturated_g,
-                fiber_g: analysisData.fiber_g,
-                // fiber_soluble_g: analysisData.fiber_soluble_g, // Does not exist in user_recipes
-                sugar_g: analysisData.sugar_g,
-                sodium_mg: analysisData.sodium_mg,
-                cholesterol_mg: analysisData.cholesterol_mg,
-                potassium_mg: analysisData.potassium_mg,
-                // omega_3_g: analysisData.omega_3_g, // Does not exist in user_recipes
-                // omega_6_g: analysisData.omega_6_g, // Does not exist in user_recipes
-                // ingredients: analysisData.ingredients // Does not exist in user_recipes
-                // Add other existing user_recipes nutrient columns if needed and available in analysisData
-            })
-            .select('id') // Only select id, as other columns might not be returned by default
-            .single();
+        // Prepare the recipe data for insertion
+        // Filter nutrients AND other fields strictly based on USER_RECIPES_VALID_COLUMNS
 
-        if (saveError) {
-            console.error(`Error saving recipe '${analysisData.recipe_name}' to user_recipes:`, saveError);
-            const errorMsg = saveError?.message?.includes('column') && saveError?.message?.includes('does not exist')
-              ? `Database schema mismatch saving to user_recipes: ${saveError.message}.`
-              : 'Could not save recipe.';
-            return {
-                status: 'error',
-                message: errorMsg,
-                response_type: 'error_db_insert'
-            };
-        }
-
-        // Log the saved recipe - Insert into food_log (which HAS omega/soluble fiber columns)
-        const logEntry: Record<string, any> = {
-                user_id: userId,
-                food_name: analysisData.recipe_name,
-                // timestamp defaults to now()
-                source: 'saved_recipe',
-                recipe_id: savedRecipe.id,
-                calories: analysisData.calories,
-                protein_g: analysisData.protein_g,
-                fat_total_g: analysisData.fat_total_g,
-                carbs_g: analysisData.carbs_g,
-                fat_saturated_g: analysisData.fat_saturated_g,
-                fiber_g: analysisData.fiber_g,
-                fiber_soluble_g: analysisData.fiber_soluble_g, // Exists in food_log
-                sugar_g: analysisData.sugar_g,
-                sodium_mg: analysisData.sodium_mg,
-                cholesterol_mg: analysisData.cholesterol_mg,
-                potassium_mg: analysisData.potassium_mg,
-                omega_3_g: analysisData.omega_3_g, // Exists in food_log
-                omega_6_g: analysisData.omega_6_g // Exists in food_log
-                // Add all other relevant nutrients from analysisData that exist in food_log
-            };
-        // Add all other nutrients from analysisData if they exist in logEntry schema
         Object.keys(analysisData).forEach(key => {
-             // Add if it's a nutrient column expected in food_log and not already added
-            if (!logEntry.hasOwnProperty(key) && key.match(/_g$|_mg$|_mcg$/) && analysisData[key] !== null && analysisData[key] !== undefined) {
-                 logEntry[key] = analysisData[key];
+            if (USER_RECIPES_VALID_COLUMNS.has(key) && analysisData[key] !== null && analysisData[key] !== undefined) {
+                const value = analysisData[key];
+                // Handle numbers, including the new total_servings
+                 if (typeof value === 'number') {
+                     filteredDataForSave[key] = value;
+                 } 
+                 // Handle strings, including the new serving_size_description
+                 else if (typeof value === 'string') {
+                     if (key === 'recipe_name' || key === 'description' || key === 'serving_size_description') {
+                         filteredDataForSave[key] = value;
+                     }
+                     // Attempt to parse other strings as numbers
+                     else if (!isNaN(parseFloat(value))) {
+                          filteredDataForSave[key] = parseFloat(value);
+                     } else {
+                          console.warn(`[Tool Execution] Skipping non-numeric string value for key ${key} during save:`, value);
+                     }
+                 } else {
+                     console.warn(`[Tool Execution] Skipping unexpected type for key ${key} during save:`, value);
+                 }
+            } else if (!USER_RECIPES_VALID_COLUMNS.has(key)) {
+                console.warn(`[Tool Execution] Skipping key '${key}' not valid for user_recipes table during save.`);
             }
         });
 
-        const { data: logData, error: logError } = await supabaseClient
-            .from('food_log') // CORRECTED TABLE NAME (singular)
-            .insert(logEntry)
-            .select(); // Select the inserted log data
+        // Add user_id and ensure core fields are present
+        filteredDataForSave.user_id = userId;
+        if (!filteredDataForSave.recipe_name) filteredDataForSave.recipe_name = 'Unnamed Recipe';
+        // No need to set default for description here if using || in destructuring above
+        // filteredDataForSave.description = description || 'No description provided.';
 
-        if (logError) {
+        // total_servings and serving_size_description will be included if present in analysisData and not null/undefined
+
+        console.log("[Tool Execution] Data strictly filtered for user_recipes insert:", JSON.stringify(filteredDataForSave, null, 2));
+
+        const { data: recipeInsertData, error: recipeInsertError } = await supabaseClient
+            .from('user_recipes')
+            .insert(filteredDataForSave)
+            .select('id') // Select only ID
+            .single();
+
+        if (recipeInsertError) {
+            console.error('[Tool Execution] Error inserting into user_recipes:', JSON.stringify(recipeInsertError, null, 2));
+            // Provide a more specific error message if possible
+            const detailedMsg = recipeInsertError.message.includes('does not exist')
+                 ? `Database schema mismatch: ${recipeInsertError.message}`
+                 : `Database error saving recipe: ${recipeInsertError.message}`;
+            throw new Error(detailedMsg);
+        }
+
+        if (!recipeInsertData || !recipeInsertData.id) {
+             console.error('[Tool Execution] Failed to retrieve ID after inserting into user_recipes.');
+            throw new Error('Failed to save recipe (could not confirm ID).');
+        }
+
+        savedRecipeId = recipeInsertData.id;
+        console.log(`[Tool Execution] Successfully saved recipe ID: ${savedRecipeId}`);
+
+    } catch (error) {
+        console.error(`[Tool Execution] Error during user_recipes insert phase:`, error);
             return {
                 status: 'error',
-                message: 'Could not log saved recipe.',
-                response_type: 'error_db_insert'
-            };
-        }
+            message: error instanceof Error ? error.message : 'An unknown error occurred while saving the recipe.',
+            response_type: 'error_saving_recipe'
+        };
+    }
+    
+    // --- Conditional Logging --- 
+    if (!logAfterSave) {
+        console.log(`[Tool Execution] Skipping logging step as requested (Save Only).`);
         return {
             status: 'success',
-            saved_recipe: savedRecipe,
-            message: 'Recipe saved and logged.',
-            response_type: 'recipe_saved_and_logged'
+            message: `Recipe '${analysisData.recipe_name || 'Unnamed Recipe'}' saved successfully.`,
+            saved_recipe_id: savedRecipeId,
+            response_type: 'recipe_saved_only' // New response type
         };
+    }
+
+    // --- 2. Log the saved recipe to food_log (if logAfterSave is true) ---
+    if (savedRecipeId === null) {
+         // This case should technically be unreachable due to prior error handling,
+         // but adding a safeguard.
+         console.error("[Tool Execution] Critical error: Reached logging phase but savedRecipeId is null.");
+         return {
+            status: 'error',
+            message: 'Internal error: Recipe ID missing after save attempt.',
+            response_type: 'error_internal_state'
+        };
+    }
+
+    try {
+        // Log 1 serving by default when saving and logging immediately
+        const consumedServings = 1; 
+        const originalRecipeName = analysisData.recipe_name || 'Unnamed Recipe';
+        console.log(`[Tool Execution] Proceeding to log ${consumedServings} serving of newly saved recipe ID: ${savedRecipeId} with name: ${originalRecipeName}`);
+        
+        // Call executeLogExistingSavedRecipe, passing the consumed servings amount
+        const logResult = await executeLogExistingSavedRecipe(
+            savedRecipeId, 
+            originalRecipeName, 
+            userId, 
+            supabaseClient, 
+            consumedServings // Pass the default consumed amount (1)
+        );
+
+        if (logResult.status !== 'success') {
+             console.error(`[Tool Execution] Failed to log the newly saved recipe (ID: ${savedRecipeId}). Logging function returned error:`, logResult.message);
+            return {
+                status: 'error',
+                message: `Recipe saved (ID: ${savedRecipeId}), but failed to log: ${logResult.message}`,
+                saved_recipe_id: savedRecipeId, // Still return the ID even if logging failed
+                response_type: 'error_logging_saved_recipe'
+            };
+        }
+
+        console.log(`[Tool Execution] Successfully saved (ID: ${savedRecipeId}) and logged ${consumedServings} serving of recipe '${originalRecipeName}'.`);
+
+        return {
+            status: 'success',
+            message: `Recipe '${originalRecipeName}' saved and logged (${consumedServings} serving)!`,
+            saved_recipe_id: savedRecipeId,
+            logged_recipe_name: originalRecipeName,
+            nutrition_data: logResult.nutrition_data, 
+            response_type: 'recipe_saved_logged'
+        };
+
     } catch (error) {
+        console.error(`[Tool Execution] Unexpected error during food_log insert phase for new recipe ${savedRecipeId}:`, error);
         return {
             status: 'error',
-            message: `Sorry, something went wrong saving and logging your recipe. Please try again or ask for help. (${error instanceof Error ? error.message : String(error)})`,
-            response_type: 'error_unexpected'
+            message: `Recipe saved (ID: ${savedRecipeId}), but an unknown error occurred during logging.`,
+            saved_recipe_id: savedRecipeId, // Still return the ID
+            response_type: 'error_logging_saved_recipe_unknown'
         };
     }
 }

@@ -7,6 +7,8 @@ import FoodLogDetailModal from '@/components/FoodLogDetailModal';
 import { format as formatDateFn } from 'date-fns';
 import DashboardShell from '@/components/DashboardShell';
 import DashboardSummaryTable from '@/components/DashboardSummaryTable';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { createBrowserClient } from '@supabase/ssr';
 
 // Loading Spinner Component (from example)
 const LoadingSpinner = () => {
@@ -70,6 +72,7 @@ export default function DashboardPage() {
   const [loadingData, setLoadingData] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<string | null>(null);
 
   // State for the Log Detail Modal
   const [isLogDetailModalVisible, setIsLogDetailModalVisible] = useState(false);
@@ -143,9 +146,9 @@ export default function DashboardPage() {
 
   }, [user, supabase]);
 
-  // Initial fetch - Trigger only when auth loading finishes and user exists
+  // Initial fetch - Revert to depend only on authLoading and user
   useEffect(() => {
-    if (!authLoading) {
+    if (!authLoading) { 
       if (user) {
         console.log("DashboardPage Effect: Auth loaded, user found. Fetching data...");
         fetchDashboardData();
@@ -158,11 +161,8 @@ export default function DashboardPage() {
         setError(null); 
       }
     }
-    // We only want this effect to run when authLoading changes from true to false.
-    // It should not re-run if the user object identity changes later,
-    // or if fetchDashboardData identity changes (it's stable via useCallback).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading]);
+    // Depend on authLoading and user object
+  }, [authLoading, user, fetchDashboardData]); 
 
   // Handle Refresh Action
   const handleRefresh = () => {
@@ -227,12 +227,61 @@ export default function DashboardPage() {
   };
   // --- End Delete Handler ---
 
-  // Loading/Auth checks (keep as is)
+  // --- Test Button Handler ---
+  const handleTestGetSession = async () => {
+    setTestResult('Testing...');
+    console.log("[TestButton] Creating temporary client using @supabase/ssr...");
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+        console.error("[TestButton] Missing ENV vars!");
+        setTestResult('Test Failed: Missing ENV Vars');
+        return;
+    }
+
+    try {
+        const testClient = createBrowserClient(
+            supabaseUrl,
+            supabaseAnonKey,
+        );
+        console.log("[TestButton] Temporary client created:", testClient);
+        console.log("[TestButton] Calling getSession() on temporary client...");
+        const { data, error } = await testClient.auth.getSession();
+        console.log("[TestButton] getSession() completed.", { data, error });
+
+        if (error) {
+            setTestResult(`Test Failed: ${error.message}`);
+        } else if (data?.session) {
+            setTestResult(`Test Success! Session User ID: ${data.session.user.id}`);
+        } else {
+            setTestResult('Test Success! No active session found.');
+        }
+    } catch (err: any) {
+        console.error("[TestButton] Error during test:", err);
+        setTestResult(`Test Exception: ${err.message}`);
+    }
+  };
+  // -------------------------
+
+  // Revert Loading/Auth checks
   if (authLoading) {
-    return <div className="flex h-screen items-center justify-center"><p>Loading...</p></div>;
+    // Show loading indicator while auth is loading
+    return (
+        <div className="flex h-screen items-center justify-center">
+            <LoadingSpinner /> 
+            <p className="ml-2">Loading user data...</p>
+        </div>
+    );
   }
+
   if (!user) {
-     return <div className="flex h-screen items-center justify-center"><p>Please log in to view the dashboard.</p></div>;
+     // This case should ideally be handled by middleware, but good as a fallback
+     return (
+        <div className="flex h-screen items-center justify-center">
+            <p>Please log in to view the dashboard.</p>
+        </div>
+     ); 
   }
 
   return (

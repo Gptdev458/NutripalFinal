@@ -1,4 +1,6 @@
 import React from 'react';
+import { formatNutrientName, formatWeight, formatVolume, formatMilligram, formatMicrogram, formatEnergy } from '@/utils/formatting';
+import { Progress } from "@/components/ui/progress";
 
 interface UserGoal {
     nutrient: string;
@@ -19,14 +21,6 @@ interface DashboardSummaryTableProps {
     refreshing?: boolean;
     onRefresh?: () => void;
 }
-
-const formatNutrientName = (key: string): string => {
-    return key.replace(/_/g, ' ')
-        .replace(/\b\w/g, l => l.toUpperCase())
-        .replace(/ G$/, ' (g)')
-        .replace(/ Mg$/, ' (mg)')
-        .replace(/ Mcg$/, ' (mcg)');
-};
 
 const DashboardSummaryTable: React.FC<DashboardSummaryTableProps> = ({
     userGoals,
@@ -68,15 +62,15 @@ const DashboardSummaryTable: React.FC<DashboardSummaryTableProps> = ({
                     <p>No goals set or data logged for today yet.</p>
                 </div>
             ) : (
-                <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm mt-0 mb-0 flex justify-center items-center">
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full table-fixed divide-y divide-gray-200 mx-auto">
-                            <thead className="bg-gray-50">
+                <div className="bg-white border border-gray-300 rounded-lg overflow-hidden shadow-md mt-0 mb-0 flex justify-center items-center w-full max-w-4xl">
+                    <div className="overflow-x-auto w-full">
+                        <table className="min-w-full table-auto divide-y divide-gray-200">
+                            <thead className="bg-gray-100">
                                 <tr>
-                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nutrient</th>
-                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Target</th>
-                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Consumed</th>
-                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Progress</th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Nutrient</th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Target</th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Consumed</th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Progress</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
@@ -109,40 +103,64 @@ const DashboardSummaryTable: React.FC<DashboardSummaryTableProps> = ({
     );
 };
 
-const SummaryTableRow = ({ nutrient, current, target, unit, goalType }: { nutrient: string; current: number; target?: number; unit: string; goalType?: string }) => {
+interface SummaryTableRowProps {
+    nutrient: string;
+    current: number;
+    target?: number;
+    unit: string;
+    goalType?: string;
+}
+
+const SummaryTableRow: React.FC<SummaryTableRowProps> = ({ nutrient, current, target, unit, goalType }) => {
+    // Define formatting logic based on unit using AVAILABLE formatters
+    const formatValue = (value: number): string => {
+        if (isNaN(value) || value === null || value === undefined) return '-';
+        switch (unit?.toLowerCase()) {
+            case 'g':
+                return formatWeight(value);
+            case 'mg':
+                return formatMilligram(value);
+            case 'mcg':
+            case 'μg':
+                return formatMicrogram(value);
+            case 'ml':
+                return formatVolume(value);
+            case 'kcal':
+                return formatEnergy(value);
+            default:
+                return `${value.toFixed(0)} ${unit || ''}`;
+        }
+    };
+
     const targetValue = target ?? 0;
-    let progressText = '-';
-    let targetText = targetValue > 0 ? `${targetValue.toFixed(0)} ${unit}` : '-';
-    let consumedText = `${current.toFixed(0)} ${unit}`;
-    let displayPercentage = '0';
-    let rowBgColor = 'bg-white';
-    if (nutrient === 'omega_ratio') {
-        const omega6Total = current;
-        const omega3Total = targetValue;
-        const currentRatio = omega3Total > 0 ? (omega6Total / omega3Total) : 0;
-        targetText = `${targetValue}:1 Target`;
-        consumedText = omega3Total > 0 ? `${currentRatio.toFixed(1)}:1` : '0:0';
-        progressText = consumedText;
-    } else if (targetValue > 0) {
-        const progress = (current / targetValue) * 100;
-        displayPercentage = progress.toFixed(0);
-        const difference = targetValue - current;
-        const differenceText = difference >= 0 ? `(+${difference.toFixed(0)} ${unit})` : `(${difference.toFixed(0)} ${unit})`;
-        progressText = `${displayPercentage}% ${differenceText}`;
-    }
-    if ((current ?? 0) === 0 && nutrient !== 'omega_ratio') {
-        rowBgColor = goalType === 'goal' ? 'bg-red-50' : 'bg-green-50';
-    }
-    const formattedNutrient = formatNutrientName(nutrient);
+    const displayCurrent = formatValue(current);
+    const displayTarget = target !== undefined ? formatValue(targetValue) : '-';
+    const progressText = `${displayCurrent} / ${displayTarget}`;
+
+    const percentage = (target && target > 0) ? Math.min(Math.round((current / target) * 100), 100) : 0;
+    const progressValue = percentage;
+
+    // Format the nutrient name properly
+    const formattedNutrientName = formatNutrientName(nutrient);
+
     return (
-        <tr className={`${rowBgColor} hover:bg-gray-100`}>
-            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800">
-                {formattedNutrient}
-                <span className="text-gray-500 font-normal">{goalType ? ` (${goalType})` : ''}</span>
+        <tr>
+            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{formattedNutrientName}</td>
+            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{displayTarget}</td>
+            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{displayCurrent}</td>
+            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                <div className="flex items-center">
+                    {target !== undefined && (
+                        <>
+                            <Progress value={progressValue} className="w-20 h-2 mr-2" />
+                            <span>{`${percentage}%`}</span>
+                        </>
+                    )}
+                    {target === undefined && (
+                        <span>N/A</span>
+                    )}
+                </div>
             </td>
-            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{targetText}</td>
-            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{consumedText}</td>
-            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{progressText}</td>
         </tr>
     );
 };

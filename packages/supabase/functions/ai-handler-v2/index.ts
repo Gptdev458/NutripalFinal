@@ -7,6 +7,7 @@ import { fetchConversationHistory } from './utils/history.ts';
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { OpenAI } from 'openai';
 import type { User } from '@supabase/supabase-js'; // Add type import
+import type { ChatCompletionMessage, ChatCompletionToolMessageParam } from 'openai/resources/chat/completions';
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -162,60 +163,216 @@ Deno.serve(async (req: Request) => {
         return new Response( JSON.stringify({ status: 'error', message: 'Database client not initialized.', response_type: 'error_server' }), { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } );
     }
     
-    if (pending_action?.type === 'log_analyzed_recipe' && pending_action.analysis && message) {
-        console.log("[AI HANDLER DEBUG] Entered handler block for pending action: log_analyzed_recipe"); // DEBUG LOG
-        const normalizedMessage = message.toLowerCase();
-        const analysisData = pending_action.analysis as Record<string, any>; // Get analysis data from pending action, assert type
+    // --- NEW: Handle response providing serving info ---
+    if (pending_action?.type === 'awaiting_serving_info' && pending_action.analysis && message) {
+        console.log("[AI HANDLER DEBUG] Entered handler block for pending action: awaiting_serving_info");
+        // --- FIX: Ensure we work with the full original analysis data ---
+        const originalAnalysisData = pending_action.analysis as Record<string, any>; 
+        let totalServings: number | null = null;
+        let servingSizeDescription: string | null = null; // Optional future use
 
-        if (/(save and log|save it|yes save|confirm save)/i.test(normalizedMessage)) {
-            console.log("[AI HANDLER DEBUG] Calling toolExec.saveAndLogRecipe with data:", JSON.stringify(analysisData)); // DEBUG LOG
-            responseData = await toolExec.saveAndLogRecipe(analysisData, userId, supabaseClient);
-            responseData.response_type = responseData.status === 'success' ? 'recipe_saved_logged' : responseData.response_type || 'error_database';
-            console.log('[AI HANDLER DEBUG] saveAndLogRecipe responseData:', JSON.stringify(responseData)); // DEBUG LOG
-        } else if (/(just log|log only|don't save|only log|yes log)/i.test(normalizedMessage)) {
-            console.log("[AI HANDLER DEBUG] Calling toolExec.logOnlyAnalyzedRecipe with data:", JSON.stringify(analysisData)); // DEBUG LOG
-            responseData = await toolExec.logOnlyAnalyzedRecipe(analysisData, userId, supabaseClient);
-            responseData.response_type = responseData.status === 'success' ? 'recipe_logged_only' : responseData.response_type || 'error_database';
-            console.log('[AI HANDLER DEBUG] logOnlyAnalyzedRecipe responseData:', JSON.stringify(responseData)); // DEBUG LOG
+        // Attempt to parse servings from user message
+        const servingMatch = message.match(/\b(\d+(\.\d+)?)\b/); // Simple number parsing
+        if (servingMatch && servingMatch[1]) {
+            totalServings = parseFloat(servingMatch[1]);
+            console.log(`[AI HANDLER DEBUG] Parsed totalServings: ${totalServings}`);
+        } else if (message.toLowerCase().includes('skip') || message.toLowerCase().includes('unsure') || message.toLowerCase().includes('i don\'t know')) {
+            totalServings = null; // User skipped
+            console.log(`[AI HANDLER DEBUG] User skipped providing totalServings.`);
         } else {
-            console.log("[AI HANDLER DEBUG] User response did not confirm save/log for analyzed recipe. Cancelling action."); // DEBUG LOG
+             // Could not parse, maybe ask again or default?
+             // For now, let's proceed as if skipped and clear the pending action.
+             console.warn(`[AI HANDLER DEBUG] Could not parse serving number from message: "${message}". Proceeding without serving info.`);
+             totalServings = null;
+        }
+
+        // --- FIX: Create the *updated* analysis data object ---
+        // Start with the original data, then add/overwrite serving info
+        const updatedAnalysisData = {
+            ...originalAnalysisData, // Preserve all original fields (name, desc, nutrients)
+            recipe_name: originalAnalysisData.recipe_name, 
+            total_servings: totalServings,
+            serving_size_description: servingSizeDescription
+        };
+        // -----------------------------------------------------------
+
+        // Now, set up the *next* pending action using the updated data
+        // --- FIX: Revert to simpler assignment now that analysis tool guarantees name/desc ---
+        const nextPendingAction = {
+            type: 'confirm_save_log_analyzed_recipe', 
+            analysis: updatedAnalysisData // Pass the complete object which now includes name/desc/servings
+        };
+        // -------------------------------------------------------------------------------------
+        await setPendingAction(userId, nextPendingAction, supabaseClient);
+        console.log("[AI HANDLER DEBUG] Set pending_action to confirm_save_log_analyzed_recipe with updated analysis.");
+
+        // Ask the final confirmation question (use recipe name from updated data)
+        const recipeNameForPrompt = updatedAnalysisData.recipe_name || 'the recipe';
+        const servingText = totalServings ? `(${totalServings} servings)` : '(servings unspecified)';
+        responseData = {
+            status: 'clarification',
+            message: `Got it. Save recipe '${recipeNameForPrompt}' ${servingText}? You can then choose to log 1 serving now. (Options: Yes, Save Only, Cancel)`,
+            response_type: 'recipe_save_log_final_confirmation'
+        };
+        requestHandled = true;
+        console.log('[AI HANDLER DEBUG] Exiting awaiting_serving_info handler block. Prompting final confirmation.');
+    }
+    // --- NEW: Handle the FINAL confirmation for saving/logging analyzed recipe ---
+    else if (pending_action?.type === 'confirm_save_log_analyzed_recipe' && pending_action.analysis && message) {
+        console.log("[AI HANDLER DEBUG] Entered handler block for pending action: confirm_save_log_analyzed_recipe");
+        const normalizedMessage = message.toLowerCase();
+        const analysisData = pending_action.analysis as Record<string, any>; // Includes serving info
+        const recipeName = analysisData.recipe_name || 'your recipe';
+
+        // --- FIX: Check for "Save Only" BEFORE checking for "Yes/Save" ---
+        if (/(save only|just save|don't log)/i.test(normalizedMessage)) {
+            console.log("[AI HANDLER DEBUG] User confirmed Save Only.");
+            // Call saveAndLogRecipe with logAfterSave = false
+            responseData = await toolExec.saveAndLogRecipe(analysisData, userId, supabaseClient, false);
+            responseData.response_type = responseData.status === 'success' ? 'recipe_saved_only' : responseData.response_type || 'error_database';
+        } 
+        // Now check for the broader confirmation
+        else if (/(yes|confirm save|save and log|save log|log it|save)/i.test(normalizedMessage)) {
+            console.log("[AI HANDLER DEBUG] User confirmed final Save and Log.");
+            // Call saveAndLogRecipe with logAfterSave = true
+            responseData = await toolExec.saveAndLogRecipe(analysisData, userId, supabaseClient, true);
+            responseData.response_type = responseData.status === 'success' ? 'recipe_saved_logged' : responseData.response_type || 'error_database';
+        } else { // Assume cancellation
+            console.log("[AI HANDLER DEBUG] User cancelled final save/log confirmation based on message:", message);
             responseData = {
                 status: 'clarification',
-                message: `Okay, I won't log or save the analyzed recipe for '${analysisData.recipe_name || 'your recipe'}'. What else?`,
+                message: `Okay, the recipe '${recipeName}' was not saved or logged. What else?`,
                 response_type: 'action_cancelled'
             };
         }
         await clearPendingAction(userId, supabaseClient);
         requestHandled = true;
-        console.log('[AI HANDLER DEBUG] Exiting log_analyzed_recipe handler block. requestHandled=true.'); // DEBUG LOG
+        console.log('[AI HANDLER DEBUG] Exiting confirm_save_log_analyzed_recipe handler block.');
     }
-    // --- Handle saved recipe confirmation with improved logic ---
-    else if (pending_action?.type === 'confirm_log_saved_recipe' && message) {
-      console.log("[AI HANDLER DEBUG] Entered handler block for pending action: confirm_log_saved_recipe"); // DEBUG LOG
-      const normalizedMessage = message.toLowerCase();
-      const isConfirmed = /\b(yes|confirm|log it|sounds good|do it|ok|okay)\b/i.test(normalizedMessage);
+    // --- NEW: Handle response providing consumed portion for logging --- 
+    else if (pending_action?.type === 'awaiting_log_portion_amount' && pending_action.recipe_id && pending_action.recipe_name && message) {
+        console.log("[AI HANDLER DEBUG] Entered handler block for pending action: awaiting_log_portion_amount");
+        const recipeId = pending_action.recipe_id as string;
+        const recipeName = pending_action.recipe_name as string;
+        let consumedServings: number = 1; // Default to 1 if parsing fails
 
-      if (isConfirmed && pending_action.recipe_id && pending_action.recipe_name) {
-        console.log(`[AI HANDLER DEBUG] Calling toolExec.executeLogExistingSavedRecipe with ID: ${pending_action.recipe_id}, Name: ${pending_action.recipe_name}`); // DEBUG LOG
+        // Attempt to parse consumed servings (e.g., "1", "0.5", "half")
+        const servingMatch = message.match(/\b(\d+(\.\d+)?)\b/); 
+        const lowerMessage = message.toLowerCase();
+        if (servingMatch && servingMatch[1]) {
+            consumedServings = parseFloat(servingMatch[1]);
+        } else if (lowerMessage.includes('half') || lowerMessage.includes('1/2')) {
+            consumedServings = 0.5;
+        } else if (lowerMessage.includes('quarter') || lowerMessage.includes('1/4')) {
+            consumedServings = 0.25;
+        } else if (lowerMessage.includes('whole') || lowerMessage.includes('all')) {
+            // We might not know the total servings here, but user implies all.
+            // Let executeLogExistingSavedRecipe handle fetching totalServings and potentially logging 1 if total is unknown.
+            // Or, perhaps fetch totalServings here? For now, default to 1 if unsure.
+             console.warn(`[AI HANDLER DEBUG] Ambiguous portion '${message}', defaulting to 1 serving.`);
+             consumedServings = 1; 
+        } else {
+             console.warn(`[AI HANDLER DEBUG] Could not parse consumed servings from message: "${message}". Defaulting to 1 serving.`);
+             consumedServings = 1;
+        }
+        console.log(`[AI HANDLER DEBUG] Parsed consumedServings: ${consumedServings}`);
+
+        // Execute the logging with the parsed amount
+        console.log(`[AI HANDLER DEBUG] Calling toolExec.executeLogExistingSavedRecipe with ID: ${recipeId}, Name: ${recipeName}, Consumed: ${consumedServings}`);
         responseData = await toolExec.executeLogExistingSavedRecipe(
-          pending_action.recipe_id as string,
-          pending_action.recipe_name as string,
+          recipeId,
+          recipeName,
           userId,
-          supabaseClient
+          supabaseClient,
+          consumedServings // Pass the parsed amount
         );
         responseData.response_type = responseData.status === 'success' ? 'saved_recipe_logged' : responseData.response_type || 'error_logging_recipe';
-        console.log('[AI HANDLER DEBUG] executeLogExistingSavedRecipe responseData:', JSON.stringify(responseData)); // DEBUG LOG
-      } else {
-        console.log(`[AI HANDLER DEBUG] User response did not confirm logging recipe '${pending_action.recipe_name}'. Cancelling.`); // DEBUG LOG
+        
+        await clearPendingAction(userId, supabaseClient);
+        requestHandled = true;
+        console.log('[AI HANDLER DEBUG] Exiting awaiting_log_portion_amount handler block.');
+
+    }
+    // --- MODIFIED: Handle initial confirmation/request to log existing saved recipe ---
+    else if (pending_action?.type === 'confirm_log_saved_recipe' && message) {
+      console.log("[AI HANDLER DEBUG] Entered handler block for pending action: confirm_log_saved_recipe");
+      const normalizedMessage = message.toLowerCase();
+      const isConfirmed = /\b(yes|confirm|log it|sounds good|do it|ok|okay)\b/i.test(normalizedMessage);
+      const recipeId = pending_action.recipe_id as string;
+      const recipeName = pending_action.recipe_name as string;
+
+      if (isConfirmed && recipeId && recipeName) {
+          // Before executing, check if we need to ask for portion size
+          console.log(`[AI HANDLER DEBUG] User confirmed log for recipe ID: ${recipeId}. Checking if portion prompt is needed.`);
+          let needsPortionPrompt = false;
+          let fetchedTotalServings: number | null = null;
+          
+          try {
+              const { data: recipeDetails, error: fetchError } = await supabaseClient
+                  .from('user_recipes')
+                  .select('total_servings')
+                  .eq('id', recipeId)
+                  .eq('user_id', userId)
+                  .maybeSingle(); // Use maybeSingle to handle potential null
+              
+              if (fetchError) {
+                  console.warn(`[AI HANDLER DEBUG] Error fetching total_servings for recipe ${recipeId}: ${fetchError.message}. Proceeding with default log.`);
+              } else if (recipeDetails && recipeDetails.total_servings && typeof recipeDetails.total_servings === 'number' && recipeDetails.total_servings > 0) {
+                  // Only prompt if total_servings is known and potentially > 1 (or just exists)
+                  needsPortionPrompt = true;
+                  fetchedTotalServings = recipeDetails.total_servings;
+                  console.log(`[AI HANDLER DEBUG] Recipe has total_servings: ${fetchedTotalServings}. Portion prompt needed.`);
+              } else {
+                  console.log(`[AI HANDLER DEBUG] Recipe ${recipeId} has no total_servings or it's invalid. Portion prompt NOT needed.`);
+              }
+          } catch (e) {
+              console.error('[AI HANDLER DEBUG] Exception fetching total_servings:', e);
+          }
+
+          if (needsPortionPrompt) {
+              // Set pending action to await portion amount
+              const nextPendingAction = {
+                  type: 'awaiting_log_portion_amount',
+                  recipe_id: recipeId,
+                  recipe_name: recipeName
+              };
+              await setPendingAction(userId, nextPendingAction, supabaseClient);
+              console.log("[AI HANDLER DEBUG] Set pending_action to awaiting_log_portion_amount.");
+              
+              // Ask the user for the portion amount
+              responseData = {
+                  status: 'clarification',
+                  message: `Okay, logging '${recipeName}'. How much did you have? (e.g., '1 serving', '0.5', 'half')`,
+                  response_type: 'request_log_portion_amount' // New response type for frontend context
+              };
+              requestHandled = true;
+               console.log('[AI HANDLER DEBUG] Prompting user for consumed portion.');
+          } else {
+              // No need to prompt, log 1 serving (or the whole thing)
+              console.log(`[AI HANDLER DEBUG] No portion prompt needed. Calling toolExec.executeLogExistingSavedRecipe directly with default 1 serving.`);
+              responseData = await toolExec.executeLogExistingSavedRecipe(
+                recipeId,
+                recipeName,
+                userId,
+                supabaseClient,
+                1 // Log 1 serving by default if total_servings unknown
+              );
+              responseData.response_type = responseData.status === 'success' ? 'saved_recipe_logged' : responseData.response_type || 'error_logging_recipe';
+              await clearPendingAction(userId, supabaseClient);
+              requestHandled = true;
+          }
+      } else { // User did not confirm the initial log request
+        console.log(`[AI HANDLER DEBUG] User response did not confirm initial logging request for recipe '${recipeName}'. Cancelling.`);
         responseData = {
-          status: 'clarification', // Or 'success' depending on desired flow
-          message: `Okay, I won't log '${pending_action.recipe_name}' right now. What else can I help with?`,
+          status: 'clarification',
+          message: `Okay, I won't log '${recipeName}' right now. What else can I help with?`,
           response_type: 'action_cancelled'
         };
+         await clearPendingAction(userId, supabaseClient);
+         requestHandled = true;
       }
-      await clearPendingAction(userId, supabaseClient);
-      requestHandled = true;
-      console.log('[AI HANDLER DEBUG] Exiting confirm_log_saved_recipe handler block. requestHandled=true.'); // DEBUG LOG
+      // Note: clearPendingAction is handled within the if/else branches now
+      console.log('[AI HANDLER DEBUG] Exiting confirm_log_saved_recipe handler block (New Logic).');
     }
     // ... (Add more pre-OpenAI action handlers as needed) ...
 
@@ -344,80 +501,101 @@ Deno.serve(async (req: Request) => {
         // Wait for all tool executions to complete
         const toolResponseMessages = await Promise.all(toolExecutionPromises);
         
-        // *** ADD PENDING ACTION LOGIC HERE ***
-        // Process results to potentially set pending actions *before* final AI call
+        // *** MODIFIED TOOL RESULT PROCESSING ***
+        let specialHandlingComplete = false;
+
+        // Check for specific tool results BEFORE calling OpenAI again
         for (const toolResponseMessage of toolResponseMessages) {
             const toolName = toolResponseMessage.name;
             let resultPayload: any;
             try {
                 resultPayload = JSON.parse(toolResponseMessage.content);
-            } catch (e) {
-                console.error(`[AI HANDLER] Failed to parse tool result content for ${toolName}:`, e);
-                continue; // Skip if content isn't valid JSON
+            } catch (e) { continue; }
+
+            // ---- Handle executeAnalyzeRecipeIngredients ----
+            if (toolName === 'analyzeRecipeIngredients' && resultPayload?.status === 'success' && resultPayload?.analysis) {
+                console.log("[AI HANDLER DEBUG] Intercepting successful analyzeRecipeIngredients result BEFORE final AI call.");
+                // --- FIX: Name is needed for the prompt, but the *actual* data is in the pending action set by the tool ---
+                const recipeNameForPrompt = resultPayload.analysis?.recipe_name || 'the recipe'; // Get name from filtered data just for prompt
+                
+                // --- FIX: Remove setPendingAction call here. Tool already set it correctly. ---
+                // const pendingRecipeAction = { type: 'awaiting_serving_info', analysis: resultPayload.analysis }; 
+                // await setPendingAction(userId, pendingRecipeAction, supabaseClient);
+                // console.log('[AI HANDLER DEBUG] Set pending_action for awaiting_serving_info:', JSON.stringify(pendingRecipeAction));
+                // --------------------------------------------------------------------------
+                
+                // Construct the clarification response directly
+                responseData = {
+                    status: 'clarification', 
+                    message: `Okay, I've analyzed '${recipeNameForPrompt}'. Roughly how many servings does this recipe make? You can say 'skip' if unsure.`,
+                    response_type: 'awaiting_serving_info',
+                    analysis_result: resultPayload.analysis // Send filtered data back for display
+                };
+                requestHandled = true; // Mark as handled
+                specialHandlingComplete = true; // Signal that we are done and should return
+                console.log('[AI HANDLER DEBUG] Returning clarification request for servings.');
+                primaryToolResultPayload = resultPayload; // Store payload if needed
+                break; // Exit the loop, we found our special case
             }
+            // ---- Handle executeFindSavedRecipeByName (Single Match) ----
+            else if (toolName === 'findSavedRecipeByName' && resultPayload?.status === 'success' && resultPayload?.count === 1 && resultPayload?.matches?.[0]) {
+                 console.log("[AI HANDLER DEBUG] Intercepting successful findSavedRecipeByName (single match) result BEFORE final AI call.");
+                 const recipe = resultPayload.matches[0];
+                 // Set pending action
+                 const pendingSavedRecipeAction = { type: 'confirm_log_saved_recipe', recipe_id: recipe.id, recipe_name: recipe.recipe_name };
+                 await setPendingAction(userId, pendingSavedRecipeAction, supabaseClient);
+                 console.log('[AI HANDLER DEBUG] Set pending_action for confirm_log_saved_recipe:', JSON.stringify(pendingSavedRecipeAction));
 
-            // Set pending action for single saved recipe found
-            if (toolName === 'findSavedRecipeByName' && resultPayload?.status === 'success' && resultPayload?.count === 1 && resultPayload?.matches?.[0]) {
-                const recipe = resultPayload.matches[0];
-                const pendingSavedRecipeAction = { type: 'confirm_log_saved_recipe', recipe_id: recipe.id, recipe_name: recipe.recipe_name };
-                await setPendingAction(userId, pendingSavedRecipeAction, supabaseClient);
-                console.log('[AI HANDLER DEBUG] Set pending_action for confirm_log_saved_recipe:', JSON.stringify(pendingSavedRecipeAction));
-                // Add the pending action to the response data? Maybe not needed if handled by next request.
-            } 
-            // Set pending action for successful recipe analysis 
-            // (Redundant if also set within executeAnalyzeRecipeIngredients, but safe to have here as fallback/primary)
-            else if (toolName === 'analyzeRecipeIngredients' && resultPayload?.status === 'success' && resultPayload?.full_analysis) {
-                const pendingAnalyzedAction = { type: 'log_analyzed_recipe', analysis: resultPayload.full_analysis }; // Use full_analysis if available
-                await setPendingAction(userId, pendingAnalyzedAction, supabaseClient);
-                console.log('[AI HANDLER DEBUG] Set pending_action for log_analyzed_recipe:', JSON.stringify(pendingAnalyzedAction));
+                 // Construct the clarification response directly
+                 responseData = {
+                    status: 'clarification',
+                    message: `I found your saved recipe '${recipe.recipe_name}'. Log it now?`,
+                    response_type: 'confirm_log_saved_recipe' 
+                 };
+                 requestHandled = true;
+                 specialHandlingComplete = true;
+                 console.log('[AI HANDLER DEBUG] Returning clarification request for logging found recipe.');
+                 primaryToolResultPayload = resultPayload; // Store payload if needed
+                 break; // Exit loop
             }
-            // Add more checks for other tools that might require pending actions
+            // Add other special handling cases here if needed
         }
-        // *** END PENDING ACTION LOGIC ***
 
-        // Add all tool response messages to the history
-        messages.push(...toolResponseMessages);
-        console.log(`[AI HANDLER] Added ${toolResponseMessages.length} tool response messages to history.`);
+        // If no special handling intercepted the flow, proceed to call OpenAI again
+        if (!specialHandlingComplete) {
+            messages.push(...toolResponseMessages); // Add tool results for the final AI call
+            console.log(`[AI HANDLER] Added ${toolResponseMessages.length} tool response messages. Calling OpenAI again for final response...`);
+            
+            const finalCompletion = await openai.chat.completions.create({
+                model: 'gpt-4o',
+                messages: messages, // Send the complete history including tool calls and responses
+                temperature: 0.7
+            });
+            const finalAssistantMessage = finalCompletion.choices[0].message;
 
-        // --- Generate Final Conversational Response ---
-        console.log("[AI HANDLER] Calling OpenAI again for final conversational response...");
-        const finalCompletion = await openai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: messages, // Send the complete history including tool calls and responses
-            temperature: 0.7
-        });
-        const finalAssistantMessage = finalCompletion.choices[0].message;
-
-        // Check for nested tool calls (should be avoided by design, but handle gracefully)
-        if (finalAssistantMessage.tool_calls) {
-            console.warn("[AI HANDLER] Assistant responded with nested tool calls. Returning error to user.");
-            responseData = {
-                status: 'error',
-                message: 'Sorry, I encountered an issue while processing your request. Please try again.',
-                response_type: 'error_nested_tool_call',
-            };
-        } else {
-             // Check the status of the primary tool result payload
-             if (primaryToolResultPayload && primaryToolResultPayload.status === 'error') {
-                  // If the tool failed, prioritize its error message and status
-                  console.warn(`[AI HANDLER] Primary tool execution failed. Status: ${primaryToolResultPayload.status}, Message: ${primaryToolResultPayload.message}`);
-                  responseData = {
-                      status: 'error',
-                      message: primaryToolResultPayload.message || 'An error occurred while processing your request.', // Use tool error message
-                      response_type: primaryToolResultPayload.response_type || 'error_tool_execution' // Use tool error type
-                  };
-             } else {
-                  // If tool succeeded or no tool was called that produced a primary result payload,
-                  // use the final AI message and the tool's success status/type (or defaults)
-                  responseData = {
-                      status: primaryToolResultPayload?.status || 'success',
-                      message: finalAssistantMessage.content || 'Action completed.',
-                      response_type: primaryToolResultPayload?.response_type || 'ai_response', 
-                      // tool_result: primaryToolResultPayload 
-                  };
-             }
+            if (finalAssistantMessage.tool_calls) {
+               // ... handle nested tool calls error ...
+            } else {
+                // Check the status of the primary tool result payload FOUND EARLIER
+                if (primaryToolResultPayload && primaryToolResultPayload.status === 'error') {
+                     console.warn(`[AI HANDLER] Primary tool execution failed. Status: ${primaryToolResultPayload.status}, Message: ${primaryToolResultPayload.message}`);
+                     responseData = {
+                         status: 'error',
+                         message: primaryToolResultPayload.message || 'An error occurred while processing your request.',
+                         response_type: primaryToolResultPayload.response_type || 'error_tool_execution' 
+                     };
+                } else {
+                     // Use final AI message; status/type from primary tool result if available
+                     responseData = {
+                         status: primaryToolResultPayload?.status || 'success', // Use optional chaining
+                         message: finalAssistantMessage.content || 'Action completed.',
+                         response_type: primaryToolResultPayload?.response_type || 'ai_response' // Use optional chaining
+                     };
+                }
+            }
+            requestHandled = true;
         }
-        requestHandled = true;
+        // *** END MODIFIED PROCESSING ***
 
       } else {
         // --- Handle direct AI response (no tool call) ---
@@ -429,7 +607,7 @@ Deno.serve(async (req: Request) => {
         };
         requestHandled = true; // Also mark as handled if OpenAI replied directly
       }
-    } // End of if (!requestHandled)
+    } // End of if (!requestHandled) before OpenAI call
 
     // --- 6. Store Conversation --- 
     if (userId && supabaseClient && responseData.message) {

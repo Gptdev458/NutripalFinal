@@ -1,6 +1,10 @@
 'use client';
 
 import React, { useState } from 'react';
+// Removed non-existent hook import
+// import { useUnitFormatter } from '@/utils/formatting';
+// Import specific formatters directly
+import { formatWeight, formatVolume, formatMilligram, formatMicrogram, formatEnergy } from '@/utils/formatting';
 
 // Interface for goals passed as props
 interface UserGoal {
@@ -57,7 +61,9 @@ const NUTRIENT_MAP: Record<string, { name: string; unit: string }> = {
 };
 
 const FoodLogDetailModal: React.FC<FoodLogDetailModalProps> = ({ logData, onClose, userGoals, onDelete }) => {
-  const [isDeleting, setIsDeleting] = useState(false); // State for delete button loading
+  const [isDeleting, setIsDeleting] = useState(false);
+  // Removed the hook call
+  // const { formatWeight, formatVolume } = useUnitFormatter();
 
   if (!logData) return null;
 
@@ -72,13 +78,13 @@ const FoodLogDetailModal: React.FC<FoodLogDetailModalProps> = ({ logData, onClos
         return {
           key: nutrientKey,
           name: mapping.name,
-          value: Math.round(value),
-          unit: mapping.unit,
+          value: value,
+          unit: mapping.unit
         };
       }
       return null;
     })
-    .filter(item => item !== null);
+    .filter(item => item !== null) as { key: string; name: string; value: number; unit: string }[];
     
   // Optionally add Calories if it exists in logData but wasn't a specific goal
   const calorieInfo = NUTRIENT_MAP['calories'];
@@ -89,11 +95,32 @@ const FoodLogDetailModal: React.FC<FoodLogDetailModalProps> = ({ logData, onClos
       trackedNutrientDetails.unshift({
           key: 'calories',
           name: calorieInfo.name,
-          value: Math.round(logData.calories as number), // Type assertion safe here
-          unit: calorieInfo.unit,
+          value: logData.calories as number,
+          unit: calorieInfo.unit
       });
   }
   // --- End Updated Logic ---
+
+  // --- Define formatting logic using imported functions --- 
+  const formatValue = (value: number, unit: string): string => {
+    if (isNaN(value) || value === null || value === undefined) return '-';
+    switch (unit?.toLowerCase()) {
+        case 'g':
+            return formatWeight(value);
+        case 'mg':
+            return formatMilligram(value);
+        case 'mcg':
+        case 'μg':
+            return formatMicrogram(value);
+        case 'ml':
+            return formatVolume(value);
+        case 'kcal':
+            return formatEnergy(value);
+        default:
+            return `${value.toFixed(0)} ${unit || ''}`;
+    }
+  };
+  // --- End formatting logic ---
 
   const handleDeleteClick = async () => {
     if (!logData || isDeleting) return;
@@ -144,7 +171,7 @@ const FoodLogDetailModal: React.FC<FoodLogDetailModalProps> = ({ logData, onClos
                 <li key={nutrient.key} className="flex justify-between text-sm py-1 border-b border-gray-100 last:border-b-0">
                   <span className="text-gray-600">{nutrient.name}:</span>
                   <span className="text-gray-800 font-medium">
-                    {nutrient.value} {nutrient.unit}
+                    {formatValue(nutrient.value, nutrient.unit)}
                   </span>
                 </li>
               ))}

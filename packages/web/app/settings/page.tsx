@@ -20,10 +20,13 @@ const LoadingSpinner = () => {
 };
 
 export default function SettingsPage() {
-  const { user, signOut, loading: authLoading } = useAuth();
+  const { user, supabase, loading, error, signOut } = useAuth();
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Menu close on outside click effect (Keep)
   useEffect(() => {
@@ -65,6 +68,10 @@ export default function SettingsPage() {
       // setSigningOut(false);
     }
   }, [signOut, signingOut, router]); // <<< ADD router TO DEPENDENCY ARRAY
+
+  if (loading) {
+    return <div>Loading...</div>; // Or a spinner
+  }
 
   // == Render Component with New UI Structure ==
   return (
@@ -114,7 +121,7 @@ export default function SettingsPage() {
                {/* Sign Out Button */}
                 <button 
                   onClick={handleSignOut}
-                  disabled={signingOut || authLoading} 
+                  disabled={signingOut || loading} 
                   className="w-full mt-6 flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {signingOut ? (
