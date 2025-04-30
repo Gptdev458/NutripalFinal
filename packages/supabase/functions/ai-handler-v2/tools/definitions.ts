@@ -187,6 +187,59 @@ Examples:
     {
         type: 'function',
         function: {
+            name: 'logPremadeFood',
+            description: `Logs a pre-made food item with specific nutrition information to the user's diary.
+- Use ONLY when the user provides nutrition information from a package or label (e.g., "log a Whole Foods 365 Homestyle Waffle which has 100 calories").
+- Appropriate for store-bought items with nutrition labels (packaged foods, restaurant items with published nutrition).
+- The user MUST have provided or confirmed the food name and at least the calorie content.
+- Do NOT ask for confirmation after the user has already provided the nutrition details clearly.
+- If the user doesn't provide enough information, ask specific questions about missing details.
+- Confirm the entry has been logged once successful.
+Examples:
+  - "Log a Whole Foods 365 Homestyle Waffle with 100 calories" → logPremadeFood('Whole Foods 365 Homestyle Waffle', 100, {...})
+  - "I had a Clif Bar with 250 calories, 9g protein, 5g fat, 44g carbs" → logPremadeFood('Clif Bar', 250, {protein_g: 9, fat_total_g: 5, carbs_g: 44})
+`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    food_name: {
+                        type: 'string',
+                        description: `The name of the pre-made food item (e.g., 'Whole Foods 365 Homestyle Waffle', 'Quaker Oatmeal Packet', 'Clif Bar'). Must not be empty.`
+                    },
+                    calories: {
+                        type: 'number',
+                        description: `The calorie content of the food item. Must not be empty.`
+                    },
+                    nutrition_data: {
+                        type: 'object',
+                        description: `Additional nutrition data for the food item. Include any values provided by the user.`,
+                        properties: {
+                            protein_g: { type: 'number', description: 'Protein (g)' },
+                            fat_total_g: { type: 'number', description: 'Total fat (g)' },
+                            carbs_g: { type: 'number', description: 'Carbohydrates (g)' },
+                            fiber_g: { type: 'number', description: 'Fiber (g)' },
+                            sugar_g: { type: 'number', description: 'Sugar (g)' },
+                            sodium_mg: { type: 'number', description: 'Sodium (mg)' },
+                            cholesterol_mg: { type: 'number', description: 'Cholesterol (mg)' },
+                            fat_saturated_g: { type: 'number', description: 'Saturated fat (g)' },
+                            potassium_mg: { type: 'number', description: 'Potassium (mg)' },
+                            omega_3_g: { type: 'number', description: 'Omega-3 fatty acids (g)' },
+                            omega_6_g: { type: 'number', description: 'Omega-6 fatty acids (g)' },
+                            fiber_soluble_g: { type: 'number', description: 'Soluble fiber (g)' }
+                        }
+                    },
+                    servings: {
+                        type: 'number',
+                        description: `Number of servings consumed. Defaults to 1 if not specified.`
+                    }
+                },
+                required: ['food_name', 'calories']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
             name: 'deleteLoggedFood',
             description: `Deletes a logged food entry. Use when the user asks to delete a specific food log (by ID or description) or to delete their most recent log if no ID is provided. Confirm with the user before deleting if the request is ambiguous.`,
             parameters: {

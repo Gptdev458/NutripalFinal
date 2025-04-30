@@ -9,6 +9,10 @@ import DashboardShell from '@/components/DashboardShell';
 import DashboardSummaryTable from '@/components/DashboardSummaryTable';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createBrowserClient } from '@supabase/ssr';
+import { useDashboardData } from '@/hooks/useDashboardData';
+
+// Force dynamic rendering to bypass cache
+export const dynamic = 'force-dynamic';
 
 // Loading Spinner Component (from example)
 const LoadingSpinner = () => {
@@ -162,7 +166,7 @@ export default function DashboardPage() {
       }
     }
     // Depend on authLoading and user object
-  }, [authLoading, user, fetchDashboardData]); 
+  }, [authLoading, user]);
 
   // Handle Refresh Action
   const handleRefresh = () => {

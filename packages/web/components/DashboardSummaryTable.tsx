@@ -30,6 +30,11 @@ const DashboardSummaryTable: React.FC<DashboardSummaryTableProps> = ({
     refreshing = false,
     onRefresh
 }) => {
+
+    // --- DEBUG LOG --- 
+    console.log("[DashboardSummaryTable] Received userGoals prop:", JSON.stringify(userGoals));
+    // --- END DEBUG LOG ---
+
     return (
         <div className="relative flex flex-col h-full justify-center items-center">
             {/* Sticky refresh button in bottom right */}

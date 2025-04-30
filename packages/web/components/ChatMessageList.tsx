@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import { TypingIndicator } from '@/components/LoadingIndicators';
+import ReactMarkdown from 'react-markdown';
 
 // Interface for chat messages (keep or import from shared types)
 interface ChatMessage {
@@ -51,7 +52,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
                 : 'bg-white text-gray-800 border border-gray-200'
             }`}
           >
-            <p className="whitespace-pre-wrap">{msg.text}</p>
+            <ReactMarkdown>{msg.text}</ReactMarkdown>
             {msg.actions && msg.actions.length > 0 && (
                <div className="mt-2 pt-2 border-t border-gray-300/50 flex flex-wrap gap-2">
                  {msg.actions.map((action, index) => (

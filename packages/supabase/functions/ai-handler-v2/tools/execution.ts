@@ -318,6 +318,116 @@ export async function executeLogGenericFoodItem(foodDescription: string, userId:
     }
 }
 
+export async function executeLogPremadeFood(
+    foodName: string, 
+    calories: number, 
+    nutritionData: Record<string, any> | null | undefined, 
+    servings: number | null | undefined,
+    userId: string, 
+    supabaseClient: any
+): Promise<any> {
+    console.log(`Executing tool: logPremadeFood for '${foodName}' (${calories} calories) by user ${userId}`);
+    
+    // Input validation
+    const cleanedFoodName = (foodName || '').trim();
+    if (!cleanedFoodName) {
+        return {
+            status: 'error',
+            message: "I need a name for the food item you're logging. Could you provide that?",
+            response_type: 'error_parsing_args'
+        };
+    }
+    
+    if (!calories || isNaN(calories) || calories <= 0) {
+        return {
+            status: 'error',
+            message: "I need a valid calorie count to log this item. Could you provide that?",
+            response_type: 'error_parsing_args'
+        };
+    }
+    
+    // Default to 1 serving if not specified
+    const consumedServings = servings && !isNaN(servings) && servings > 0 ? servings : 1;
+    
+    try {
+        // Prepare the log entry
+        const logEntry: Record<string, any> = {
+            user_id: userId,
+            food_name: cleanedFoodName,
+            calories: calories,
+            source: 'premade',  // Mark the source as premade
+        };
+        
+        // Handle nutrition data if provided
+        if (nutritionData && typeof nutritionData === 'object') {
+            // Add all provided nutrients to the log entry
+            const validNutrientKeys = [
+                'protein_g', 'fat_total_g', 'carbs_g', 'fiber_g', 'sugar_g', 
+                'sodium_mg', 'cholesterol_mg', 'fat_saturated_g', 'potassium_mg',
+                'omega_3_g', 'omega_6_g', 'fiber_soluble_g'
+            ];
+            
+            validNutrientKeys.forEach(key => {
+                if (nutritionData[key] !== null && nutritionData[key] !== undefined && !isNaN(nutritionData[key])) {
+                    logEntry[key] = nutritionData[key];
+                }
+            });
+        }
+        
+        // If more than 1 serving, multiply all numeric values
+        if (consumedServings !== 1) {
+            for (const key in logEntry) {
+                if (typeof logEntry[key] === 'number' && key !== 'user_id') {
+                    logEntry[key] = parseFloat((logEntry[key] * consumedServings).toFixed(2));
+                }
+            }
+        }
+        
+        // Insert into food_log
+        const { data: insertedData, error: insertError } = await supabaseClient
+            .from('food_log')
+            .insert([logEntry])
+            .select();
+            
+        if (insertError) {
+            console.error("Error inserting premade food log:", insertError);
+            return {
+                status: 'error',
+                message: 'Could not log the food item.',
+                response_type: 'error_db_insert'
+            };
+        }
+        
+        console.log("Logged premade food item:", insertedData);
+        
+        // Fetch latest logs for today
+        const today = new Date().toISOString().slice(0, 10);
+        const { data: todaysLogs } = await supabaseClient
+            .from('food_log')
+            .select('*')
+            .eq('user_id', userId)
+            .gte('timestamp', `${today}T00:00:00.000Z`)
+            .lt('timestamp', `${today}T23:59:59.999Z`)
+            .order('timestamp', { ascending: true });
+            
+        return {
+            status: 'success',
+            logged_food_name: cleanedFoodName,
+            message: 'Pre-made food item logged successfully.',
+            response_type: 'log_success',
+            todays_logs: todaysLogs || [],
+            servings_logged: consumedServings
+        };
+    } catch (error) {
+        console.error("Unexpected error in executeLogPremadeFood:", error);
+        return {
+            status: 'error',
+            message: `Sorry, something went wrong while logging your food. Please try again or ask for help. (${error instanceof Error ? error.message : String(error)})`,
+            response_type: 'error_unexpected'
+        };
+    }
+}
+
 export async function executeFindSavedRecipeByName(query: string, userId: string, supabaseClient: any): Promise<any> {
     console.log(`Executing tool: findSavedRecipeByName for query '${query}' for user ${userId}`);
     const trimmedQuery = (query || '').trim();

@@ -8,6 +8,10 @@ import ChatDashboardLayout from '@/components/ChatDashboardLayout'; // Import th
 import DashboardShell from '@/components/DashboardShell';
 import DashboardSummaryTable from '@/components/DashboardSummaryTable';
 import ChatMessageList from '@/components/ChatMessageList'; // <-- Import the new component
+import { useDashboardData } from '@/hooks/useDashboardData';
+
+// Force dynamic rendering to bypass cache
+export const dynamic = 'force-dynamic';
 
 // Interface for chat messages
 interface ChatMessage {
@@ -404,7 +408,7 @@ export default function ChatPage() {
     if (user && supabase) {
       fetchDashboardData();
     }
-  }, [user, supabase, fetchDashboardData]);
+  }, []);
 
   // --- Process Bot Reply ---
   const processBotReply = (responseData: Record<string, unknown>): ChatMessage => {

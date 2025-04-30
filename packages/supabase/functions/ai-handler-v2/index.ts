@@ -30,7 +30,10 @@ const AI_PERSONA = `You are NutriPal, an encouraging, knowledgeable, and friendl
 - **Handler Manages Confirmations:** When a tool requires user confirmation (e.g., logging a found/analyzed recipe), the system handler will manage the state. If the user confirms, the handler executes the action. Your role afterwards is simply to provide a brief conversational acknowledgement based on the handler's success/failure result. Do not try to re-execute the action or recall specific data yourself.
 - **Clarity over Assumption:** If the user's request is ambiguous, ask clear, friendly clarifying questions. Do not guess or make assumptions, especially about quantities, units, or specific recipes.
 - **Tool Use:** Use the available tools precisely as described. Do not call tools with hallucinated arguments.
+- For 'logGenericFoodItem', provide a simple 'food_description' like '1 apple' or 'Whole Foods 365 Homestyle Waffle'. Do *not* embed nutritional details (calories, macros) or lengthy descriptions in the argument itself.
+- If the user provides specific details (like brand, flavor, quantity) or full nutrition facts for a food item, trust that information and proceed with logging/analysis using the relevant tool. Avoid asking redundant questions like "is it a standard item?" if details are already provided.
 - **No Medical Advice:** Never provide medical advice or diagnoses.
+- When displaying nutritional info after logging or analysis, refer to the system message about tracked user goals (if provided) and ONLY list those specific nutrients unless the user explicitly asks for others.
 
 End each successful interaction with a brief, positive follow-up like 'Anything else today?' or 'Keep up the great work!'`;
 
@@ -55,6 +58,7 @@ Deno.serve(async (req: Request) => {
   let pending_action: any = null;
   let chatId: string | null = null;
   let requestData: any = {};
+  let taskAfterClarification: string | null = null;
 
   try {
     // --- 1. Initialization & Request Parsing ---
@@ -137,6 +141,38 @@ Deno.serve(async (req: Request) => {
              throw new Error('Request must include a message, action, or pending_action.');
         }
         console.log(`Request received - Message: "${message}", Action: ${action}, Pending Action Type: ${pending_action?.type}, Previous Context: ${previousContext}`);
+
+        // --- ADDED: Handle User Clarification Response --- START ---
+        if (pending_action?.type === 'awaiting_clarification' && message && supabaseClient) {
+            console.log("[AI HANDLER] Handling user clarification response.");
+            const userClarification = message;
+            const originalRequest = pending_action.original_request as string;
+
+            if (originalRequest) {
+                // Store the original request for potential fallback execution
+                taskAfterClarification = originalRequest;
+                // Construct the composite message for the AI
+                const compositeMessage = `User previously asked: "${originalRequest}". AI asked for clarification. User now clarifies: "${userClarification}". Now, please proceed with the original request using this clarification.`;
+                console.log("[AI HANDLER] Composite message for AI:", compositeMessage);
+                message = compositeMessage; // Overwrite the message variable for the upcoming AI call
+                userMessageForStorage = userClarification; // Store only the user's actual clarification
+
+                // Clear the pending action immediately
+                console.log("[AI HANDLER] Clearing awaiting_clarification pending action.");
+                await clearPendingAction(userId, supabaseClient);
+                pending_action = null; // Clear local variable too
+                
+                // Ensure requestHandled is false so we proceed to call OpenAI
+                requestHandled = false; 
+            } else {
+                console.warn("[AI HANDLER] awaiting_clarification pending action missing original_request.");
+                // Clear the bad pending action anyway
+                await clearPendingAction(userId, supabaseClient);
+                pending_action = null;
+            }
+        }
+        // --- ADDED: Handle User Clarification Response --- END ---
+
     } catch (error) {
         console.error('Error parsing request body:', error);
         return new Response( JSON.stringify({ status: 'error', message: `Invalid request: ${error.message}`, response_type: 'error_request' }), { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } );
@@ -409,7 +445,7 @@ Deno.serve(async (req: Request) => {
       const aiMessage = completion.choices[0].message;
       // --- Tool Call Handling ---
       if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
-        console.log(`[AI HANDLER] Received ${aiMessage.tool_calls.length} tool call(s).`);
+        console.log(`[AI HANDLER] Received ${aiMessage.tool_calls.length} tool call(s) in FINAL response.`);
         // Prepare to collect tool results
         const toolResults = [];
         // Store the actual payload of the *first* successful tool call for final response metadata
@@ -443,6 +479,16 @@ Deno.serve(async (req: Request) => {
                 switch (toolName) {
                     case 'logGenericFoodItem':
                         toolResultPayload = await toolExec.executeLogGenericFoodItem(toolArgs.food_description, userId, supabaseClient, openai);
+                        break;
+                    case 'logPremadeFood':
+                        toolResultPayload = await toolExec.executeLogPremadeFood(
+                            toolArgs.food_name, 
+                            toolArgs.calories, 
+                            toolArgs.nutrition_data, 
+                            toolArgs.servings, 
+                            userId, 
+                            supabaseClient
+                        );
                         break;
                     case 'logExistingSavedRecipe':
                         toolResultPayload = await toolExec.executeLogExistingSavedRecipe(toolArgs.recipe_id, toolArgs.recipe_name, userId, supabaseClient);
@@ -563,8 +609,42 @@ Deno.serve(async (req: Request) => {
 
         // If no special handling intercepted the flow, proceed to call OpenAI again
         if (!specialHandlingComplete) {
-            messages.push(...toolResponseMessages); // Add tool results for the final AI call
-            console.log(`[AI HANDLER] Added ${toolResponseMessages.length} tool response messages. Calling OpenAI again for final response...`);
+            
+            // --- Fetch user's tracked nutrients --- START ---
+            let trackedNutrients: string[] = [];
+            let goalsSystemMessage: string | null = null;
+            if (userId && supabaseClient) {
+                try {
+                    const { data: goalsData, error: goalsError } = await supabaseClient
+                        .from('user_goals')
+                        .select('nutrient') // Select only the nutrient key
+                        .eq('user_id', userId);
+
+                    if (goalsError) {
+                        console.error('[AI HANDLER] Error fetching user goals:', goalsError.message);
+                        // Don't block the flow, proceed without goal filtering if fetch fails
+                    } else if (goalsData && goalsData.length > 0) {
+                        trackedNutrients = goalsData.map(goal => goal.nutrient);
+                        console.log('[AI HANDLER] Fetched tracked nutrients:', trackedNutrients);
+                        // Format for the system message
+                        goalsSystemMessage = `System: The user is currently tracking these nutrients: ${trackedNutrients.join(', ')}. When confirming a logged item or presenting nutritional analysis, ONLY list the values for these specific nutrients unless the user explicitly asks for others.`;
+                    } else {
+                        console.log('[AI HANDLER] No specific nutrient goals found for user.');
+                        // No message needed if no goals
+                    }
+                } catch (e) {
+                    console.error('[AI HANDLER] Exception fetching user goals:', e);
+                }
+            }
+            // --- Fetch user's tracked nutrients --- END ---
+
+            // Add tool results and potentially the goals message to the history for the final AI call
+            messages.push(...toolResponseMessages); 
+            if (goalsSystemMessage) {
+                messages.push({ role: 'system', content: goalsSystemMessage });
+            }
+            
+            console.log(`[AI HANDLER] Added ${toolResponseMessages.length} tool response messages ${goalsSystemMessage ? 'AND 1 goals system message' : ''}. Calling OpenAI again for final response...`);
             
             const finalCompletion = await openai.chat.completions.create({
                 model: 'gpt-4o',
@@ -576,24 +656,47 @@ Deno.serve(async (req: Request) => {
             if (finalAssistantMessage.tool_calls) {
                // ... handle nested tool calls error ...
             } else {
-                // Check the status of the primary tool result payload FOUND EARLIER
-                if (primaryToolResultPayload && primaryToolResultPayload.status === 'error') {
-                     console.warn(`[AI HANDLER] Primary tool execution failed. Status: ${primaryToolResultPayload.status}, Message: ${primaryToolResultPayload.message}`);
-                     responseData = {
-                         status: 'error',
-                         message: primaryToolResultPayload.message || 'An error occurred while processing your request.',
-                         response_type: primaryToolResultPayload.response_type || 'error_tool_execution' 
-                     };
-                } else {
-                     // Use final AI message; status/type from primary tool result if available
-                     responseData = {
-                         status: primaryToolResultPayload?.status || 'success', // Use optional chaining
-                         message: finalAssistantMessage.content || 'Action completed.',
-                         response_type: primaryToolResultPayload?.response_type || 'ai_response' // Use optional chaining
-                     };
+                // --- ADDED: Fallback Tool Execution After Clarification --- START ---
+                let manualToolExecuted = false;
+                let manualToolResultPayload: any = null;
+                const assistantMessageContent = finalAssistantMessage.content?.toLowerCase() || '';
+                const indicatesSuccess = /\b(logged|added|saved|updated|completed)\b/.test(assistantMessageContent);
+                
+                if (taskAfterClarification && indicatesSuccess) { // Check if we expected an action after clarification AND AI indicates success
+                    console.warn("[AI HANDLER] AI indicated success after clarification but provided no tool call. Attempting manual fallback execution.");
+                    try {
+                        // Attempt to execute the logGenericFoodItem tool manually
+                        // We might need more robust logic here to determine *which* tool 
+                        // should have been called based on `taskAfterClarification`, 
+                        // but for now, assume it was logGenericFoodItem for the waffle case.
+                        manualToolResultPayload = await toolExec.executeLogGenericFoodItem(taskAfterClarification, userId, supabaseClient, openai);
+                        manualToolExecuted = true;
+                        console.log("[AI HANDLER] Manual fallback execution result:", manualToolResultPayload?.status);
+                    } catch (fallbackError) {
+                        console.error("[AI HANDLER] Error during manual fallback execution:", fallbackError);
+                        manualToolResultPayload = { status: 'error', message: 'Logging failed during fallback.', response_type: 'error_fallback_execution' };
+                    }
                 }
+                // --- ADDED: Fallback Tool Execution After Clarification --- END ---
+
+                // --- Handle direct AI response (no tool call) ---
+                responseData = {
+                    // Use status from manual execution if it happened, otherwise default
+                    status: manualToolExecuted ? (manualToolResultPayload?.status || 'error') : 'success',
+                    message: finalAssistantMessage.content || '', // Always use the AI's original text response
+                    // Use response_type from manual execution if it failed, otherwise default
+                    response_type: manualToolExecuted && manualToolResultPayload?.status !== 'success' ? (manualToolResultPayload?.response_type || 'error_fallback_execution') : 'ai_response',
+                };
+                
+                // If manual execution happened and failed, ensure status is error
+                if (manualToolExecuted && manualToolResultPayload?.status !== 'success') {
+                    responseData.status = 'error';
+                    // Optionally prepend error to message? For now, keep AI text.
+                    // responseData.message = `[Fallback Error: ${manualToolResultPayload?.message}] ${responseData.message}`;
+                }
+                
+                requestHandled = true;
             }
-            requestHandled = true;
         }
         // *** END MODIFIED PROCESSING ***
 
