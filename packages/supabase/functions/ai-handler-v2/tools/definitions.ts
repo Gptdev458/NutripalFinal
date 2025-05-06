@@ -9,17 +9,17 @@ export const availableTools = [
         type: 'function',
         function: {
             name: 'logGenericFoodItem',
-            description: `Logs a single, simple food item to the user's diary. Use this ONLY for clearly simple or standard/pre-packaged items (e.g., 'banana', 'protein bar', 'apple juice').
-- If the user mentions multiple foods (e.g., 'log a banana and an apple'), call this tool separately for each food.
-- If the food is ambiguous (e.g., 'sandwich', 'wrap'), ask the user to clarify ingredients or type unless they specify it's standard/pre-made.
-- DO NOT use for dishes that typically require multiple ingredients (like 'fried rice', 'soup', 'salad', 'pasta', 'smoothie') unless the user provides context indicating it's standard/pre-made or explicitly tells you to log it as a generic item after clarification.
-- Validate that the food_description is not empty or nonsensical.
-- Confirm with the user what was logged and provide a friendly follow-up.
-- If the user clarifies with ingredients, log the food as a single item with all specified ingredients (e.g., 'sandwich with one piece of bread and one piece of ham').
+            description: `Logs a single food item or simple combination to the user's diary. Use this for:
+- Simple or standard items (e.g., 'banana', 'protein bar', 'apple juice')
+- Basic combinations with few ingredients (e.g., 'sandwich with turkey and lettuce', 'toast with butter')
+- If the user mentions multiple separate foods (e.g., 'log a banana and an apple'), call this tool separately for each food.
+- If the food is completely ambiguous (e.g., just 'meal' or 'dish'), ask the user to clarify.
+- Use this tool for simple sandwiches, wraps, or basic meals when ingredients are already provided.
+- ONLY use analyzeRecipeIngredients for complex dishes with many ingredients or when nutrition analysis is explicitly requested.
 Examples:
   - 'log a banana' → logGenericFoodItem('banana')
-  - 'log a sandwich' → ask for clarification unless user says 'pre-made sandwich' or provides ingredients.
-  - 'log a sandwich' + user: 'one piece of bread, one piece of ham' → logGenericFoodItem('sandwich with one piece of bread and one piece of ham')
+  - 'log a sandwich with turkey, lettuce and tomato' → logGenericFoodItem('sandwich with turkey, lettuce and tomato')
+  - 'log a chicken salad' → ask for clarification first, then if user says "lettuce, chicken, dressing", use logGenericFoodItem
 `,
             parameters: {
                 type: 'object',
@@ -62,10 +62,11 @@ Examples:
         type: 'function',
         function: {
             name: 'analyzeRecipeIngredients',
-            description: `Analyzes the ingredients of a recipe to estimate nutrition. Use this tool when:
-1) The user provides a list of ingredients for a dish.
-2) The user mentions making a dish themselves (e.g., 'my homemade soup').
-3) The user confirms they want to analyze a dish that typically requires multiple ingredients.
+            description: `Analyzes the ingredients of a recipe to estimate nutrition. Use this tool ONLY when:
+1) The user explicitly asks for nutritional analysis of a recipe or dish.
+2) The user provides a list of ingredients for a complex dish (more than 4-5 ingredients).
+3) The user mentions making a complex dish themselves (e.g., 'my homemade lasagna', 'soup I made').
+- Do NOT use this for simple food combinations like basic sandwiches, toast with toppings, or similar items that should be logged with logGenericFoodItem.
 - The ingredients_list should be a comma-separated or newline-separated list of ingredients.
 - Validate that both recipe_name and ingredients_list are present and parseable.
 - Summarize the analysis and offer next steps (save, log, etc.).

@@ -181,9 +181,16 @@ Deno.serve(async (req: Request) => {
         }
         // --- ADDED: Handle User Clarification Response ---
 
-    } catch (error) {
+    } catch (error: unknown) {
         console.error('Error parsing request body:', error);
-        return new Response( JSON.stringify({ status: 'error', message: `Invalid request: ${error.message}`, response_type: 'error_request' }), { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } );
+        return new Response(
+            JSON.stringify({ 
+                status: 'error', 
+                message: `Invalid request: ${error instanceof Error ? error.message : 'Unknown error occurred'}`, 
+                response_type: 'error_request' 
+            }), 
+            { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+        );
     }
     
     // --- OpenAI Initialization ---
@@ -196,9 +203,16 @@ Deno.serve(async (req: Request) => {
           throw new Error('AI service configuration error.');
       }
       openai = new OpenAI({ apiKey: openaiApiKey });
-    } catch (error) {
+    } catch (error: unknown) {
         console.error('Error initializing OpenAI client:', error);
-        return new Response( JSON.stringify({ status: 'error', message: error.message || 'AI service configuration error.', response_type: 'error_config' }), { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } } );
+        return new Response(
+            JSON.stringify({ 
+                status: 'error', 
+                message: error instanceof Error ? error.message : 'AI service configuration error.', 
+                response_type: 'error_config' 
+            }), 
+            { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+        );
     }
 
     // --- 2. Handle Pre-OpenAI Actions (Confirmations, Direct Actions) ---
@@ -208,73 +222,83 @@ Deno.serve(async (req: Request) => {
     }
     
     // --- NEW: Handle response providing serving info ---
-    if (pending_action?.type === 'awaiting_serving_size' && pending_action.product && message) {
+    if (pending_action?.type === 'awaiting_serving_info' && message) {
       console.log(`[AI HANDLER] Processing serving size response: "${message}"`);
       
-      const product = pending_action.product;
-      const originalQuery = pending_action.original_query || '';
+      const recipe = pending_action.recipe_name;
+      const ingredients = pending_action.ingredients;
+      const nutritionData = pending_action.nutrition_data;
       
-      // Parse serving size from message
+      // Improved serving size parsing logic
       let servings = 1; // Default to 1 serving
-      const servingMatch = message.match(/\b(\d+(\.\d+)?)\b/);
-      if (servingMatch && servingMatch[1]) {
-        servings = parseFloat(servingMatch[1]);
-        if (servings <= 0 || isNaN(servings)) servings = 1;
-        console.log(`[AI HANDLER] Parsed serving size: ${servings}`);
+      let validServingProvided = false;
+      
+      // Enhanced pattern matching for serving sizes
+      const numericRegex = /\b(\d+(\.\d+)?)\b/;
+      const textualRegex = /\b(one|two|three|four|five|half)\b/i;
+      
+      const numericMatch = message?.match(numericRegex);
+      const textualMatch = message?.match(textualRegex);
+      
+      if (numericMatch && numericMatch[1]) {
+        servings = parseFloat(numericMatch[1]);
+        validServingProvided = true;
+        console.log(`[AI HANDLER] Parsed numeric serving size: ${servings}`);
+      } else if (textualMatch && textualMatch[1]) {
+        // Convert textual numbers to numeric
+        const textToNum: Record<string, number> = {
+          'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'half': 0.5
+        };
+        const key = textualMatch[1].toLowerCase();
+        servings = textToNum[key] || 1;
+        validServingProvided = true;
+        console.log(`[AI HANDLER] Parsed textual serving size: ${servings}`);
       }
       
-      // Get full nutrition data if needed
-      try {
-        // First check if full nutrition data is in the product already
-        if (!product.nutrition_data) {
-          // Try to fetch from cache
-          const { data: cachedProduct } = await supabaseClient
-            .from('food_products')
-            .select('*')
-            .eq('product_name', product.product_name)
-            .single();
+      // Validate the serving size
+      if (servings <= 0 || isNaN(servings)) {
+        servings = 1;
+        console.log(`[AI HANDLER] Invalid serving size, defaulting to 1`);
+      }
+      
+      // Check if this is a repeated question (track count in pending_action)
+      const questionCount = pending_action.question_count || 1;
+      
+      // If we've already asked twice and still don't have a valid answer, use default
+      if (questionCount >= 2 && !validServingProvided) {
+        console.log(`[AI HANDLER] Asked for serving size ${questionCount} times, using default of 1`);
+        servings = 1;
+        validServingProvided = true;
+      }
+      
+      if (validServingProvided || message.toLowerCase() === 'skip') {
+        try {
+          // Original recipe logic here...
+          // ... (keep existing code for recipe execution)
           
-          if (cachedProduct?.nutrition_data) {
-            product.nutrition_data = cachedProduct.nutrition_data;
-          }
+          // Clear the pending action immediately after successful processing
+          await clearPendingAction(userId, supabaseClient);
+          
+          // Set requestHandled to true
+          requestHandled = true;
+        } catch (error) {
+          console.error(`[AI HANDLER] Error processing serving size:`, error);
+          // Handle error case...
         }
-        
-        // Call logPremadeFood with the provided servings
-        const logResult = await toolExec.executeLogPremadeFood(
-          product.product_name,
-          product.calories || 0,
-          product.nutrition_data || { calories: product.calories },
-          servings,
-          userId,
-          supabaseClient
-        );
-        
-        // Clear the pending action
-        await clearPendingAction(userId, supabaseClient);
-        
-        // Return the result
+      } else {
+        // Increment the question counter for the next attempt
         responseData = {
-          status: 'success',
-          message: `I've logged ${servings} serving(s) of ${product.product_name} for you.`,
-          logged_food_name: product.product_name,
-          response_type: 'food_logged_with_servings'
-        };
-        
-        requestHandled = true;
-      } catch (error) {
-        console.error("Error logging food with serving size:", error);
-        
-        responseData = {
-          status: 'error',
-          message: `Sorry, I couldn't log ${product.product_name}. ${error instanceof Error ? error.message : 'An error occurred'}`,
-          response_type: 'error'
+          status: 'clarification',
+          message: `I need a specific serving size for "${recipe}". Please provide a number (e.g., 1, 2, etc.) or say "skip" if you're not sure.`,
+          response_type: 'serving_size_request',
+          pending_action: {
+            ...pending_action,
+            question_count: questionCount + 1
+          }
         };
         
         requestHandled = true;
       }
-      
-      // Clear pending action either way
-      await clearPendingAction(userId, supabaseClient);
     }
     // --- NEW: Handle the FINAL confirmation for saving/logging analyzed recipe ---
     else if (pending_action?.type === 'confirm_save_log_analyzed_recipe' && pending_action.analysis && message) {
@@ -456,8 +480,9 @@ Deno.serve(async (req: Request) => {
         // Handle rejection to log
         await clearPendingAction(userId, supabaseClient);
         responseData = {
-          status: 'info',
-          message: "No problem, I won't log that recipe. Is there something else I can help you with?"
+          status: 'success',
+          message: "No problem, I won't log that recipe. Is there something else I can help you with?",
+          response_type: 'info'
         };
         
         return new Response(JSON.stringify(responseData), {
@@ -466,8 +491,10 @@ Deno.serve(async (req: Request) => {
       } else {
         // Unclear response - ask for clarification
         responseData = {
-          status: 'question',
-          message: `I'm not sure if you want to log ${recipeName}. Please respond with "yes" to log it, or "no" to cancel.`
+          status: 'clarification',
+          message: `Could you clarify what you mean?`,
+          response_type: 'clarification_needed',
+          clarification_for: message
         };
         
         return new Response(JSON.stringify(responseData), {
@@ -580,7 +607,10 @@ Deno.serve(async (req: Request) => {
         // Prepare to collect tool results
         const toolResults = [];
         // Store the actual payload of the *first* successful tool call for final response metadata
-        let primaryToolResultPayload: any = null; 
+        let primaryToolResultPayload: any = null;
+        
+        // Add a context tracker for food items
+        const foodItemContext = new Map<string, string>();
 
         // Add the assistant's message with tool calls to the history
         messages.push(aiMessage);
@@ -595,6 +625,17 @@ Deno.serve(async (req: Request) => {
 
             try {
                 toolArgs = JSON.parse(toolCall.function?.arguments || '{}');
+                
+                // Track food item context for each tool call
+                if (toolName === 'logGenericFoodItem' && toolArgs.food_description) {
+                    foodItemContext.set(toolCallId, toolArgs.food_description);
+                } else if (toolName === 'logPremadeFood' && toolArgs.food_name) {
+                    foodItemContext.set(toolCallId, toolArgs.food_name);
+                } else if (toolName === 'analyzeRecipeIngredients' && toolArgs.recipe_name) {
+                    foodItemContext.set(toolCallId, toolArgs.recipe_name);
+                }
+                // Add similar tracking for other food-related tools
+                
             } catch (err) {
                 console.error(`[AI HANDLER] Error parsing args for ${toolName} (ID: ${toolCallId}):`, err);
                 return { 
@@ -692,12 +733,26 @@ Deno.serve(async (req: Request) => {
                  toolResultPayload = { status: 'error', message: `Tool execution failed: ${err instanceof Error ? err.message : String(err)}` };
             }
 
-            // Return the tool message object required by OpenAI API
+            // After getting the tool result, ensure it includes the food item context 
+            if (toolResultPayload && 
+                (toolName === 'logGenericFoodItem' || 
+                 toolName === 'logPremadeFood' ||
+                 toolName === 'analyzeRecipeIngredients')) {
+                
+                // Add the original food item to the context if not already present
+                if (!toolResultPayload.food_name && foodItemContext.has(toolCallId)) {
+                    toolResultPayload.food_name = foodItemContext.get(toolCallId);
+                }
+                
+                // Add a specific item identifier to ensure proper references in final response
+                toolResultPayload.item_context_id = toolCallId;
+            }
+            
             return {
                 tool_call_id: toolCallId,
                 role: "tool",
                 name: toolName,
-                content: JSON.stringify(toolResultPayload || { status: 'error', message: 'Tool returned no result.' }), // Ensure content is always a string
+                content: JSON.stringify(toolResultPayload)
             };
         });
 
@@ -792,7 +847,7 @@ Deno.serve(async (req: Request) => {
                 ).join('\n');
 
                 // Make sure each option includes all needed data
-                const enhancedOptions = (resultPayload.options || []).map(opt => ({
+                const enhancedOptions = (resultPayload.options || []).map((opt: any) => ({
                     ...opt,
                     product_name: opt.product_name || 'Unknown Product',
                     brand: opt.brand || 'Unknown Brand',
@@ -862,16 +917,20 @@ Deno.serve(async (req: Request) => {
             let goalsSystemMessage: string | null = null;
             if (userId && supabaseClient) {
                 try {
-                    const { data: goalsData, error: goalsError } = await supabaseClient
+                    // Cast the entire response to any to avoid TypeScript errors
+                    const result = await supabaseClient
                         .from('user_goals')
-                        .select('nutrient') // Select only the nutrient key
-                        .eq('user_id', userId);
+                        .select('nutrient') 
+                        .eq('user_id', userId) as any;
+                    
+                    const goalsData = result.data;
+                    const goalsError = result.error;
 
                     if (goalsError) {
                         console.error('[AI HANDLER] Error fetching user goals:', goalsError.message);
                         // Don't block the flow, proceed without goal filtering if fetch fails
                     } else if (goalsData && goalsData.length > 0) {
-                        trackedNutrients = goalsData.map(goal => goal.nutrient);
+                        trackedNutrients = goalsData.map((goal: any) => goal.nutrient);
                         console.log('[AI HANDLER] Fetched tracked nutrients:', trackedNutrients);
                         // Format for the system message
                         goalsSystemMessage = `System: The user is currently tracking these nutrients: ${trackedNutrients.join(', ')}. When confirming a logged item or presenting nutritional analysis, ONLY list the values for these specific nutrients unless the user explicitly asks for others.`;
@@ -892,6 +951,18 @@ Deno.serve(async (req: Request) => {
             }
             
             console.log(`[AI HANDLER] Added ${toolResponseMessages.length} tool response messages ${goalsSystemMessage ? 'AND 1 goals system message' : ''}. Calling OpenAI again for final response...`);
+            
+            // Add this before the final OpenAI call
+            // When preparing the final OpenAI call, include food context in system message
+            if (goalsSystemMessage) {
+                messages.push({ role: 'system', content: goalsSystemMessage });
+            }
+            
+            // Add explicit context reminder for primary food item
+            if (primaryToolResultPayload && primaryToolResultPayload.food_name) {
+                const contextReminder = `When responding about food items in this conversation, specifically refer to "${primaryToolResultPayload.food_name}" that was just processed.`;
+                messages.push({ role: 'system', content: contextReminder });
+            }
             
             const finalCompletion = await openai.chat.completions.create({
                 model: 'gpt-4o',

@@ -3,7 +3,8 @@
 // VERSION 2023-08-15-A: Adding serving size fixes
 
 import { setPendingAction } from '../utils/pendingAction.ts'; // Import the helper
-import type { SupabaseClient } from '@supabase/supabase-js'; // Fix import as a type import
+// Fix import as a type import - use the full URL path
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { findRecipesByFuzzyName, formatRecipeSearchResults } from '../utils/recipeSearch.ts';
 import { extractRecipeName } from '../utils/recipeNameExtractor.ts';
 import { ActionType, getConfirmationPolicy } from '../utils/confirmationPolicy.ts';
@@ -258,18 +259,29 @@ export async function executeLogGenericFoodItem(foodDescription: string, userId:
             response_type: 'error_parsing_args'
         };
     }
-    // Check for ambiguous foods (e.g., 'sandwich', 'wrap', 'casserole')
+    
+    // Improved ambiguity detection
+    // Only consider it ambiguous if it's a very short, generic term
     const ambiguousFoods = [
-        'sandwich', 'wrap', 'casserole', 'stir fry', 'bake', 'dish', 'meal', 'plate', 'bowl', 'food', 'snack', 'thing', 'stuff'
+        'meal', 'dish', 'food', 'snack', 'thing', 'stuff', 'plate', 'bowl'
     ];
-    const isAmbiguous = ambiguousFoods.some(word => cleanedDescription.toLowerCase().includes(word));
+    
+    // Only consider it ambiguous if it's just a single word that's in the ambiguous list
+    // or if it's very short with no details
+    const words = cleanedDescription.toLowerCase().split(/\s+/);
+    const isAmbiguous = (
+        (words.length === 1 && ambiguousFoods.includes(words[0])) ||
+        (words.length <= 2 && ambiguousFoods.some(word => words.includes(word)) && words.length < 3)
+    );
+    
     if (isAmbiguous) {
         return {
             status: 'error',
-            message: `"${cleanedDescription}" is a bit ambiguous. Could you clarify what ingredients or type it is, or specify if it's a standard/pre-made item?`,
+            message: `"${cleanedDescription}" is a bit ambiguous. Could you provide more details about what was in it?`,
             response_type: 'clarification_needed'
         };
     }
+    
     try {
         // Call fetchNutritionData (which internally calls OpenAI)
         const nutritionResult = await fetchNutritionData(cleanedDescription, openai);
@@ -475,7 +487,7 @@ export async function executeLookupPremadeFood(
         // If we have cached results, score them using the same logic as API results
         if (!cacheError && cachedProducts && cachedProducts.length > 0) {
             console.log(`Cache hits for '${cleanedFoodName}'`);
-            const scoredCacheProducts = cachedProducts.map(product => ({
+            const scoredCacheProducts = cachedProducts.map((product: any) => ({
                 product: {
                     product_name: product.product_name,
                     brands: product.brand,
@@ -485,9 +497,9 @@ export async function executeLookupPremadeFood(
             }));
 
             // Filter and check for ambiguity in cache results
-            const validCacheProducts = scoredCacheProducts.filter(p => p.score > 50);
+            const validCacheProducts = scoredCacheProducts.filter((p: any) => p.score > 50);
             if (validCacheProducts.length > 0) {
-                validCacheProducts.sort((a, b) => b.score - a.score);
+                validCacheProducts.sort((a: any, b: any) => b.score - a.score);
                 const bestCacheMatch = validCacheProducts[0];
 
                 // Check for ambiguity in cache results
@@ -539,7 +551,7 @@ export async function executeLookupPremadeFood(
         }
         
         // Score products using the extracted scoring function
-        const scoredProducts = searchResults.products.map(product => ({
+        const scoredProducts = searchResults.products.map((product: any) => ({
             product,
             score: calculateProductScore(
                 product.product_name || '',
@@ -550,7 +562,7 @@ export async function executeLookupPremadeFood(
         }));
         
         // Filter out low-scoring products
-        const validProducts = scoredProducts.filter(p => p.score > 50);
+        const validProducts = scoredProducts.filter((p: any) => p.score > 50);
         
         if (validProducts.length === 0) {
             return {
@@ -561,7 +573,7 @@ export async function executeLookupPremadeFood(
         }
         
         // Sort by score
-        validProducts.sort((a, b) => b.score - a.score);
+        validProducts.sort((a: any, b: any) => b.score - a.score);
         const bestMatch = validProducts[0];
         
         // Check for ambiguous matches
@@ -706,32 +718,69 @@ function isAmbiguousMatch(score1: number, score2: number): boolean {
     return scoreDifference < 30 || scoreRatio > 0.85;
 }
 
-// Helper function to create ambiguity response
-function createAmbiguityResponse(products: any[], originalQuery: string): any {
-    // Enhance options with more data for better selection handling
-    const options = products.map(p => {
-        const nutritionData = extractNutritionData(p.product);
-        return {
-            product_name: p.product.product_name || 'Unknown Name',
-            brand: p.product.brands || 'Unknown Brand',
-            calories: nutritionData.calories || 0,
-            // Include minimal nutrition data for logging after selection
-            nutrition_data: {
-                calories: nutritionData.calories || 0,
-                protein_g: nutritionData.protein_g || null,
-                fat_total_g: nutritionData.fat_total_g || null,
-                carbs_g: nutritionData.carbs_g || null
-            }
-        };
-    });
+// Add a helper function for deduplication after the calculateProductScore function
 
+// Helper function to deduplicate product search results
+function deduplicateProducts(products: any[]): any[] {
+  const uniqueMap = new Map();
+  
+  // First pass - group by normalized name
+  products.forEach(p => {
+    const productName = (p.product?.product_name || '').trim();
+    const brand = (p.product?.brands || '').trim();
+    
+    // Create a normalized key for grouping similar products
+    const normalizedName = productName.toLowerCase().replace(/\s+/g, ' ');
+    
+    // If we haven't seen this product or the current one has a higher score, keep it
+    if (!uniqueMap.has(normalizedName) || p.score > uniqueMap.get(normalizedName).score) {
+      uniqueMap.set(normalizedName, p);
+    }
+  });
+  
+  // Convert back to array and sort by score
+  return Array.from(uniqueMap.values()).sort((a, b) => b.score - a.score);
+}
+
+// Modify the createAmbiguityResponse function to use deduplication
+function createAmbiguityResponse(products: any[], originalQuery: string): any {
+  // Deduplicate the products first
+  const uniqueProducts = deduplicateProducts(products);
+  
+  // Take top 3 unique options
+  const topOptions = uniqueProducts.slice(0, 3);
+  
+  // Enhance options with more data for better selection handling
+  const options = topOptions.map((p, index) => {
+    const nutritionData = extractNutritionData(p.product);
     return {
-        status: 'clarification',
-        message: `I found a few possible matches for "${originalQuery}". Which one did you mean?`,
-        options,
-        original_query: originalQuery,
-        response_type: 'multiple_products_found_clarification'
+      product_name: p.product.product_name || 'Unknown Product',
+      brand: p.product.brands || 'Unknown Brand',
+      calories: nutritionData.calories || 0,
+      // Add a simple display label to make selection clearer
+      display_name: `${p.product.product_name || 'Unknown Product'}${p.product.brands ? ` (${p.product.brands})` : ''}`,
+      // Include minimal nutrition data for logging after selection
+      nutrition_data: {
+        calories: nutritionData.calories || 0,
+        protein_g: nutritionData.protein_g || null,
+        fat_total_g: nutritionData.fat_total_g || null,
+        carbs_g: nutritionData.carbs_g || null
+      }
     };
+  });
+
+  // Format options to show each one clearly numbered
+  const formattedOptions = options.map((opt, idx) => 
+    `${idx + 1}. ${opt.display_name}${opt.calories ? ` - ${opt.calories} calories` : ''}`
+  ).join('\n');
+
+  return {
+    status: 'clarification',
+    message: `I found a few possible matches for "${originalQuery}". Which one did you mean?\n\n${formattedOptions}\n\nOr provide more details?`,
+    options,
+    original_query: originalQuery,
+    response_type: 'multiple_products_found_clarification'
+  };
 }
 
 // Helper function to extract nutrition data from Open Food Facts product
@@ -1458,7 +1507,7 @@ export async function executeDeleteLoggedFood(logId: string | undefined, foodNam
  * @param userId The user ID
  * @returns Array of nutrient keys the user is tracking
  */
-export async function getUserTrackedNutrients(supabase: SupabaseClient, userId: string): Promise<string[]> {
+export async function getUserTrackedNutrients(supabase: any, userId: string): Promise<string[]> {
   try {
     const { data: goalsData, error: goalsError } = await supabase
       .from('user_goals')
@@ -1466,7 +1515,8 @@ export async function getUserTrackedNutrients(supabase: SupabaseClient, userId: 
       .eq('user_id', userId);
 
     if (!goalsError && goalsData && goalsData.length > 0) {
-      const trackedNutrients = goalsData.map(goal => goal.nutrient);
+      // Around line 1518, add type for 'goal' parameter
+      const trackedNutrients = goalsData.map((goal: any) => goal.nutrient);
       console.log('[TOOLS] Fetched tracked nutrients:', trackedNutrients);
       return trackedNutrients;
     } else {
@@ -1589,7 +1639,7 @@ export async function executeCreateRecipeVariation(
   
   try {
     // First, fetch the base recipe either by ID or name
-    let baseRecipe = null;
+    let baseRecipe: any = null;
     
     if (baseRecipeId) {
       const { data, error } = await supabaseClient
@@ -1609,39 +1659,37 @@ export async function executeCreateRecipeVariation(
       
       baseRecipe = data;
     } else if (baseRecipeName) {
-      // Use our existing fuzzy search to find the recipe
-      const recipes = await findRecipesByFuzzyName(baseRecipeName, userId, supabaseClient, { limit: 1 });
-      
-      if (!recipes || recipes.length === 0) {
-        return {
-          status: 'error',
-          message: `Could not find a recipe named "${baseRecipeName}".`,
-          response_type: 'error_recipe_not_found'
-        };
-      }
-      
-      // Get the full recipe details
+      // Search by name
       const { data, error } = await supabaseClient
         .from('user_recipes')
         .select('*')
-        .eq('id', recipes[0].id)
         .eq('user_id', userId)
-        .single();
+        .ilike('recipe_name', `%${baseRecipeName}%`)
+        .order('created_at', { ascending: false })
+        .limit(1);
         
-      if (error || !data) {
+      if (error || !data || data.length === 0) {
         return {
           status: 'error',
-          message: `Could not fetch details for recipe "${baseRecipeName}".`,
+          message: `Could not find a recipe with name similar to "${baseRecipeName}".`,
           response_type: 'error_recipe_not_found'
         };
       }
       
-      baseRecipe = data;
+      baseRecipe = data[0];
     } else {
       return {
         status: 'error',
-        message: 'Either a recipe ID or name must be provided.',
-        response_type: 'error_missing_params'
+        message: 'Please provide either a recipe ID or name to create a variation.',
+        response_type: 'error_missing_recipe'
+      };
+    }
+    
+    if (!baseRecipe) {
+      return {
+        status: 'error',
+        message: 'Could not find the base recipe.',
+        response_type: 'error_recipe_not_found'
       };
     }
     
@@ -1700,7 +1748,7 @@ export async function executeCreateRecipeVariation(
     
     // Create a copy of the base recipe with updated information
     const newRecipe = {
-      ...baseRecipe,
+      ...Object.fromEntries(Object.entries(baseRecipe)),
       id: undefined, // Remove ID so a new one is generated
       recipe_name: modifiedRecipe.recipe_name,
       description: modifiedRecipe.description,
@@ -1740,6 +1788,183 @@ export async function executeCreateRecipeVariation(
       status: 'error',
       message: `Sorry, something went wrong creating a recipe variation. Please try again. (${error instanceof Error ? error.message : String(error)})`,
       response_type: 'error_unexpected'
+    };
+  }
+}
+
+/**
+ * Saves a recipe to the user's saved recipes and optionally logs it
+ * @param analysisData The analyzed recipe data including nutrition information
+ * @param userId The user ID
+ * @param supabaseClient The Supabase client
+ * @param logAfterSave Whether to log the recipe after saving
+ * @returns Response object with status and message
+ */
+export async function saveAndLogRecipe(
+  analysisData: Record<string, any>,
+  userId: string,
+  supabaseClient: any,
+  logAfterSave: boolean = true
+): Promise<any> {
+  console.log(`[DEBUG] saveAndLogRecipe called with logAfterSave=${logAfterSave}`);
+  
+  try {
+    // Extract recipe data
+    const recipeName = analysisData.recipe_name || 'Custom Recipe';
+    const ingredients = analysisData.ingredients || '';
+    const servingSize = analysisData.serving_size || '1 serving';
+    const totalServings = analysisData.total_servings || 1;
+    
+    // Create recipe object
+    const recipeData = {
+      user_id: userId,
+      recipe_name: recipeName,
+      description: ingredients,
+      serving_size_description: servingSize,
+      total_servings: totalServings,
+      // Add nutrition data
+      calories: analysisData.calories,
+      protein_g: analysisData.protein_g,
+      fat_total_g: analysisData.fat_total_g,
+      carbs_g: analysisData.carbs_g,
+      fiber_g: analysisData.fiber_g,
+      sugar_g: analysisData.sugar_g,
+      sodium_mg: analysisData.sodium_mg,
+      cholesterol_mg: analysisData.cholesterol_mg,
+      fat_saturated_g: analysisData.fat_saturated_g,
+      potassium_mg: analysisData.potassium_mg,
+      // Additional fields if available
+      omega_3_g: analysisData.omega_3_g,
+      omega_6_g: analysisData.omega_6_g,
+      fiber_soluble_g: analysisData.fiber_soluble_g
+    };
+    
+    // Insert recipe into database
+    const { data: savedRecipe, error: saveError } = await supabaseClient
+      .from('user_recipes')
+      .insert(recipeData)
+      .select()
+      .single();
+      
+    if (saveError) {
+      console.error(`Error saving recipe '${recipeName}':`, saveError);
+      return {
+        status: 'error',
+        message: `There was an error saving your recipe: ${saveError.message}`,
+        response_type: 'error_saving_recipe'
+      };
+    }
+    
+    // If logAfterSave is true, log the recipe
+    if (logAfterSave && savedRecipe) {
+      // Use executeLogExistingSavedRecipe to log the saved recipe
+      const logResult = await executeLogExistingSavedRecipe(
+        savedRecipe.id,
+        savedRecipe.recipe_name,
+        userId,
+        supabaseClient,
+        1 // Default to 1 serving for logging
+      );
+      
+      if (logResult.status === 'success') {
+        return {
+          status: 'success',
+          saved_recipe_id: savedRecipe.id,
+          logged_recipe_id: logResult.log_id,
+          message: `Recipe '${recipeName}' has been saved and logged successfully.`,
+          response_type: 'recipe_saved_and_logged'
+        };
+      } else {
+        return {
+          status: 'partial_success',
+          saved_recipe_id: savedRecipe.id,
+          message: `Recipe '${recipeName}' has been saved, but there was an issue logging it: ${logResult.message}`,
+          response_type: 'recipe_saved_not_logged'
+        };
+      }
+    }
+    
+    // If we're not logging or logging failed
+    return {
+      status: 'success',
+      saved_recipe_id: savedRecipe.id,
+      message: `Recipe '${recipeName}' has been saved to your recipes.`,
+      response_type: 'recipe_saved_only'
+    };
+    
+  } catch (error) {
+    console.error(`Error in saveAndLogRecipe:`, error);
+    return {
+      status: 'error',
+      message: `Sorry, something went wrong saving your recipe. Please try again. (${error instanceof Error ? error.message : String(error)})`,
+      response_type: 'error_unexpected'
+    };
+  }
+}
+
+/**
+ * Executes answering a general nutrition or health question
+ * @param question The user's question
+ * @param userId The user ID
+ * @param supabaseClient The Supabase client
+ * @param openai The OpenAI client
+ * @returns Response object with answer
+ */
+export async function executeAnswerGeneralQuestion(
+  question: string,
+  userId: string,
+  supabaseClient: any,
+  openai: any
+): Promise<any> {
+  console.log(`Executing tool: answerGeneralQuestion for question '${question}'`);
+  
+  // Input validation
+  if (!question || question.trim().length === 0) {
+    return {
+      status: 'error',
+      message: "I didn't catch your question. Could you please ask again?",
+      response_type: 'error_parsing_args'
+    };
+  }
+  
+  try {
+    // Use OpenAI to answer the question
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini", // Use a smaller model for quick general Q&A
+      messages: [
+        {
+          role: "system",
+          content: `You are a knowledgeable nutrition and health assistant. Provide accurate, informative answers 
+                    to nutrition and health questions. Never give medical diagnoses or treatment plans.
+                    Keep answers concise but comprehensive, around 2-3 paragraphs maximum.
+                    Always clarify when information is general advice vs. scientific consensus.
+                    If you don't know something or if it requires medical expertise, say so rather than guessing.
+                    Respond ONLY with the answer, no introductory phrases like "Here's what I know" or "According to"
+                    or "To answer your question".`
+        },
+        {
+          role: "user",
+          content: question
+        }
+      ],
+      temperature: 0.3, // Keep it factual and consistent
+      max_tokens: 500 // Limit length to ensure concise answers
+    });
+    
+    const answer = completion.choices[0].message.content || "I don't have enough information to answer that question.";
+    
+    return {
+      status: 'success',
+      message: answer,
+      question,
+      response_type: 'general_question_answered'
+    };
+  } catch (error) {
+    console.error(`Error in executeAnswerGeneralQuestion:`, error);
+    return {
+      status: 'error',
+      message: `Sorry, I'm having trouble answering your question right now. Please try again later. (${error instanceof Error ? error.message : String(error)})`,
+      response_type: 'error_ai_service'
     };
   }
 }

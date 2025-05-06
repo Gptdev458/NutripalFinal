@@ -1,4 +1,18 @@
 {
+  "compilerOptions": {
+    "allowJs": true,
+    "lib": ["deno.window"],
+    "strict": true
+  },
+  "importMap": "./import_map.json",
+  "lint": {
+    "include": ["**/*.ts"],
+    "exclude": ["**/*.d.ts", "node_modules/"]
+  },
+  "fmt": {
+    "include": ["**/*.ts"],
+    "exclude": ["**/*.d.ts", "node_modules/"]
+  },
   "imports": {
     "openai": "npm:openai@^4.0.0",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@^2.0.0"
