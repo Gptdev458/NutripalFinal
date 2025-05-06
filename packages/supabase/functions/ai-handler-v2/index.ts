@@ -37,6 +37,14 @@ const AI_PERSONA = `You are NutriPal, an encouraging, knowledgeable, and friendl
 
 End each successful interaction with a brief, positive follow-up like 'Anything else today?' or 'Keep up the great work!'`;
 
+// Add new pending action type for recipe name confirmation
+const pendingActionTypes = [
+    'confirm_log_saved_recipe',
+    'confirm_save_analyzed_recipe',
+    'confirm_recipe_name', // Add this new type
+    // ... other existing types
+];
+
 // @ts-ignore: Deno Deploy compatibility
 Deno.serve(async (req: Request) => {
   // --- Initialize outside try block ---
@@ -142,7 +150,7 @@ Deno.serve(async (req: Request) => {
         }
         console.log(`Request received - Message: "${message}", Action: ${action}, Pending Action Type: ${pending_action?.type}, Previous Context: ${previousContext}`);
 
-        // --- ADDED: Handle User Clarification Response --- START ---
+        // --- ADDED: Handle User Clarification Response ---
         if (pending_action?.type === 'awaiting_clarification' && message && supabaseClient) {
             console.log("[AI HANDLER] Handling user clarification response.");
             const userClarification = message;
@@ -171,7 +179,7 @@ Deno.serve(async (req: Request) => {
                 pending_action = null;
             }
         }
-        // --- ADDED: Handle User Clarification Response --- END ---
+        // --- ADDED: Handle User Clarification Response ---
 
     } catch (error) {
         console.error('Error parsing request body:', error);
@@ -200,58 +208,73 @@ Deno.serve(async (req: Request) => {
     }
     
     // --- NEW: Handle response providing serving info ---
-    if (pending_action?.type === 'awaiting_serving_info' && pending_action.analysis && message) {
-        console.log("[AI HANDLER DEBUG] Entered handler block for pending action: awaiting_serving_info");
-        // --- FIX: Ensure we work with the full original analysis data ---
-        const originalAnalysisData = pending_action.analysis as Record<string, any>; 
-        let totalServings: number | null = null;
-        let servingSizeDescription: string | null = null; // Optional future use
-
-        // Attempt to parse servings from user message
-        const servingMatch = message.match(/\b(\d+(\.\d+)?)\b/); // Simple number parsing
-        if (servingMatch && servingMatch[1]) {
-            totalServings = parseFloat(servingMatch[1]);
-            console.log(`[AI HANDLER DEBUG] Parsed totalServings: ${totalServings}`);
-        } else if (message.toLowerCase().includes('skip') || message.toLowerCase().includes('unsure') || message.toLowerCase().includes('i don\'t know')) {
-            totalServings = null; // User skipped
-            console.log(`[AI HANDLER DEBUG] User skipped providing totalServings.`);
-        } else {
-             // Could not parse, maybe ask again or default?
-             // For now, let's proceed as if skipped and clear the pending action.
-             console.warn(`[AI HANDLER DEBUG] Could not parse serving number from message: "${message}". Proceeding without serving info.`);
-             totalServings = null;
+    if (pending_action?.type === 'awaiting_serving_size' && pending_action.product && message) {
+      console.log(`[AI HANDLER] Processing serving size response: "${message}"`);
+      
+      const product = pending_action.product;
+      const originalQuery = pending_action.original_query || '';
+      
+      // Parse serving size from message
+      let servings = 1; // Default to 1 serving
+      const servingMatch = message.match(/\b(\d+(\.\d+)?)\b/);
+      if (servingMatch && servingMatch[1]) {
+        servings = parseFloat(servingMatch[1]);
+        if (servings <= 0 || isNaN(servings)) servings = 1;
+        console.log(`[AI HANDLER] Parsed serving size: ${servings}`);
+      }
+      
+      // Get full nutrition data if needed
+      try {
+        // First check if full nutrition data is in the product already
+        if (!product.nutrition_data) {
+          // Try to fetch from cache
+          const { data: cachedProduct } = await supabaseClient
+            .from('food_products')
+            .select('*')
+            .eq('product_name', product.product_name)
+            .single();
+          
+          if (cachedProduct?.nutrition_data) {
+            product.nutrition_data = cachedProduct.nutrition_data;
+          }
         }
-
-        // --- FIX: Create the *updated* analysis data object ---
-        // Start with the original data, then add/overwrite serving info
-        const updatedAnalysisData = {
-            ...originalAnalysisData, // Preserve all original fields (name, desc, nutrients)
-            recipe_name: originalAnalysisData.recipe_name, 
-            total_servings: totalServings,
-            serving_size_description: servingSizeDescription
-        };
-        // -----------------------------------------------------------
-
-        // Now, set up the *next* pending action using the updated data
-        // --- FIX: Revert to simpler assignment now that analysis tool guarantees name/desc ---
-        const nextPendingAction = {
-            type: 'confirm_save_log_analyzed_recipe', 
-            analysis: updatedAnalysisData // Pass the complete object which now includes name/desc/servings
-        };
-        // -------------------------------------------------------------------------------------
-        await setPendingAction(userId, nextPendingAction, supabaseClient);
-        console.log("[AI HANDLER DEBUG] Set pending_action to confirm_save_log_analyzed_recipe with updated analysis.");
-
-        // Ask the final confirmation question (use recipe name from updated data)
-        const recipeNameForPrompt = updatedAnalysisData.recipe_name || 'the recipe';
-        const servingText = totalServings ? `(${totalServings} servings)` : '(servings unspecified)';
+        
+        // Call logPremadeFood with the provided servings
+        const logResult = await toolExec.executeLogPremadeFood(
+          product.product_name,
+          product.calories || 0,
+          product.nutrition_data || { calories: product.calories },
+          servings,
+          userId,
+          supabaseClient
+        );
+        
+        // Clear the pending action
+        await clearPendingAction(userId, supabaseClient);
+        
+        // Return the result
         responseData = {
-            status: 'clarification',
-            message: `Got it. Save recipe '${recipeNameForPrompt}' ${servingText}? You can then choose to log 1 serving now. (Options: Yes, Save Only, Cancel)`,
-            response_type: 'recipe_save_log_final_confirmation'
+          status: 'success',
+          message: `I've logged ${servings} serving(s) of ${product.product_name} for you.`,
+          logged_food_name: product.product_name,
+          response_type: 'food_logged_with_servings'
         };
+        
         requestHandled = true;
-        console.log('[AI HANDLER DEBUG] Exiting awaiting_serving_info handler block. Prompting final confirmation.');
+      } catch (error) {
+        console.error("Error logging food with serving size:", error);
+        
+        responseData = {
+          status: 'error',
+          message: `Sorry, I couldn't log ${product.product_name}. ${error instanceof Error ? error.message : 'An error occurred'}`,
+          response_type: 'error'
+        };
+        
+        requestHandled = true;
+      }
+      
+      // Clear pending action either way
+      await clearPendingAction(userId, supabaseClient);
     }
     // --- NEW: Handle the FINAL confirmation for saving/logging analyzed recipe ---
     else if (pending_action?.type === 'confirm_save_log_analyzed_recipe' && pending_action.analysis && message) {
@@ -329,86 +352,194 @@ Deno.serve(async (req: Request) => {
         console.log('[AI HANDLER DEBUG] Exiting awaiting_log_portion_amount handler block.');
 
     }
-    // --- MODIFIED: Handle initial confirmation/request to log existing saved recipe ---
+    // --- IMPROVED: Handle initial confirmation/request to log existing saved recipe ---
     else if (pending_action?.type === 'confirm_log_saved_recipe' && message) {
       console.log("[AI HANDLER DEBUG] Entered handler block for pending action: confirm_log_saved_recipe");
+      console.log("[DEBUG_SERVINGS_CRITICAL] VERSION 2023-08-15-C: Enhanced serving size handling with explicit parameter passing");
+      
+      // Log the EXACT structure of pending_action for debugging
+      console.log(`[DEBUG_SERVINGS_CRITICAL] PENDING ACTION FULL CONTENT: ${JSON.stringify(pending_action)}`);
+      
       const normalizedMessage = message.toLowerCase();
-      const isConfirmed = /\b(yes|confirm|log it|sounds good|do it|ok|okay)\b/i.test(normalizedMessage);
       const recipeId = pending_action.recipe_id as string;
       const recipeName = pending_action.recipe_name as string;
-
-      if (isConfirmed && recipeId && recipeName) {
-          // Before executing, check if we need to ask for portion size
-          console.log(`[AI HANDLER DEBUG] User confirmed log for recipe ID: ${recipeId}. Checking if portion prompt is needed.`);
-          let needsPortionPrompt = false;
-          let fetchedTotalServings: number | null = null;
-          
-          try {
-              const { data: recipeDetails, error: fetchError } = await supabaseClient
-                  .from('user_recipes')
-                  .select('total_servings')
-                  .eq('id', recipeId)
-                  .eq('user_id', userId)
-                  .maybeSingle(); // Use maybeSingle to handle potential null
-              
-              if (fetchError) {
-                  console.warn(`[AI HANDLER DEBUG] Error fetching total_servings for recipe ${recipeId}: ${fetchError.message}. Proceeding with default log.`);
-              } else if (recipeDetails && recipeDetails.total_servings && typeof recipeDetails.total_servings === 'number' && recipeDetails.total_servings > 0) {
-                  // Only prompt if total_servings is known and potentially > 1 (or just exists)
-                  needsPortionPrompt = true;
-                  fetchedTotalServings = recipeDetails.total_servings;
-                  console.log(`[AI HANDLER DEBUG] Recipe has total_servings: ${fetchedTotalServings}. Portion prompt needed.`);
-              } else {
-                  console.log(`[AI HANDLER DEBUG] Recipe ${recipeId} has no total_servings or it's invalid. Portion prompt NOT needed.`);
-              }
-          } catch (e) {
-              console.error('[AI HANDLER DEBUG] Exception fetching total_servings:', e);
-          }
-
-          if (needsPortionPrompt) {
-              // Set pending action to await portion amount
-              const nextPendingAction = {
-                  type: 'awaiting_log_portion_amount',
-                  recipe_id: recipeId,
-                  recipe_name: recipeName
-              };
-              await setPendingAction(userId, nextPendingAction, supabaseClient);
-              console.log("[AI HANDLER DEBUG] Set pending_action to awaiting_log_portion_amount.");
-              
-              // Ask the user for the portion amount
-              responseData = {
-                  status: 'clarification',
-                  message: `Okay, logging '${recipeName}'. How much did you have? (e.g., '1 serving', '0.5', 'half')`,
-                  response_type: 'request_log_portion_amount' // New response type for frontend context
-              };
-              requestHandled = true;
-               console.log('[AI HANDLER DEBUG] Prompting user for consumed portion.');
-          } else {
-              // No need to prompt, log 1 serving (or the whole thing)
-              console.log(`[AI HANDLER DEBUG] No portion prompt needed. Calling toolExec.executeLogExistingSavedRecipe directly with default 1 serving.`);
-              responseData = await toolExec.executeLogExistingSavedRecipe(
-                recipeId,
-                recipeName,
-                userId,
-                supabaseClient,
-                1 // Log 1 serving by default if total_servings unknown
-              );
-              responseData.response_type = responseData.status === 'success' ? 'saved_recipe_logged' : responseData.response_type || 'error_logging_recipe';
-              await clearPendingAction(userId, supabaseClient);
-              requestHandled = true;
-          }
-      } else { // User did not confirm the initial log request
-        console.log(`[AI HANDLER DEBUG] User response did not confirm initial logging request for recipe '${recipeName}'. Cancelling.`);
-        responseData = {
-          status: 'clarification',
-          message: `Okay, I won't log '${recipeName}' right now. What else can I help with?`,
-          response_type: 'action_cancelled'
-        };
-         await clearPendingAction(userId, supabaseClient);
-         requestHandled = true;
+      
+      // CRITICAL FIX: Ensure we get the requested_servings directly from pending_action
+      // 1. First check if it's already in the pending_action (should be from our fix)
+      let servings = 1; // Default fallback
+      
+      if (pending_action.requested_servings !== undefined) {
+        // Explicitly convert to number to avoid type issues
+        servings = Number(pending_action.requested_servings);
+        console.log(`[DEBUG_SERVINGS_CRITICAL] Found servings in pending_action: ${servings} (${typeof servings})`);
+      } else {
+        console.log(`[DEBUG_SERVINGS_CRITICAL] WARNING: No requested_servings in pending_action!`);
+        
+        // 2. Fall back to checking the confirmation message
+        const servingMatch = normalizedMessage.match(/\b(\d+(?:\.\d+)?)\b/);
+        if (servingMatch && servingMatch[1]) {
+          servings = Number(servingMatch[1]);
+          console.log(`[DEBUG_SERVINGS_CRITICAL] Extracted serving size from confirmation: ${servings} (${typeof servings})`);
+        } else {
+          console.log(`[DEBUG_SERVINGS_CRITICAL] No serving size in confirmation message, using default: ${servings}`);
+        }
       }
-      // Note: clearPendingAction is handled within the if/else branches now
-      console.log('[AI HANDLER DEBUG] Exiting confirm_log_saved_recipe handler block (New Logic).');
+      
+      // Ensure servings is a valid number greater than 0
+      servings = Math.max(1, Number(servings) || 1);
+      console.log(`[DEBUG_SERVINGS_CRITICAL] FINAL servings to log: ${servings} (${typeof servings})`);
+      
+      // Check if it's a confirmation (yes/ok/confirm) or a specific number
+      if (normalizedMessage.match(/^(?:y(?:es)?|ok(?:ay)?|sure|confirm|log|track|do it|yep|yeah|👍|correct|right|sounds good)$/i) || 
+          normalizedMessage.match(/^(?:\d+(?:\.\d+)?)$/)) {
+        
+        try {
+          // Clear pending action before executing to avoid race conditions or double logging
+          await clearPendingAction(userId, supabaseClient);
+          
+          // CRITICAL FIX: Explicitly log the final parameters being passed
+          console.log(`[DEBUG_SERVINGS_CRITICAL] Calling executeLogExistingSavedRecipe with: recipeId=${recipeId}, recipeName=${recipeName}, servings=${servings}`);
+          
+          // Log with explicit servings number - CRITICAL: Make sure servings is passed as the 5th parameter
+          const result = await toolExec.executeLogExistingSavedRecipe(
+            recipeId,
+            recipeName,
+            userId,
+            supabaseClient,
+            servings // CRITICAL: This must be passed correctly
+          );
+          
+          if (result.status === 'success') {
+            // Explicitly mention the number of servings in the response for user confirmation
+            // Use the servings value returned by the function call for consistency
+            const resultServings = result.servings || servings;
+            const servingsText = resultServings === 1 ? '1 serving' : `${resultServings} servings`;
+            const response = `Logged ${servingsText} of '${recipeName}' successfully.`;
+            
+            console.log(`[DEBUG_SERVINGS_CRITICAL] Final success response: ${response}`);
+            
+            responseData = {
+              status: 'success',
+              message: response,
+              response_type: 'success',
+              response,
+              servings: resultServings // Include servings in the response data
+            };
+            
+            return new Response(JSON.stringify(responseData), {
+              headers: CORS_HEADERS
+            });
+          } else {
+            responseData = {
+              status: 'error',
+              message: result.message || "Sorry, there was an error logging your recipe.",
+              response_type: 'error'
+            };
+            
+            return new Response(JSON.stringify(responseData), {
+              headers: CORS_HEADERS
+            });
+          }
+        } catch (error) {
+          console.error("Error logging existing recipe:", error);
+          responseData = {
+            status: 'error',
+            message: `Sorry, I wasn't able to log your recipe due to an error: ${error instanceof Error ? error.message : String(error)}`,
+            response_type: 'error'
+          };
+          
+          return new Response(JSON.stringify(responseData), {
+            headers: CORS_HEADERS
+          });
+        }
+      } else if (normalizedMessage.match(/^(?:n(?:o)?|nope|cancel|don't|stop|wrong)$/i)) {
+        // Handle rejection to log
+        await clearPendingAction(userId, supabaseClient);
+        responseData = {
+          status: 'info',
+          message: "No problem, I won't log that recipe. Is there something else I can help you with?"
+        };
+        
+        return new Response(JSON.stringify(responseData), {
+          headers: CORS_HEADERS
+        });
+      } else {
+        // Unclear response - ask for clarification
+        responseData = {
+          status: 'question',
+          message: `I'm not sure if you want to log ${recipeName}. Please respond with "yes" to log it, or "no" to cancel.`
+        };
+        
+        return new Response(JSON.stringify(responseData), {
+          headers: CORS_HEADERS
+        });
+      }
+    }
+    // Add a new handler for recipe name confirmation
+    else if (pending_action?.type === 'confirm_recipe_name') {
+        console.log('[AI HANDLER DEBUG] Processing confirm_recipe_name');
+        const suggestedName = pending_action.suggested_name;
+        const ingredients = pending_action.ingredients;
+        const nutritionData = pending_action.nutrition_data;
+        
+        // Check if user confirmed the name
+        const isConfirmation = message?.toLowerCase().includes('yes') || 
+                               message?.toLowerCase().includes('confirm') || 
+                               message?.toLowerCase().includes('good') ||
+                               message?.toLowerCase().includes('fine') ||
+                               message?.toLowerCase().includes('okay') ||
+                               message?.toLowerCase().includes('that works');
+                               
+        if (isConfirmation) {
+            console.log(`[AI HANDLER DEBUG] User confirmed recipe name: ${suggestedName}`);
+            
+            // Proceed with the confirmed name
+            responseData = {
+                status: 'clarification',
+                message: `Great! I'll use "${suggestedName}" as the recipe name. Would you like to save it now?`,
+                response_type: 'recipe_name_confirmed',
+                pending_action: {
+                    type: 'confirm_save_analyzed_recipe',
+                    recipe_name: suggestedName,
+                    ingredients: ingredients,
+                    nutrition_data: nutritionData
+                }
+            };
+            requestHandled = true;
+        } else if (message && message.length > 2) {
+            // User provided an alternative name
+            const userProvidedName = message.trim();
+            console.log(`[AI HANDLER DEBUG] User provided alternative recipe name: ${userProvidedName}`);
+            
+            responseData = {
+                status: 'clarification',
+                message: `I'll use "${userProvidedName}" as the recipe name instead. Would you like to save it now?`,
+                response_type: 'recipe_name_updated',
+                pending_action: {
+                    type: 'confirm_save_analyzed_recipe',
+                    recipe_name: userProvidedName,
+                    ingredients: ingredients,
+                    nutrition_data: nutritionData
+                }
+            };
+            requestHandled = true;
+        } else {
+            // User rejected but didn't provide alternative
+            console.log('[AI HANDLER DEBUG] User rejected recipe name without alternative');
+            
+            responseData = {
+                status: 'clarification',
+                message: `What would you like to name this recipe instead?`,
+                response_type: 'recipe_name_request',
+                pending_action: {
+                    type: 'confirm_recipe_name',
+                    suggested_name: suggestedName, // Keep the original suggestion
+                    ingredients: ingredients,
+                    nutrition_data: nutritionData
+                }
+            };
+            requestHandled = true;
+        }
     }
     // ... (Add more pre-OpenAI action handlers as needed) ...
 
@@ -490,6 +621,13 @@ Deno.serve(async (req: Request) => {
                             supabaseClient
                         );
                         break;
+                    case 'lookupPremadeFood':
+                        toolResultPayload = await toolExec.executeLookupPremadeFood(
+                            toolArgs.food_name, 
+                            userId, 
+                            supabaseClient
+                        );
+                        break;
                     case 'logExistingSavedRecipe':
                         toolResultPayload = await toolExec.executeLogExistingSavedRecipe(toolArgs.recipe_id, toolArgs.recipe_name, userId, supabaseClient);
                         break;
@@ -521,6 +659,25 @@ Deno.serve(async (req: Request) => {
                     case 'clarifyDishType':
                          toolResultPayload = { status: 'success', message: `Could you clarify what you meant by "${toolArgs.dish_name}"?`, response_type: 'clarification_needed', clarification_for: toolArgs.dish_name };
                          break;
+                    case 'findRecipesByNutrition':
+                        toolResultPayload = await toolExec.executeFindRecipesByNutrition(
+                            toolArgs.nutrient,
+                            toolArgs.min_value,
+                            toolArgs.max_value,
+                            userId,
+                            supabaseClient
+                        );
+                        break;
+                    case 'createRecipeVariation':
+                        toolResultPayload = await toolExec.executeCreateRecipeVariation(
+                            toolArgs.base_recipe_id || null,
+                            toolArgs.base_recipe_name || null,
+                            toolArgs.modifications,
+                            userId,
+                            supabaseClient,
+                            openai
+                        );
+                        break;
                     default:
                          console.error(`[AI HANDLER] Unknown tool name: ${toolName}`);
                          toolResultPayload = { status: 'error', message: `Unknown tool: ${toolName}` };
@@ -556,7 +713,10 @@ Deno.serve(async (req: Request) => {
             let resultPayload: any;
             try {
                 resultPayload = JSON.parse(toolResponseMessage.content);
-            } catch (e) { continue; }
+            } catch (e) {
+                console.warn(`[AI HANDLER] Could not parse JSON content for tool ${toolName}:`, toolResponseMessage.content);
+                continue;
+            }
 
             // ---- Handle executeAnalyzeRecipeIngredients ----
             if (toolName === 'analyzeRecipeIngredients' && resultPayload?.status === 'success' && resultPayload?.analysis) {
@@ -583,26 +743,113 @@ Deno.serve(async (req: Request) => {
                 primaryToolResultPayload = resultPayload; // Store payload if needed
                 break; // Exit the loop, we found our special case
             }
+            // Add debug logging to verify recipe search result payload
+            if (toolName === 'findSavedRecipeByName') {
+                console.log(`[DEBUG_SERVINGS_CRITICAL] Tool result payload for findSavedRecipeByName: ${JSON.stringify(resultPayload)}`);
+            }
             // ---- Handle executeFindSavedRecipeByName (Single Match) ----
             else if (toolName === 'findSavedRecipeByName' && resultPayload?.status === 'success' && resultPayload?.count === 1 && resultPayload?.matches?.[0]) {
                  console.log("[AI HANDLER DEBUG] Intercepting successful findSavedRecipeByName (single match) result BEFORE final AI call.");
                  const recipe = resultPayload.matches[0];
-                 // Set pending action
-                 const pendingSavedRecipeAction = { type: 'confirm_log_saved_recipe', recipe_id: recipe.id, recipe_name: recipe.recipe_name };
+                 
+                 // CRITICAL FIX: Include requested_servings from resultPayload in the pending action
+                 const requestedServings = resultPayload.requested_servings || 1;
+                 console.log(`[DEBUG_SERVINGS_CRITICAL] Found requested_servings in resultPayload: ${requestedServings}`);
+                 
+                 // Set pending action with the requested_servings
+                 const pendingSavedRecipeAction = { 
+                     type: 'confirm_log_saved_recipe', 
+                     recipe_id: recipe.id, 
+                     recipe_name: recipe.recipe_name,
+                     requested_servings: Number(requestedServings) // CRITICAL FIX: Copy servings from result payload
+                 };
                  await setPendingAction(userId, pendingSavedRecipeAction, supabaseClient);
                  console.log('[AI HANDLER DEBUG] Set pending_action for confirm_log_saved_recipe:', JSON.stringify(pendingSavedRecipeAction));
 
-                 // Construct the clarification response directly
+                 // Format servings text for the message (singular vs plural)
+                 const servingsText = requestedServings === 1 ? '1 serving' : `${requestedServings} servings`;
+                 
+                 // Construct the clarification response directly with servings info
                  responseData = {
                     status: 'clarification',
-                    message: `I found your saved recipe '${recipe.recipe_name}'. Log it now?`,
-                    response_type: 'confirm_log_saved_recipe' 
+                    message: `I found your saved recipe '${recipe.recipe_name}'. Log ${servingsText} now?`,
+                    response_type: 'confirm_log_saved_recipe',
+                    requested_servings: Number(requestedServings) // Include in response for frontend context
                  };
                  requestHandled = true;
                  specialHandlingComplete = true;
                  console.log('[AI HANDLER DEBUG] Returning clarification request for logging found recipe.');
                  primaryToolResultPayload = resultPayload; // Store payload if needed
                  break; // Exit loop
+            }
+            // ---- Handle lookupPremadeFood (Multiple Matches Found) ----
+            else if (toolName === 'lookupPremadeFood' && resultPayload?.status === 'clarification' && resultPayload?.response_type === 'multiple_products_found_clarification') {
+                console.log("[AI HANDLER DEBUG] Intercepting lookupPremadeFood (multiple matches) result BEFORE final AI call.");
+                // Construct the clarification response directly
+                // Format options for better display
+                const optionsText = (resultPayload.options || []).map((opt: any, index: number) => 
+                    `${index + 1}. ${opt.product_name} (${opt.brand || 'Unknown Brand'}${opt.calories ? `, ${opt.calories} kcal` : ''}`
+                ).join('\n');
+
+                // Make sure each option includes all needed data
+                const enhancedOptions = (resultPayload.options || []).map(opt => ({
+                    ...opt,
+                    product_name: opt.product_name || 'Unknown Product',
+                    brand: opt.brand || 'Unknown Brand',
+                    calories: opt.calories || 0
+                }));
+
+                responseData = {
+                    status: 'clarification', 
+                    message: `${resultPayload.message}\n${optionsText}\nOr provide more details?`,
+                    response_type: 'multiple_products_found_clarification',
+                    // Include options in context for potential frontend handling
+                    context_for_reply: { 
+                        original_query: resultPayload.original_query, // Make sure the tool adds this
+                        options: enhancedOptions 
+                    }
+                };
+                
+                // No pending action needed here - we'll set it when the user responds with a selection
+                requestHandled = true;
+                specialHandlingComplete = true;
+                console.log('[AI HANDLER DEBUG] Returning clarification request for multiple products found.');
+                primaryToolResultPayload = resultPayload; // Store payload if needed
+                break; // Exit loop
+            }
+            // Handle lookupPremadeFood (Single Match Found)
+            else if (toolName === 'lookupPremadeFood' && resultPayload?.status === 'success' && resultPayload?.response_type === 'product_found') {
+                console.log("[AI HANDLER DEBUG] Intercepting successful lookupPremadeFood result BEFORE final AI call.");
+                
+                // Create a simplified product object for the pending action
+                const productInfo = {
+                    product_name: resultPayload.product_name,
+                    calories: resultPayload.nutrition_data?.calories || 0,
+                    nutrition_data: resultPayload.nutrition_data,
+                    brand: resultPayload.nutrition_data?.brand || null
+                };
+                
+                // Set pending action to prompt for serving size
+                const pendingAction = {
+                    type: 'awaiting_serving_size',
+                    product: productInfo,
+                    original_query: resultPayload.original_query || resultPayload.product_name
+                };
+                
+                await setPendingAction(userId, pendingAction, supabaseClient);
+                
+                // Prompt for serving size instead of immediately logging
+                responseData = {
+                    status: 'clarification',
+                    message: `Found ${resultPayload.product_name}. How many servings did you have?`,
+                    response_type: 'request_serving_size'
+                };
+                
+                requestHandled = true;
+                specialHandlingComplete = true;
+                console.log('[AI HANDLER DEBUG] Prompting for serving size before logging product.');
+                primaryToolResultPayload = resultPayload;
+                break; // Exit loop
             }
             // Add other special handling cases here if needed
         }
@@ -736,6 +983,144 @@ Deno.serve(async (req: Request) => {
           console.error("Error storing conversation message:", dbError);
           // Don't fail the whole request, just log the error
       }
+    }
+
+    // Check if this is a numeric response to a food disambiguation
+    if (context?.response_type === 'multiple_products_found_clarification' && 
+        context?.options && 
+        Array.isArray(context.options) && 
+        context.options.length > 0 && 
+        context.original_query) {
+      
+      // Try to parse a numeric selection from the user message
+      const selectionMatch = message?.match(/^[1-9]\d*$/);
+      if (selectionMatch) {
+        const selectionIndex = parseInt(selectionMatch[0], 10) - 1; // Convert to zero-based index
+        
+        if (selectionIndex >= 0 && selectionIndex < context.options.length) {
+          console.log(`[AI HANDLER] User selected option ${selectionIndex + 1} from disambiguation`);
+          
+          // Get the selected product from the options
+          const selectedProduct = context.options[selectionIndex];
+          const originalQuery = context.original_query;
+          
+          // Cache the selection to avoid repeated disambiguation
+          try {
+            // Prepare the data for caching the selected product
+            const cacheEntry = {
+              product_name: selectedProduct.product_name,
+              search_term: originalQuery,
+              nutrition_data: {
+                calories: selectedProduct.calories,
+                // We don't have full nutrition data here, but will at least cache calories
+              },
+              source: 'user_selection',
+              brand: selectedProduct.brand,
+              confidence_score: 100 // High confidence since user explicitly selected it
+            };
+            
+            // Insert into cache
+            await supabaseClient
+              .from('food_products')
+              .insert(cacheEntry);
+            
+            console.log(`[AI HANDLER] Cached user selection mapping "${originalQuery}" → "${selectedProduct.product_name}"`);
+          } catch (cacheError) {
+            console.error(`[AI HANDLER] Error caching user selection:`, cacheError);
+          }
+          
+          // Create a pending action to prompt for serving size
+          const pendingAction = {
+            type: 'awaiting_serving_size',
+            product: selectedProduct,
+            original_query: originalQuery
+          };
+          
+          await setPendingAction(userId, pendingAction, supabaseClient);
+          
+          // Respond asking for serving size
+          responseData = {
+            status: 'clarification',
+            message: `Got it. How many servings of ${selectedProduct.product_name} did you have?`,
+            response_type: 'request_serving_size'
+          };
+          
+          requestHandled = true;
+          return new Response(JSON.stringify(responseData), {
+            headers: CORS_HEADERS
+          });
+        }
+      }
+    }
+    
+    // Handle response to serving size prompt 
+    if (pending_action?.type === 'awaiting_serving_size' && pending_action.product && message) {
+      console.log(`[AI HANDLER] Processing serving size response: "${message}"`);
+      
+      const product = pending_action.product;
+      const originalQuery = pending_action.original_query || '';
+      
+      // Parse serving size from message
+      let servings = 1; // Default to 1 serving
+      const servingMatch = message.match(/\b(\d+(\.\d+)?)\b/);
+      if (servingMatch && servingMatch[1]) {
+        servings = parseFloat(servingMatch[1]);
+        if (servings <= 0 || isNaN(servings)) servings = 1;
+        console.log(`[AI HANDLER] Parsed serving size: ${servings}`);
+      }
+      
+      // Get full nutrition data if needed
+      try {
+        // First check if full nutrition data is in the product already
+        if (!product.nutrition_data) {
+          // Try to fetch from cache
+          const { data: cachedProduct } = await supabaseClient
+            .from('food_products')
+            .select('*')
+            .eq('product_name', product.product_name)
+            .single();
+          
+          if (cachedProduct?.nutrition_data) {
+            product.nutrition_data = cachedProduct.nutrition_data;
+          }
+        }
+        
+        // Call logPremadeFood with the provided servings
+        const logResult = await toolExec.executeLogPremadeFood(
+          product.product_name,
+          product.calories || 0,
+          product.nutrition_data || { calories: product.calories },
+          servings,
+          userId,
+          supabaseClient
+        );
+        
+        // Clear the pending action
+        await clearPendingAction(userId, supabaseClient);
+        
+        // Return the result
+        responseData = {
+          status: 'success',
+          message: `I've logged ${servings} serving(s) of ${product.product_name} for you.`,
+          logged_food_name: product.product_name,
+          response_type: 'food_logged_with_servings'
+        };
+        
+        requestHandled = true;
+      } catch (error) {
+        console.error("Error logging food with serving size:", error);
+        
+        responseData = {
+          status: 'error',
+          message: `Sorry, I couldn't log ${product.product_name}. ${error instanceof Error ? error.message : 'An error occurred'}`,
+          response_type: 'error'
+        };
+        
+        requestHandled = true;
+      }
+      
+      // Clear pending action either way
+      await clearPendingAction(userId, supabaseClient);
     }
 
     // --- 7. Return Response ---

@@ -240,6 +240,31 @@ Examples:
     {
         type: 'function',
         function: {
+            name: 'lookupPremadeFood',
+            description: `Looks up nutrition information for brand-name or pre-packaged foods from a database.
+- ALWAYS try this tool FIRST when the user mentions a branded/packaged food WITHOUT providing nutrition details
+- Appropriate for commercial products (e.g., "Clif Bar", "Cheerios", "Chobani Yogurt")
+- DO NOT ask the user for nutrition info if the product is likely in a standard database
+- Use this BEFORE asking the user to provide nutrition information for branded products
+Examples:
+  - "I had a Clif Bar Chocolate Chip" → lookupPremadeFood("Clif Bar Chocolate Chip")
+  - "I ate Cheerios for breakfast" → lookupPremadeFood("Cheerios")
+  - "Ate a Snickers bar" → lookupPremadeFood("Snickers bar")`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    food_name: {
+                        type: 'string',
+                        description: `The specific name of the food product including brand, flavor, variety if mentioned (e.g., "Clif Bar Chocolate Chip", "Chobani Strawberry Greek Yogurt")`
+                    }
+                },
+                required: ['food_name']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
             name: 'deleteLoggedFood',
             description: `Deletes a logged food entry. Use when the user asks to delete a specific food log (by ID or description) or to delete their most recent log if no ID is provided. Confirm with the user before deleting if the request is ambiguous.`,
             parameters: {
@@ -309,6 +334,56 @@ Examples:
                     }
                 },
                 required: ['nutrient', 'target_value']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'findRecipesByNutrition',
+            description: 'Finds recipes by nutritional properties, like calories, protein, fat, etc.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    nutrient: {
+                        type: 'string',
+                        description: 'Nutrient to search by (e.g., \'calories\', \'protein\', \'fat\', etc.)'
+                    },
+                    min_value: {
+                        type: 'number',
+                        description: 'Minimum value for the nutrient (optional)'
+                    },
+                    max_value: {
+                        type: 'number',
+                        description: 'Maximum value for the nutrient (optional)'
+                    }
+                },
+                required: ['nutrient']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'createRecipeVariation',
+            description: 'Creates a variation of an existing recipe by applying modifications',
+            parameters: {
+                type: 'object',
+                properties: {
+                    base_recipe_id: {
+                        type: 'string',
+                        description: 'ID of the base recipe to modify (optional if base_recipe_name is provided)'
+                    },
+                    base_recipe_name: {
+                        type: 'string',
+                        description: 'Name of the base recipe to modify (optional if base_recipe_id is provided)'
+                    },
+                    modifications: {
+                        type: 'string',
+                        description: 'Description of modifications to make (e.g., \'add protein powder\', \'replace milk with almond milk\')'
+                    }
+                },
+                required: ['modifications']
             }
         }
     }

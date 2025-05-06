@@ -60,6 +60,27 @@ const getPastDate = (daysAgo: number): Date => {
     return date;
 };
 
+// Calculate appropriate Y-axis domain based on data and nutrient type
+const calculateYAxisDomain = (chartData: ChartPoint[], goalValue: number, nutrientType: string | null) => {
+  if (!chartData || chartData.length === 0) return [0, 100];
+  
+  // Find max value from data points
+  const maxDataValue = Math.max(
+    ...chartData.map(point => (point.Actual !== null ? point.Actual : 0)),
+    goalValue || 0
+  );
+  
+  // For calories, use round numbers with appropriate scaling
+  if (nutrientType === 'calories') {
+    // Add buffer and use nice round numbers
+    const ceiling = Math.max(1000, maxDataValue * 1.2); // At least 1000 for calories
+    return [0, Math.ceil(ceiling / 500) * 500]; // Round to nearest 500
+  }
+  
+  // For other nutrients, add 20% padding above max
+  const padding = Math.max(maxDataValue * 0.2, 5); // At least 5 units of padding
+  return [0, Math.ceil(maxDataValue + padding)];
+};
 
 export default function AnalyticsPage() {
   const { user, supabase, loading: authLoading } = useAuth();
@@ -405,13 +426,21 @@ export default function AnalyticsPage() {
                                         <LineChart data={weeklyChartData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
                                             <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                                             <XAxis dataKey="label" fontSize={12} />
-                                            <YAxis fontSize={12} unit={getNutrientUnit(selectedNutrient) || undefined} />
-                                            <Tooltip formatter={(value: number) => value.toFixed(1)} />
+                                            <YAxis 
+                                                fontSize={12}
+                                                domain={calculateYAxisDomain(weeklyChartData, currentGoal?.target_value || 0, selectedNutrient)}
+                                                allowDecimals={false}
+                                                tickCount={6}
+                                            />
+                                            <Tooltip 
+                                                formatter={(value: number) => `${value.toFixed(1)} ${getNutrientUnit(selectedNutrient)}`} 
+                                                labelFormatter={(label) => `Day: ${label}`}
+                                            />
                                             <Legend />
                                             <Line 
                                                 type="monotone" 
                                                 dataKey="Actual" 
-                                                stroke="#3b82f6" /* blue-500 */
+                                                stroke="#3b82f6"
                                                 strokeWidth={2} 
                                                 dot={{ r: 4 }}
                                                 activeDot={{ r: 6 }}
@@ -419,7 +448,7 @@ export default function AnalyticsPage() {
                                             <Line 
                                                 type="monotone" 
                                                 dataKey="Goal" 
-                                                stroke="#ef4444" /* red-500 */ 
+                                                stroke="#ef4444"
                                                 strokeWidth={1}
                                                 strokeDasharray="5 5" 
                                                 dot={false}
@@ -436,22 +465,30 @@ export default function AnalyticsPage() {
                                      <ResponsiveContainer width="100%" height={300}>
                                         <LineChart data={monthlyChartData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
                                             <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-                                            <XAxis dataKey="label" fontSize={12} tickCount={6} /* Reduce ticks for monthly */ /> 
-                                            <YAxis fontSize={12} unit={getNutrientUnit(selectedNutrient) || undefined} />
-                                            <Tooltip formatter={(value: number) => value.toFixed(1)} />
+                                            <XAxis dataKey="label" fontSize={12} tickCount={6} />
+                                            <YAxis 
+                                                fontSize={12}
+                                                domain={calculateYAxisDomain(monthlyChartData, currentGoal?.target_value || 0, selectedNutrient)}
+                                                allowDecimals={false}
+                                                tickCount={6}
+                                            />
+                                            <Tooltip 
+                                                formatter={(value: number) => `${value.toFixed(1)} ${getNutrientUnit(selectedNutrient)}`}
+                                                labelFormatter={(label) => `Date: ${label}`}
+                                            />
                                             <Legend />
                                             <Line 
                                                 type="monotone" 
                                                 dataKey="Actual" 
-                                                stroke="#10b981" /* emerald-500 */
+                                                stroke="#10b981"
                                                 strokeWidth={2} 
-                                                dot={false} /* Hide dots for monthly */
+                                                dot={false}
                                                 activeDot={{ r: 6 }}
                                             />
                                             <Line 
                                                 type="monotone" 
                                                 dataKey="Goal" 
-                                                stroke="#f97316" /* orange-500 */ 
+                                                stroke="#f97316"
                                                 strokeWidth={1}
                                                 strokeDasharray="5 5" 
                                                 dot={false}
