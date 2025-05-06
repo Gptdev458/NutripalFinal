@@ -975,7 +975,7 @@ Deno.serve(async (req: Request) => {
         await supabaseClient.from('chat_messages').insert({ 
             chat_id: chatId || 'unknown',
             user_id: userId, 
-            sender: 'ai', 
+            sender: 'bot',
             message: responseData.message, 
             response_metadata: { response_type: responseData.response_type } // Store response type
         });

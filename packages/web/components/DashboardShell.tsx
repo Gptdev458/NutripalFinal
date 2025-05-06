@@ -1,5 +1,8 @@
+'use client';
+
 import React, { useState, useEffect, ReactNode } from 'react';
 import Link from 'next/link';
+import { useAuth } from '@/context/AuthContext';
 
 interface ChatSessionMeta {
   chat_id: string;
@@ -18,6 +21,7 @@ interface DashboardShellProps {
 
 const DashboardShell: React.FC<DashboardShellProps> = ({ children, headerTitle = 'Dashboard', chatSessions = [], activeChatId, onSelectChat, onNewChat }) => {
   const [menuOpen, setMenuOpen] = useState(false);
+  const { user } = useAuth();
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -47,6 +51,16 @@ const DashboardShell: React.FC<DashboardShellProps> = ({ children, headerTitle =
           <Link href="/recipes" className="block px-3 py-2 text-gray-600 rounded-md hover:bg-gray-100">Saved Recipes</Link>
           <Link href="/chat" className="block px-3 py-2 text-gray-600 rounded-md hover:bg-gray-100">Chat</Link>
           <Link href="/settings" className="block px-3 py-2 text-gray-600 rounded-md hover:bg-gray-100">Settings</Link>
+          {user?.email?.includes('admin') && (
+            <Link href="/admin" className="block px-3 py-2 text-gray-600 rounded-md hover:bg-gray-100 mt-4 border-t border-gray-200 pt-4">
+              <span className="flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                </svg>
+                Admin
+              </span>
+            </Link>
+          )}
         </nav>
         {/* Chats Section */}
         <div className="border-t border-gray-200 p-4">

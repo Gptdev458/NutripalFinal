@@ -16,9 +16,11 @@ export const dynamic = 'force-dynamic';
 // Interface for chat messages
 interface ChatMessage {
   id: number; // Simple ID for key prop
-  sender: 'user' | 'bot' | 'error';
+  sender: 'user' | 'bot' | 'ai' | 'error';  // Added 'ai' as a possible sender type
   text: string;
   actions?: Array<{ label: string; payload: string }>; // Optional actions for bot messages
+  flagged?: boolean; // Added flagged property
+  message: string; // Added original message field for compatibility
 }
 
 // --- ADDED: Interface for UI Action State ---
@@ -264,7 +266,7 @@ export default function ChatPage() {
         // Set loading state if needed
         const { data, error: dbError } = await supabase
           .from('chat_messages') // Ensure this table name is correct
-          .select('id, sender, message, created_at') // Select necessary fields
+          .select('id, sender, message, created_at, flagged') // Also select flagged field
           .eq('chat_id', activeChatId)
           .order('created_at', { ascending: true }); // Order by creation time
 
@@ -273,12 +275,23 @@ export default function ChatPage() {
         }
 
         // Transform data to ChatMessage interface
-        const formattedMessages: ChatMessage[] = data?.map((msg: any, index: number) => ({
-          id: msg.id ?? `msg-${activeChatId}-${index}-${Date.now()}`,
-          sender: msg.sender as 'user' | 'bot' | 'error', // Cast sender type
-          text: msg.message,
-        })) || [];
+        const formattedMessages: ChatMessage[] = data?.map((msg: any, index: number) => {
+          // Normalize sender to handle both 'ai' and 'bot' consistently
+          let normalizedSender = msg.sender;
+          if (normalizedSender === 'ai') {
+            normalizedSender = 'bot'; // Treat 'ai' sender as 'bot' for display consistency
+          }
+          
+          return {
+            id: msg.id ?? `msg-${activeChatId}-${index}-${Date.now()}`,
+            sender: normalizedSender as 'user' | 'bot' | 'error',
+            text: msg.message, // Map database 'message' field to component's 'text' field
+            message: msg.message, // Also include original 'message' field for compatibility
+            flagged: msg.flagged || false
+          };
+        }) || [];
 
+        console.log('Formatted messages:', formattedMessages);
         setChatHistory(formattedMessages);
 
       } catch (err: any) {
@@ -291,7 +304,7 @@ export default function ChatPage() {
     };
 
     fetchInitialMessages();
-  }, [activeChatId, supabase]); // Fetch only when chat ID or supabase client changes
+  }, [activeChatId, supabase]);
 
   // --- Fetch chat sessions on load ---
   const fetchChatSessions = useCallback(async () => {
@@ -328,7 +341,7 @@ export default function ChatPage() {
         return;
     }
     if (!forceRefresh) setLoadingDashboardData(true);
-    else setRefreshingDashboard(true);
+    setRefreshingDashboard(true);
     setDashboardError(null);
 
     const today = new Date();
@@ -408,7 +421,7 @@ export default function ChatPage() {
     if (user && supabase) {
       fetchDashboardData();
     }
-  }, []);
+  }, [user, supabase, fetchDashboardData]);
 
   // --- Process Bot Reply ---
   const processBotReply = (responseData: Record<string, unknown>): ChatMessage => {
@@ -440,10 +453,15 @@ export default function ChatPage() {
     setContextForNextRequest(nextContext);
     setPendingAction(nextPending);
 
+    // Determine sender type - always use 'bot' for consistency with database schema
+    // The database only accepts 'user', 'bot', or 'error' as valid sender types
+    const senderType = responseData.status === 'error' ? 'error' : 'bot';
+
     const newBotMessage: ChatMessage = {
         id: Date.now() + 1, // Ensure unique ID generation
-        sender: responseData.status === 'error' ? 'error' : 'bot',
+        sender: senderType,
         text: replyText,
+        message: replyText, // Also include original message for compatibility
         actions: actions, // Add actions if parsed or based on responseType
     };
 
@@ -498,7 +516,7 @@ export default function ChatPage() {
     if (!textToSend || sending || authLoading || !activeChatId) return;
 
     setSending(true);
-    const userMessage: ChatMessage = { id: Date.now(), sender: 'user', text: textToSend };
+    const userMessage: ChatMessage = { id: Date.now(), sender: 'user', text: textToSend, message: textToSend };
 
     // Immediately add user message to local state for optimistic update
     setChatHistory(prev => [...prev, userMessage]);
@@ -555,6 +573,7 @@ export default function ChatPage() {
         id: Date.now() + 2,
         sender: 'error',
         text: `Error: ${error.message}`,
+        message: `Error: ${error.message}`, // Also include original message for compatibility
       };
       // Add error message to local state
       setChatHistory(prev => [...prev, errorMessage]);
@@ -562,6 +581,51 @@ export default function ChatPage() {
       setSending(false);
       // No longer need refresh trigger
       // setRefreshTrigger(prev => prev + 1);
+    }
+  };
+
+  // Handle flagging a message
+  const handleFlagMessage = async (messageId: number) => {
+    if (!session || !activeChatId) return;
+    
+    try {
+      // Find the message in the local state
+      const messageIndex = chatHistory.findIndex(msg => msg.id === messageId);
+      if (messageIndex === -1) return;
+      
+      // Optimistically update the UI
+      const updatedMessages = [...chatHistory];
+      const newFlaggedState = !updatedMessages[messageIndex].flagged;
+      updatedMessages[messageIndex] = {
+        ...updatedMessages[messageIndex],
+        flagged: newFlaggedState
+      };
+      setChatHistory(updatedMessages);
+      
+      // Send the flag request to the API
+      const response = await fetch('/api/flag-message', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          messageId,
+          flagged: newFlaggedState
+        }),
+      });
+      
+      if (!response.ok) {
+        // If the request fails, revert the optimistic update
+        const errorData = await response.json().catch(() => ({ message: 'Failed to parse error response.' }));
+        console.error('Error flagging message:', errorData.message);
+        
+        // Revert the change in UI
+        const revertedMessages = [...chatHistory];
+        setChatHistory(revertedMessages);
+      }
+    } catch (error) {
+      console.error('Error flagging message:', error);
     }
   };
 
@@ -589,7 +653,11 @@ export default function ChatPage() {
   const chatPanelContent = (
       <div className="flex-1 flex flex-col h-full bg-gray-100 overflow-hidden"> {/* Ensure vertical flex and hide overflow */}
         {/* Pass chatHistory directly */}
-        <ChatMessageList activeChatId={activeChatId} messages={chatHistory} /> 
+        <ChatMessageList 
+          activeChatId={activeChatId} 
+          messages={chatHistory} 
+          onFlagMessage={handleFlagMessage}
+        /> 
         
         {/* Typing Indicator */}
         {sending && (

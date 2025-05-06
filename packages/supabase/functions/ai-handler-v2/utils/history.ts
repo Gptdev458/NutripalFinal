@@ -22,7 +22,8 @@ export async function fetchConversationHistory(userId: string, chatId: string, s
     const formattedHistory = data.reverse().map((row: any) => {
       if (row.sender === 'user') {
         return { role: 'user', content: row.message };
-      } else if (row.sender === 'ai') {
+      } else if (row.sender === 'ai' || row.sender === 'bot') {
+        // Include both 'ai' and 'bot' sender types
         return { role: 'assistant', content: row.message };
       }
       return null;
