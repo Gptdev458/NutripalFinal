@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
 import { handleError } from "../_shared/error-handler.ts"
 import { createSupabaseClient } from "../_shared/supabase-client.ts"
-import { orchestrate } from "./orchestrator.ts"
+import { orchestrate } from "./orchestrator_v2.ts"
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -14,17 +14,17 @@ serve(async (req) => {
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
 
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), { 
-        status: 401, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
 
-    const { message, session_id } = await req.json()
+    const { message, session_id, timezone } = await req.json()
     if (!message) {
-      return new Response(JSON.stringify({ error: 'Message is required' }), { 
-        status: 400, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      return new Response(JSON.stringify({ error: 'Message is required' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
 
@@ -37,23 +37,30 @@ serve(async (req) => {
         .eq('session_id', session_id)
         .order('created_at', { ascending: false })
         .limit(10)
-      
+
       if (historyData) {
         history = historyData.reverse()
       }
     }
 
-    const result = await orchestrate(user.id, message, session_id, history)
+    const result = await orchestrate(user.id, message, session_id, history, timezone)
 
     // Save message to history
     await supabaseClient.from('chat_messages').insert([
       { session_id, user_id: user.id, role: 'user', content: message },
-      { session_id, user_id: user.id, role: 'assistant', content: result.message, metadata: result.data }
+      {
+        session_id,
+        user_id: user.id,
+        role: 'assistant',
+        content: result.message,
+        metadata: result.data,
+        message_type: result.response_type
+      }
     ])
 
-    return new Response(JSON.stringify(result), { 
-      status: 200, 
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
 
   } catch (error) {

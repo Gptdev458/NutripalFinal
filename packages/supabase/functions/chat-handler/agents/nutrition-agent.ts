@@ -1,11 +1,38 @@
 import { lookupNutrition } from '../../nutrition-lookup/index.ts'
 import { createAdminClient } from '../../_shared/supabase-client.ts'
 import { createOpenAIClient } from '../../_shared/openai-client.ts'
-import { NutritionData } from '../../_shared/types.ts'
+import { NutritionData, Agent, AgentContext } from '../../_shared/types.ts'
+import { normalizeFoodName, retry } from '../../_shared/utils.ts'
 
-async function getScalingMultiplier(userPortion: string, servingSize: string | undefined): Promise<number> {
+export async function getScalingMultiplier(userPortion: string, servingSize: string | undefined): Promise<number> {
   if (!servingSize) return 1
 
+  // 1. Rule-based scaling for common units
+  const userParsed = parseUnitAndAmount(userPortion)
+  const officialParsed = parseUnitAndAmount(servingSize)
+
+  if (userParsed && officialParsed && userParsed.unit === officialParsed.unit) {
+    const multiplier = userParsed.amount / officialParsed.amount
+    if (!isNaN(multiplier) && multiplier > 0) {
+      console.log(`[NutritionAgent] Rule-based scaling: ${userPortion} / ${servingSize} = ${multiplier}`)
+      return multiplier
+    }
+  }
+
+  // Handle common weight-based scaling (g, oz, lb)
+  if (userParsed && officialParsed) {
+    const userGrams = convertToGrams(userParsed.amount, userParsed.unit)
+    const officialGrams = convertToGrams(officialParsed.amount, officialParsed.unit)
+    
+    if (userGrams && officialGrams) {
+      const multiplier = userGrams / officialGrams
+      console.log(`[NutritionAgent] Weight-based scaling: ${userGrams}g / ${officialGrams}g = ${multiplier}`)
+      return multiplier
+    }
+  }
+
+  // 2. Fallback to LLM for ambiguous descriptions
+  console.log(`[NutritionAgent] Falling back to LLM for scaling: "${userPortion}" vs "${servingSize}"`)
   const openai = createOpenAIClient()
   const prompt = `
 User portion: "${userPortion}"
@@ -16,7 +43,7 @@ Return ONLY the numerical multiplier (e.g., 1.5, 0.5, 2). If unsure, return 1.
 `
 
   const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini", // Use mini for speed/cost
+    model: "gpt-4o-mini",
     messages: [{ role: "user", content: prompt }],
     max_tokens: 10,
   })
@@ -26,7 +53,40 @@ Return ONLY the numerical multiplier (e.g., 1.5, 0.5, 2). If unsure, return 1.
   return isNaN(multiplier) ? 1 : multiplier
 }
 
-function scaleNutrition(data: NutritionData, multiplier: number): NutritionData {
+function parseUnitAndAmount(str: string): { amount: number, unit: string } | null {
+  const match = str.toLowerCase().match(/^([\d\/\.]+)\s*(.*)$/);
+  if (!match) return null;
+  
+  let amountStr = match[1];
+  let amount: number;
+  
+  if (amountStr.includes('/')) {
+    const [num, den] = amountStr.split('/').map(parseFloat);
+    amount = num / den;
+  } else {
+    amount = parseFloat(amountStr);
+  }
+  
+  return { amount, unit: match[2].trim().replace(/s$/, '') }; // Simple plural removal
+}
+
+function convertToGrams(amount: number, unit: string): number | null {
+  const units: Record<string, number> = {
+    'g': 1,
+    'gram': 1,
+    'mg': 0.001,
+    'milligram': 0.001,
+    'kg': 1000,
+    'kilogram': 1000,
+    'oz': 28.35,
+    'ounce': 28.35,
+    'lb': 453.59,
+    'pound': 453.59,
+  }
+  return units[unit] ? amount * units[unit] : null
+}
+
+export function scaleNutrition(data: NutritionData, multiplier: number): NutritionData {
   if (multiplier === 1) return data
 
   const scaled = { ...data }
@@ -47,54 +107,70 @@ function scaleNutrition(data: NutritionData, multiplier: number): NutritionData 
   return scaled
 }
 
-export async function getNutritionForItems(items: string[], portions: string[]): Promise<NutritionData[]> {
-  const results: NutritionData[] = []
-  const supabase = createAdminClient()
+export class NutritionAgent implements Agent<{ items: string[], portions: string[] }, NutritionData[]> {
+  name = 'nutrition'
 
-  for (let i = 0; i < items.length; i++) {
-    const itemName = items[i]
-    const userPortion = portions[i] || '1 serving'
+  async execute(input: { items: string[], portions: string[] }, context: AgentContext): Promise<NutritionData[]> {
+    const { items, portions } = input
+    const results: NutritionData[] = []
+    const supabase = context.supabase || createAdminClient()
 
-    // 1. Check Cache
-    const { data: cached } = await supabase
-      .from('food_products')
-      .select('nutrition_data, product_name')
-      .ilike('search_term', itemName)
-      .limit(1)
-      .maybeSingle()
+    for (let i = 0; i < items.length; i++) {
+      const itemName = items[i]
+      const userPortion = portions[i] || '1 serving'
+      const normalizedSearch = normalizeFoodName(itemName)
 
-    let nutrition: NutritionData | null = null
+      // 1. Check Cache with normalized name
+      const { data: cached } = await supabase
+        .from('food_products')
+        .select('nutrition_data, product_name')
+        .ilike('search_term', normalizedSearch)
+        .limit(1)
+        .maybeSingle()
 
-    if (cached) {
-      console.log(`[NutritionAgent] Cache hit for ${itemName}`)
-      nutrition = cached.nutrition_data as NutritionData
-    } else {
-      // 2. Lookup from APIs
-      console.log(`[NutritionAgent] Cache miss for ${itemName}, calling APIs`)
-      const lookupResult = await lookupNutrition(itemName)
+      let nutrition: NutritionData | null = null
 
-      if (lookupResult.status === 'success' && lookupResult.nutrition_data) {
-        nutrition = lookupResult.nutrition_data as NutritionData
-        
-        // 3. Save to Cache
-        await supabase.from('food_products').insert({
-          product_name: lookupResult.product_name,
-          search_term: itemName,
-          nutrition_data: nutrition,
-          source: lookupResult.source,
-          brand: lookupResult.brand
-        })
+      if (cached) {
+        console.log(`[NutritionAgent] Cache hit for ${itemName} (normalized: ${normalizedSearch})`)
+        nutrition = cached.nutrition_data as NutritionData
+      } else {
+        // 2. Lookup from APIs with retry
+        console.log(`[NutritionAgent] Cache miss for ${itemName}, calling APIs`)
+        try {
+          const lookupResult = await retry(() => lookupNutrition(itemName))
+
+          if (lookupResult.status === 'success' && lookupResult.nutrition_data) {
+            nutrition = lookupResult.nutrition_data as NutritionData
+            
+            // 3. Save to Cache with both original and normalized search term
+            await supabase.from('food_products').insert({
+              product_name: lookupResult.product_name,
+              search_term: normalizedSearch,
+              nutrition_data: nutrition,
+              source: lookupResult.source,
+              brand: lookupResult.brand
+            })
+          }
+        } catch (e) {
+          console.error(`[NutritionAgent] API failure for ${itemName}:`, e)
+        }
+      }
+
+      if (nutrition) {
+        // 4. Portion scaling
+        const multiplier = await getScalingMultiplier(userPortion, nutrition.serving_size)
+        console.log(`[NutritionAgent] Scaling ${itemName} by ${multiplier} (user: ${userPortion}, official: ${nutrition.serving_size})`)
+        const scaledNutrition = scaleNutrition(nutrition, multiplier)
+        results.push(scaledNutrition)
       }
     }
 
-    if (nutrition) {
-      // 4. Portion scaling
-      const multiplier = await getScalingMultiplier(userPortion, nutrition.serving_size)
-      console.log(`[NutritionAgent] Scaling ${itemName} by ${multiplier} (user: ${userPortion}, official: ${nutrition.serving_size})`)
-      const scaledNutrition = scaleNutrition(nutrition, multiplier)
-      results.push(scaledNutrition)
-    }
+    return results
   }
+}
 
-  return results
+// Keep legacy export for now
+export async function getNutritionForItems(items: string[], portions: string[]): Promise<NutritionData[]> {
+  const agent = new NutritionAgent()
+  return agent.execute({ items, portions }, { supabase: createAdminClient() } as any)
 }

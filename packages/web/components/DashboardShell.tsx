@@ -16,10 +16,11 @@ interface DashboardShellProps {
   chatSessions?: ChatSessionMeta[];
   activeChatId?: string;
   onSelectChat?: (chatId: string) => void;
+  onDeleteChat?: (chatId: string) => void;
   onNewChat?: () => void;
 }
 
-const DashboardShell: React.FC<DashboardShellProps> = ({ children, headerTitle = 'Dashboard', chatSessions = [], activeChatId, onSelectChat, onNewChat }) => {
+const DashboardShell: React.FC<DashboardShellProps> = ({ children, headerTitle = 'Dashboard', chatSessions = [], activeChatId, onSelectChat, onDeleteChat, onNewChat }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const { user } = useAuth();
 
@@ -79,14 +80,30 @@ const DashboardShell: React.FC<DashboardShellProps> = ({ children, headerTitle =
               <li className="text-xs text-gray-400">No chats yet</li>
             )}
             {chatSessions.map((chat) => (
-              <li key={chat.chat_id}>
+              <li key={chat.chat_id} className="group flex items-center justify-between">
                 <button
-                  className={`w-full text-left px-2 py-1 rounded text-sm ${chat.chat_id === activeChatId ? 'bg-blue-100 text-blue-700 font-semibold' : 'hover:bg-gray-100 text-gray-700'}`}
+                  className={`flex-1 text-left px-2 py-1 rounded text-sm ${chat.chat_id === activeChatId ? 'bg-blue-100 text-blue-700 font-semibold' : 'hover:bg-gray-100 text-gray-700'}`}
                   onClick={() => onSelectChat && onSelectChat(chat.chat_id)}
                 >
-                  {chat.title}
+                  <span className="block truncate">{chat.title}</span>
                   <span className="block text-xs text-gray-400">{new Date(chat.updated_at).toLocaleString()}</span>
                 </button>
+                {onDeleteChat && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirm('Are you sure you want to delete this chat?')) {
+                        onDeleteChat(chat.chat_id);
+                      }
+                    }}
+                    className="p-1 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Delete chat"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h14" />
+                    </svg>
+                  </button>
+                )}
               </li>
             ))}
           </ul>

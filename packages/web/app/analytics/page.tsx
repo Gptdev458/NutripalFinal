@@ -46,8 +46,8 @@ interface ChartPoint {
 
 // Define a type for the log entry shape we expect from food_log
 interface FoodLogEntry {
-  timestamp: string;
-  [key: string]: unknown; // Allow for nutrient columns like 'calories', 'protein_g', etc.
+  log_time: string;
+  [key: string]: unknown; 
 }
 
 // Helper function
@@ -168,28 +168,26 @@ export default function AnalyticsPage() {
         console.log(`Fetching food_log for ${selectedNutrient} between ${startRange} and ${endRange}`);
         // 1. Fetch raw logs from food_log (select all columns for better type inference)
         const { data, error: logError } = await supabase
-            .from('food_log') // <-- Correct table
-            .select('*') // <-- Select all columns
+            .from('food_log') 
+            .select('*') 
             .eq('user_id', user.id)
-            .gte('timestamp', startRange)
-            .lte('timestamp', endRange)
-            .order('timestamp', { ascending: true });
+            .gte('log_time', startRange)
+            .lte('log_time', endRange)
+            .order('log_time', { ascending: true });
 
         if (logError) throw logError;
 
         // Explicitly type the fetched data after error check
-        const rawLogs: FoodLogEntry[] | null = data as FoodLogEntry[] | null;
+        const rawLogs: FoodLogEntry[] | null = data as any;
 
         console.log("Fetched raw logs:", rawLogs);
 
         // 2. Aggregate daily totals from raw logs
         const dailyTotalsMap = new Map<string, number>();
         if (Array.isArray(rawLogs)) {
-            // No casting needed here now due to explicit typing above
             rawLogs.forEach(log => {
-                // Use type guards for safer access
-                if (log && typeof log.timestamp === 'string' && typeof log[selectedNutrient] === 'number') {
-                    const day = log.timestamp.split('T')[0]; 
+                if (log && typeof log.log_time === 'string' && typeof log[selectedNutrient] === 'number') {
+                    const day = log.log_time.split('T')[0]; 
                     const value = log[selectedNutrient] as number;
                     const currentTotal = dailyTotalsMap.get(day) || 0;
                     dailyTotalsMap.set(day, currentTotal + value);

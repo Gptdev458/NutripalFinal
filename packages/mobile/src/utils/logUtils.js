@@ -20,7 +20,7 @@ export const quickLogRecipe = async (recipe, user) => {
     const foodLogEntry = {
       user_id: user.id,
       food_name: recipe.recipe_name || 'Unnamed Recipe',
-      timestamp: new Date().toISOString(),
+      log_time: new Date().toISOString(),
       source: 'quick_recipe_dashboard', // Indicate source
       recipe_id: recipe.id,
       // Copy all relevant nutrient values from the recipe
@@ -109,7 +109,7 @@ export const fetchFoodLogsByDateRange = async (userId, startDate, endDate) => {
     const selectColumns = `
       id,
       food_name,
-      timestamp,
+      log_time,
       source,
       recipe_id,
       ${MASTER_NUTRIENT_KEYS.join(', ')}
@@ -121,9 +121,9 @@ export const fetchFoodLogsByDateRange = async (userId, startDate, endDate) => {
       .from('food_log')
       .select(selectColumns) // Use the constructed string
       .eq('user_id', userId)
-      .gte('timestamp', startOfDayISO)
-      .lte('timestamp', endOfDayISO)
-      .order('timestamp', { ascending: false });
+      .gte('log_time', startOfDayISO)
+      .lte('log_time', endOfDayISO)
+      .order('log_time', { ascending: false });
 
     if (error) {
       console.error('Supabase query error in fetchFoodLogsByDateRange:', error);

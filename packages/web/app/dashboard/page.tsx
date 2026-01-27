@@ -26,7 +26,6 @@ const LoadingSpinner = () => {
   );
 };
 
-// Types
 interface UserGoal {
     nutrient: string;
     target_value: number;
@@ -35,21 +34,20 @@ interface UserGoal {
 }
 
 interface FoodLog {
-    id: number;
-    timestamp: string; 
-    food_name?: string | null;
+    id: string; // Changed to string for UUID
+    log_time: string; // Changed from timestamp
+    food_name: string;
     calories?: number | null;
-    omega_3_g?: number | null;
-    omega_6_g?: number | null;
-    fiber_soluble_g?: number | null;
+    protein_g?: number | null;
+    carbs_g?: number | null;
+    fat_total_g?: number | null;
+    fiber_g?: number | null;
+    sugar_g?: number | null;
+    sodium_mg?: number | null;
     [key: string]: unknown; 
 }
 
 interface DailyTotals {
-    calories?: number;
-    omega_3_g?: number;
-    omega_6_g?: number;
-    fiber_soluble_g?: number;
     [nutrientKey: string]: number | undefined;
 }
 
@@ -69,109 +67,25 @@ const formatNutrientName = (key: string): string => {
 
 export default function DashboardPage() {
   const { user, supabase, loading: authLoading } = useAuth();
+  const {
+    userGoals,
+    dailyTotals,
+    recentLogs,
+    loadingData,
+    refreshing,
+    error,
+    refreshDashboardData
+  } = useDashboardData();
+
   const [menuOpen, setMenuOpen] = useState(false);
-  const [userGoals, setUserGoals] = useState<UserGoal[]>([]);
-  const [dailyTotals, setDailyTotals] = useState<DailyTotals>({});
-  const [recentLogs, setRecentLogs] = useState<FoodLog[]>([]);
-  const [loadingData, setLoadingData] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [isLogDetailModalVisible, setIsLogDetailModalVisible] = useState(false);
+  const [selectedLogData, setSelectedLogData] = useState<any>(null);
+  const [isDeletingLog, setIsDeletingLog] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
 
-  // State for the Log Detail Modal
-  const [isLogDetailModalVisible, setIsLogDetailModalVisible] = useState(false);
-  const [selectedLogData, setSelectedLogData] = useState<FoodLog | null>(null);
-  const [isDeletingLog, setIsDeletingLog] = useState(false);
-
-  // Fetch dashboard data
-  const fetchDashboardData = useCallback(async (isRefreshing = false) => {
-    if (!user || !supabase) {
-        setLoadingData(false);
-        setRefreshing(false);
-        return;
-    }
-    if (!isRefreshing) setLoadingData(true);
-    else setRefreshing(true);
-    setError(null);
-
-    const today = new Date();
-    const dateString = formatDate(today);
-    const startOfDay = `${dateString}T00:00:00.000Z`;
-    const endOfDay = `${dateString}T23:59:59.999Z`;
-
-    try {
-        const [goalsResponse, logsResponse] = await Promise.all([
-            supabase.from('user_goals').select('*').eq('user_id', user.id),
-            supabase.from('food_log').select('*').eq('user_id', user.id).gte('timestamp', startOfDay).lte('timestamp', endOfDay).order('timestamp', { ascending: false })
-        ]);
-
-        if (goalsResponse.error) throw goalsResponse.error;
-        if (logsResponse.error) throw logsResponse.error;
-
-        const fetchedGoals = goalsResponse.data || [];
-        const fetchedLogs = logsResponse.data || [];
-
-        setUserGoals(fetchedGoals);
-        setRecentLogs(fetchedLogs);
-
-        const totals: DailyTotals = {};
-        const nutrientsToTotal = new Set<string>(fetchedGoals.map(g => g.nutrient));
-        if (fetchedGoals.some(g => g.nutrient === 'omega_ratio')) {
-            nutrientsToTotal.add('omega_3_g');
-            nutrientsToTotal.add('omega_6_g');
-        }
-        nutrientsToTotal.add('calories');
-
-        nutrientsToTotal.forEach(nutrientKey => {
-            let currentIntake = 0;
-            fetchedLogs.forEach(log => {
-                const logValue = log[nutrientKey];
-                if (typeof logValue === 'number' && !isNaN(logValue)) {
-                    currentIntake += logValue;
-                }
-            });
-            totals[nutrientKey] = currentIntake;
-        });
-        setDailyTotals(totals);
-
-        console.log("Dashboard data fetched:", { fetchedGoals, fetchedLogs: fetchedLogs.length, totals });
-
-    } catch (err: unknown) {
-        console.error("Error fetching dashboard data:", err);
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        setError(`Failed to load dashboard data: ${errorMessage}`);
-        setUserGoals([]);
-        setDailyTotals({});
-        setRecentLogs([]);
-    } finally {
-        setLoadingData(false);
-        setRefreshing(false);
-    }
-
-  }, [user, supabase]);
-
-  // Initial fetch - Revert to depend only on authLoading and user
-  useEffect(() => {
-    if (!authLoading) { 
-      if (user) {
-        console.log("DashboardPage Effect: Auth loaded, user found. Fetching data...");
-        fetchDashboardData();
-      } else {
-        console.log("DashboardPage Effect: Auth loaded, no user found. Clearing data.");
-        setLoadingData(false); 
-        setUserGoals([]);
-        setDailyTotals({});
-        setRecentLogs([]);
-        setError(null); 
-      }
-    }
-    // Depend on authLoading and user object
-  }, [authLoading, user]);
-
-  // Handle Refresh Action
-  const handleRefresh = () => {
-      fetchDashboardData(true);
-  };
+  const handleRefresh = useCallback(() => {
+    refreshDashboardData(true);
+  }, [refreshDashboardData]);
 
   // Menu close effect
   useEffect(() => {
@@ -186,7 +100,7 @@ export default function DashboardPage() {
   }, [menuOpen]);
 
   // --- Modal Handlers --- 
-  const handleLogItemClick = (logItem: FoodLog) => {
+  const handleLogItemClick = (logItem: any) => {
     setSelectedLogData(logItem);
     setIsLogDetailModalVisible(true);
   };
@@ -198,33 +112,27 @@ export default function DashboardPage() {
   };
 
   // --- Delete Handler ---
-  const handleDeleteLogItem = async (logId: number) => {
+  const handleDeleteLogItem = async (logId: string) => {
     if (!supabase || !user) {
-      console.error("Delete failed: Supabase client or user not available.");
       alert("Delete failed: Authentication error."); 
-      throw new Error("Authentication error");
+      return;
     }
 
     setIsDeletingLog(true);
     try {
-      console.log(`Attempting to delete food_log item with id: ${logId}`);
       const { error: deleteError } = await supabase
         .from('food_log')
         .delete()
         .match({ id: logId, user_id: user.id });
 
-      if (deleteError) {
-        console.error("Error deleting log item:", deleteError);
-        throw deleteError;
-      }
+      if (deleteError) throw deleteError;
 
-      console.log("Log item deleted successfully.");
-      
       handleCloseLogDetailModal();
-      await fetchDashboardData(true);
+      refreshDashboardData(true);
 
     } catch (err) {
-       throw err; 
+       console.error("Error deleting log item:", err);
+       alert("Failed to delete log item.");
     } finally {
         setIsDeletingLog(false);
     }
@@ -331,7 +239,7 @@ export default function DashboardPage() {
                         {log.food_name || 'Logged Item'} 
                       </span>
                       <span className="text-xs text-gray-500">
-                        {formatDateFn(new Date(log.timestamp), 'h:mm a')}
+                        {formatDateFn(new Date(log.log_time), 'h:mm a')}
                       </span>
                     </div>
                     {log.calories !== null && log.calories !== undefined && (

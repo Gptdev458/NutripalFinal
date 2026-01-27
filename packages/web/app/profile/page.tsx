@@ -129,11 +129,11 @@ export default function ProfilePage() {
     setSuccessMessage(null);
 
     const profileDataToSave: Partial<UserProfile> = {
-        user_id: user.id,
+        id: user.id, // Fixed: use 'id' instead of 'user_id' to match table schema
         age: age ? parseInt(age, 10) : null,
         weight_kg: weight ? parseFloat(weight) : null,
         height_cm: height ? parseInt(height, 10) : null,
-        sex: sex || null,
+        gender: sex || null, // Fixed: use 'gender' instead of 'sex' to match table schema
         activity_level: activityLevel || null,
         health_goal: healthGoal || null,
     };
@@ -154,13 +154,14 @@ export default function ProfilePage() {
     console.log("Saving profile data:", profileDataToSave);
     try {
       const { error: saveError } = await supabase
-        .from('user_profiles').upsert(profileDataToSave, { onConflict: 'user_id' });
+        .from('user_profiles').upsert(profileDataToSave, { onConflict: 'id' }); // Fixed: onConflict 'id'
       if (saveError) throw saveError;
       console.log('Profile saved successfully.');
       setSuccessMessage('Profile updated successfully!');
-    } catch (err: unknown) {
+    } catch (err: any) {
       console.error('Error saving profile:', err);
-      const errorMessage = err instanceof Error ? err.message : String(err);
+      // Fixed error message rendering to handle objects
+      const errorMessage = err.message || err.details || String(err);
       setError(errorMessage || 'Failed to save profile.');
     } finally {
       setSaving(false);

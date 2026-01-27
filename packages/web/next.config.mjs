@@ -4,6 +4,7 @@
 
 const nextConfig = {
   /* config options here */
+  transpilePackages: ['shared'],
   typescript: {
     ignoreBuildErrors: true,
   },

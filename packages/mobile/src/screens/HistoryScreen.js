@@ -185,8 +185,8 @@ const HistoryScreen = ({ navigation }) => {
   };
 
   const renderLogListItem = ({ item }) => {
-    const timestamp = new Date(item.timestamp);
-    const timeString = timestamp.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    const logTime = new Date(item.log_time);
+    const timeString = logTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     const primaryNutrient = item.calories ? `${Math.round(item.calories)} kcal` : '';
 
     return (
@@ -233,7 +233,7 @@ const HistoryScreen = ({ navigation }) => {
                 {selectedHistoryItem && (
                     <ScrollView>
                         <Text variant="titleMedium" style={{ color: theme.colors.text, marginBottom: 8 }}>{selectedHistoryItem.food_name || 'Unnamed Item'}</Text>
-                        <Text variant="bodySmall" style={{ color: theme.colors.textSecondary, marginBottom: 16 }}>Logged at: {new Date(selectedHistoryItem.timestamp).toLocaleString()}</Text>
+                        <Text variant="bodySmall" style={{ color: theme.colors.textSecondary, marginBottom: 16 }}>Logged at: {new Date(selectedHistoryItem.log_time).toLocaleString()}</Text>
                         <Divider style={{ marginBottom: 16 }}/>
 
                         {/* Iterate through tracked goals and display if present in the log item */}

@@ -53,10 +53,20 @@ export default function SavedRecipesPage() {
   const [loggingRecipeId, setLoggingRecipeId] = useState<string | null>(null);
   const [deletingRecipeId, setDeletingRecipeId] = useState<string | null>(null);
   const [isRecipeModalVisible, setIsRecipeModalVisible] = useState(false);
+  const [isAddRecipeModalVisible, setIsAddRecipeModalVisible] = useState(false); // New state
   const [selectedRecipeData, setSelectedRecipeData] = useState<SavedRecipe | null>(null);
   const [isModalLoading, setIsModalLoading] = useState(false);
+  const [isSavingRecipe, setIsSavingRecipe] = useState(false); // New state
   const [modalError, setModalError] = useState<string | null>(null);
   const [userGoals, setUserGoals] = useState<UserGoal[]>([]); // Store user goals
+
+  // Form state for new recipe
+  const [newRecipe, setNewRecipe] = useState({
+    name: '',
+    description: '',
+    servings: '1',
+    ingredients: ''
+  });
 
   // Fetch recipes AND user goals
   const loadData = useCallback(async (isRefreshing = false) => {
@@ -220,6 +230,41 @@ export default function SavedRecipesPage() {
     }
   };
 
+  const handleSaveNewRecipe = async () => {
+    if (!newRecipe.name || !newRecipe.ingredients) {
+      setModalError("Recipe name and ingredients are required.");
+      return;
+    }
+
+    setIsSavingRecipe(true);
+    setModalError(null);
+
+    try {
+      // Use chat-handler to save recipe via natural language parsing
+      const { data: response, error: funcError } = await supabase.functions.invoke('chat-handler', {
+        body: { 
+          message: `Save my recipe: ${newRecipe.name}. Servings: ${newRecipe.servings}. Ingredients: ${newRecipe.ingredients}`
+        }
+      });
+
+      if (funcError) throw funcError;
+
+      if (response.status === 'success') {
+        setIsAddRecipeModalVisible(false);
+        setNewRecipe({ name: '', description: '', servings: '1', ingredients: '' });
+        loadData(true);
+      } else {
+        throw new Error(response.message || 'Failed to save recipe');
+      }
+    } catch (err: unknown) {
+      console.error("Failed to save recipe:", err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setModalError(`Failed to save recipe: ${errorMessage}`);
+    } finally {
+      setIsSavingRecipe(false);
+    }
+  };
+
   // == Render Function for Modal (Implement Details) ==
   const renderRecipeModal = () => {
       if (!isRecipeModalVisible || !selectedRecipeData) return null;
@@ -243,7 +288,10 @@ export default function SavedRecipesPage() {
       const renderTrackedNutrient = (goal: UserGoal) => {
         const nutrientKey = goal.nutrient;
         const dataKey = nutrientKey.includes('_') ? nutrientKey : `${nutrientKey}_g`;
-        const value = selectedRecipeData[dataKey];
+        // Check both top-level and inside nutrition_data
+        const value = (selectedRecipeData[dataKey] !== undefined && selectedRecipeData[dataKey] !== null) 
+          ? selectedRecipeData[dataKey] 
+          : (selectedRecipeData.nutrition_data as any)?.[dataKey];
         const unit = goal.unit || 'g';
 
         if (value !== null && value !== undefined && typeof value === 'number') {
@@ -259,9 +307,13 @@ export default function SavedRecipesPage() {
       };
       
       // Determine which nutrients to display based on available data and goals
-      const availableNutrients = Object.keys(selectedRecipeData).filter(key => 
+      const nutritionObj = (selectedRecipeData.nutrition_data as any) || {};
+      const combinedData = { ...nutritionObj, ...selectedRecipeData };
+
+      const availableNutrients = Object.keys(combinedData).filter(key => 
           key !== 'id' && key !== 'user_id' && key !== 'created_at' && key !== 'recipe_name' && key !== 'description' && key !== 'ingredients' && 
-          selectedRecipeData[key] !== null && typeof selectedRecipeData[key] === 'number'
+          key !== 'nutrition_data' && key !== 'instructions' && key !== 'servings' && key !== 'updated_at' &&
+          combinedData[key] !== null && typeof combinedData[key] === 'number'
       );
       
       const goalNutrientKeys = userGoals.map(g => g.nutrient.includes('_') ? g.nutrient : `${g.nutrient}_g`);
@@ -414,19 +466,26 @@ return (
        </nav>
      </div>
 
-    {/* Main content area */} 
-    <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Header with hamburger */}
-      <header className="bg-white border-b border-gray-200 p-4 z-10 flex-shrink-0">
-         <div className="flex items-center justify-between">
-          <button className="menu-button p-2 rounded-md text-gray-600 hover:bg-gray-100" onClick={() => setMenuOpen(true)}>
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
-          </button>
-          {/* Keep title simple here */}
-          <h2 className="text-xl font-semibold text-gray-800">Saved Recipes</h2> 
-          <div className="w-8"></div> { /* Balance */}
-        </div>
-      </header>
+      {/* Main content area */} 
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Header with hamburger */}
+        <header className="bg-white border-b border-gray-200 p-4 z-10 flex-shrink-0">
+           <div className="flex items-center justify-between">
+            <button className="menu-button p-2 rounded-md text-gray-600 hover:bg-gray-100" onClick={() => setMenuOpen(true)}>
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+            </button>
+            <h2 className="text-xl font-semibold text-gray-800">Saved Recipes</h2> 
+            <button 
+              onClick={() => setIsAddRecipeModalVisible(true)}
+              className="p-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+              title="Add New Recipe"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+            </button>
+          </div>
+        </header>
 
       {/* Main content scrolling area */} 
       <main className="flex-1 overflow-y-auto">
@@ -523,6 +582,73 @@ return (
 
     {/* Render the modal */}
     {renderRecipeModal()}
+
+    {/* Add Recipe Modal */}
+    {isAddRecipeModalVisible && (
+      <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4 backdrop-blur-sm">
+        <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col">
+          <div className="p-5 border-b border-gray-200 flex justify-between items-center">
+            <h3 className="text-xl font-semibold text-gray-800">Add New Recipe</h3>
+            <button onClick={() => setIsAddRecipeModalVisible(false)} className="text-gray-400 hover:text-gray-600">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div className="p-6 overflow-y-auto space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Recipe Name</label>
+              <input 
+                type="text"
+                value={newRecipe.name}
+                onChange={(e) => setNewRecipe({...newRecipe, name: e.target.value})}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black"
+                placeholder="e.g. Grandma's Chicken Soup"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Servings</label>
+                <input 
+                  type="number"
+                  value={newRecipe.servings}
+                  onChange={(e) => setNewRecipe({...newRecipe, servings: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black"
+                  min="1"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Ingredients (one per line)</label>
+              <textarea 
+                value={newRecipe.ingredients}
+                onChange={(e) => setNewRecipe({...newRecipe, ingredients: e.target.value})}
+                rows={6}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-black"
+                placeholder="e.g. 500g Chicken breast&#10;2 large carrots&#10;1 onion"
+              />
+            </div>
+            {modalError && <p className="text-sm text-red-600 bg-red-50 p-2 rounded">{modalError}</p>}
+          </div>
+          <div className="p-4 border-t border-gray-200 bg-gray-50 flex justify-end space-x-3">
+            <button 
+              onClick={() => setIsAddRecipeModalVisible(false)}
+              className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100"
+              disabled={isSavingRecipe}
+            >
+              Cancel
+            </button>
+            <button 
+              onClick={handleSaveNewRecipe}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:bg-blue-300"
+              disabled={isSavingRecipe}
+            >
+              {isSavingRecipe ? 'Saving...' : 'Save Recipe'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
   </div>
 ); 
 }

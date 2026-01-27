@@ -37,3 +37,9 @@ yarn-error.*
 
 # Add this line to .gitignore
 .env
+
+# Dev Docs
+CHAT_EVOLUTION_PLAN.md
+IMPROVEMENT_GUIDELINES.md
+dev-todo.md
+Agentic architecture.md

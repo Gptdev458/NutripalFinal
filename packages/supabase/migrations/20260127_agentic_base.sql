@@ -28,16 +28,13 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 CREATE TABLE IF NOT EXISTS user_goals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    calories INTEGER,
-    protein_g FLOAT,
-    carbs_g FLOAT,
-    fat_total_g FLOAT,
-    fiber_g FLOAT,
-    sugar_g FLOAT,
-    sodium_mg FLOAT,
+    nutrient TEXT NOT NULL,
+    target_value FLOAT NOT NULL,
+    unit TEXT NOT NULL,
+    goal_type TEXT DEFAULT 'goal' CHECK (goal_type IN ('goal', 'limit')),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE(user_id)
+    UNIQUE(user_id, nutrient)
 );
 
 -- 4. Food Log Table

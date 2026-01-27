@@ -16,8 +16,8 @@ interface UserGoal {
 
 // FoodLog interface (ensure it includes potential keys)
 interface FoodLog {
-    id: number;
-    timestamp: string;
+    id: string; // Updated to string for UUID
+    log_time: string; // Updated from timestamp
     food_name?: string | null;
     calories?: number | null;
     protein_g?: number | null;
@@ -29,7 +29,6 @@ interface FoodLog {
     water_g?: number | null;
     cholesterol_mg?: number | null;
     potassium_mg?: number | null;
-    // ... other potential keys ...
     [key: string]: unknown;
 }
 
@@ -37,8 +36,8 @@ interface FoodLog {
 interface FoodLogDetailModalProps {
   logData: FoodLog | null;
   onClose: () => void;
-  userGoals: UserGoal[]; // Accept the user goals
-  onDelete: (logId: number) => Promise<void>; // Function to call when delete is clicked
+  userGoals: UserGoal[]; 
+  onDelete: (logId: string) => Promise<void>; // Updated to string for UUID
 }
 
 // Nutrient display names and units (still useful for lookup)

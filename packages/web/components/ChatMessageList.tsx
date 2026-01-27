@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import { TypingIndicator } from '@/components/LoadingIndicators';
 import ReactMarkdown from 'react-markdown';
+import { FoodLogConfirmation } from './chat/FoodLogConfirmation';
+import { RecipeConfirmation } from './chat/RecipeConfirmation';
 
 // Interface for chat messages (keep or import from shared types)
 interface ChatMessage {
@@ -16,11 +17,12 @@ interface ChatMessage {
 
 interface ChatMessageListProps {
   activeChatId: string | null;
-  messages: ChatMessage[]; // <-- Accept messages array as prop
+  messages: ChatMessage[];
   onFlagMessage?: (messageId: number) => void;
+  onSendMessage?: (text: string, isHidden?: boolean) => void; // Add this prop to handle actions
 }
 
-const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, messages, onFlagMessage }) => {
+const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, messages, onFlagMessage, onSendMessage }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Scroll to bottom of messages when new ones are added
@@ -28,47 +30,58 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Render logic now uses the messages prop directly
+  const handleAction = (action: 'confirm' | 'decline') => {
+    if (onSendMessage) {
+      // Send hidden message to trigger backend action
+      // OR send visible natural language message
+      if (action === 'confirm') {
+        onSendMessage("Confirm", true); // Hidden confirm? Or "Yes, confirm" visible?
+        // Let's make it visible for clarity in chat history, or maybe just "Confirm" 
+        // Implementation Detail: The backend expects "confirm" intent. 
+        // "Confirm" text usually triggers "confirm" intent.
+      } else {
+        onSendMessage("Decline", true);
+      }
+    }
+  };
+
   return (
     <div className="flex-1 overflow-y-auto p-4 bg-gray-50 space-y-4">
       {messages.length === 0 && activeChatId && (
-          <div className="text-center text-gray-500 pt-10">
-            Start the conversation! Send your first message.
-          </div>
+        <div className="text-center text-gray-500 pt-10">
+          Start the conversation! Send your first message.
+        </div>
       )}
       {messages.length === 0 && !activeChatId && (
-           <div className="text-center text-gray-500 pt-10">
-               Select a chat or start a new one.
-           </div>
-       )}
-      {messages.map((msg) => {
-        // Treat both 'bot' and 'assistant' sender types the same way
+        <div className="text-center text-gray-500 pt-10">
+          Select a chat or start a new one.
+        </div>
+      )}
+      {messages.map((msg, index) => {
         const isBotMessage = msg.sender === 'bot' || msg.sender === 'assistant';
         const messageContent = (msg.text || '').trim();
         const isEmpty = messageContent === '';
-        
+
         return (
           <div
-            key={msg.id} 
+            key={msg.id}
             className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'} group relative`}
           >
             <div
-              className={`max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-lg shadow relative ${
-                msg.sender === 'user'
-                  ? 'bg-blue-500 text-white'
-                  : msg.sender === 'error'
+              className={`max-w-xs md:max-w-md lg:max-w-lg px-4 py-2 rounded-lg shadow relative ${msg.sender === 'user'
+                ? 'bg-blue-500 text-white'
+                : msg.sender === 'error'
                   ? 'bg-red-100 text-red-700'
-                  : isEmpty ? 'bg-orange-50 text-orange-800 border border-orange-200' 
-                  : 'bg-white text-gray-900 border border-gray-200'
-              } ${msg.flagged ? 'border-2 border-red-300' : ''}`}
+                  : isEmpty ? 'bg-orange-50 text-orange-800 border border-orange-200'
+                    : 'bg-white text-gray-900 border border-gray-200'
+                } ${msg.flagged ? 'border-2 border-red-300' : ''}`}
             >
               {/* Flag/Report Button */}
               {onFlagMessage && isBotMessage && (
                 <button
                   onClick={() => onFlagMessage(Number(msg.id))}
-                  className={`absolute top-1 right-1 ${
-                    msg.flagged ? 'text-red-500' : 'text-gray-400'
-                  } opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity duration-200`}
+                  className={`absolute top-1 right-1 ${msg.flagged ? 'text-red-500' : 'text-gray-400'
+                    } opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity duration-200`}
                   aria-label={msg.flagged ? "Unflag message" : "Flag message for review"}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -76,7 +89,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
                   </svg>
                 </button>
               )}
-              
+
               {/* Message Text Content */}
               <div className={`break-words whitespace-pre-line ${isBotMessage ? 'prose prose-sm max-w-none' : ''}`}>
                 {isEmpty && isBotMessage ? (
@@ -95,10 +108,32 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
                   </span>
                 )}
               </div>
-              
+
               {/* Structured Metadata Rendering */}
               {msg.metadata && isBotMessage && (
                 <div className="mt-3 pt-2 border-t border-gray-100">
+                  {/* Confirmeation Cards - Only show on the latest message to avoid confusion/double submission? 
+                      Or allow interaction but handle backend side if already processed? 
+                      For now, render always, but backend should handle idempotency or stateless re-execution. */}
+
+                  {msg.message_type === 'confirmation_food_log' && msg.metadata.nutrition && (
+                    <FoodLogConfirmation
+                      nutrition={msg.metadata.nutrition}
+                      onConfirm={() => onSendMessage ? onSendMessage("Yes, looks good", false) : null}
+                      onDecline={() => onSendMessage ? onSendMessage("No, cancel", false) : null}
+                    />
+                  )}
+
+                  {msg.message_type === 'confirmation_recipe_save' && msg.metadata.parsed && (
+                    <RecipeConfirmation
+                      recipe={msg.metadata.parsed}
+                      preview={msg.metadata.preview}
+                      onConfirm={() => onSendMessage ? onSendMessage("Yes, save recipe", false) : null}
+                      onDecline={() => onSendMessage ? onSendMessage("No, cancel", false) : null}
+                    />
+                  )}
+
+                  {/* Legacy Logged Views */}
                   {msg.message_type === 'food_logged' && msg.metadata.nutrition && (
                     <div className="space-y-2">
                       <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Nutrients Logged</p>
@@ -122,7 +157,9 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
 
                   {msg.message_type === 'nutrition_info' && msg.metadata.nutrition && (
                     <div className="space-y-2">
+                      {/* Same visualization as logged, but maybe different header */}
                       <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Nutritional Info</p>
+                      {/* Reuse visualization code or extract to component */}
                       {msg.metadata.nutrition.map((item: any, i: number) => (
                         <div key={i} className="text-sm bg-blue-50 p-2 rounded">
                           <div className="flex justify-between font-bold">

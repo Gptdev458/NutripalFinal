@@ -23,6 +23,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useNetInfo } from '@react-native-community/netinfo';
 import { fetchUserProfile, fetchGoalRecommendations } from '../utils/profileUtils';
+import { getSupabaseClient } from 'shared';
 import useSafeTheme from '../hooks/useSafeTheme';
 
 const ChatScreen = () => {
@@ -150,15 +151,6 @@ const ChatScreen = () => {
       sender: 'user',
     };
 
-    // --- Add history BEFORE setting state --- 
-    const MAX_HISTORY_FRONTEND = 8;
-    const recentHistory = messages.slice(-MAX_HISTORY_FRONTEND); // Get last N messages
-    const historyForBackend = recentHistory.map(msg => ({
-      sender: msg.sender, // 'user' or 'ai'
-      text: msg.text 
-    }));
-    // --- End add history ---
-
     setMessages(prevMessages => [...prevMessages, userMessage]);
     setInputText('');
     setIsAiThinking(true);
@@ -169,18 +161,24 @@ const ChatScreen = () => {
         throw new Error('Authentication token not found.');
       }
 
-      // BACKEND DISCONNECTED: ai-handler-v2 function has been removed during rehaul
-      // TODO: Implement new backend architecture
-      console.log('[ChatScreen] Backend disconnected - ai-handler-v2 function not available');
+      const supabase = getSupabaseClient();
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      
+      const { data: response, error: funcError } = await supabase.functions.invoke('chat-handler', {
+        body: { 
+          message: userMessageText,
+          timezone
+        }
+      });
 
-      // Create a stub response
+      if (funcError) throw funcError;
+
       const aiMessage = {
         id: (Date.now() + 2).toString(),
-        text: 'Chat backend is currently unavailable. The app is undergoing a rehaul. Your message was: "' + userMessageText + '"',
+        text: response.message,
         sender: 'ai',
-        responseType: 'backend_disconnected',
-        contextForReply: null,
-        newPendingAction: null
+        responseType: response.response_type,
+        data: response.data
       };
       setMessages(prevMessages => [...prevMessages, aiMessage]);
       
@@ -250,19 +248,36 @@ const ChatScreen = () => {
 
     const handleDirectAction = async (actionName, contextPayload) => {
         if (isSending || isAiThinking) return;
+        
+        let messageToSend = '';
+        if (actionName === 'confirm_log_saved_recipe') {
+            messageToSend = `Yes, log ${contextPayload.recipe_name}`;
+        } else {
+            messageToSend = actionName;
+        }
+
          setIsAiThinking(true);
          setIsSending(true);
 
          try {
-             // BACKEND DISCONNECTED: ai-handler-v2 function has been removed during rehaul
-             // TODO: Implement new backend architecture
-             console.log('[ChatScreen] Backend disconnected - direct action not available:', actionName);
+             const supabase = getSupabaseClient();
+             const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
              
+             const { data: response, error: funcError } = await supabase.functions.invoke('chat-handler', {
+                 body: { 
+                     message: messageToSend,
+                     timezone
+                 }
+             });
+
+             if (funcError) throw funcError;
+
              const aiMessage = {
                  id: (Date.now() + 2).toString(),
-                 text: 'This action is currently unavailable. The app is undergoing a rehaul.',
+                 text: response.message,
                  sender: 'ai',
-                 responseType: 'backend_disconnected',
+                 responseType: response.response_type,
+                 data: response.data
              };
              setMessages(prevMessages => [...prevMessages, aiMessage]);
              setPendingAction(null);
