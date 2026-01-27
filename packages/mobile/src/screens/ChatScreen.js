@@ -20,7 +20,6 @@ import {
   Button,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getSupabaseClient } from 'shared';
 import { useAuth } from '../context/AuthContext';
 import { useNetInfo } from '@react-native-community/netinfo';
 import { fetchUserProfile, fetchGoalRecommendations } from '../utils/profileUtils';
@@ -170,115 +169,25 @@ const ChatScreen = () => {
         throw new Error('Authentication token not found.');
       }
 
-      const supabase = getSupabaseClient(); // Get the client instance
-      const url = `${supabase.supabaseUrl}/functions/v1/ai-handler-v2`;
-      console.log('Attempting fetch to:', url);
+      // BACKEND DISCONNECTED: ai-handler-v2 function has been removed during rehaul
+      // TODO: Implement new backend architecture
+      console.log('[ChatScreen] Backend disconnected - ai-handler-v2 function not available');
 
-      // --- Modify requestBody construction --- 
-      const requestBody = {
-        message: userMessageText,
-        conversation_history: historyForBackend, // Add the prepared history
-        context: null // Initialize context field
+      // Create a stub response
+      const aiMessage = {
+        id: (Date.now() + 2).toString(),
+        text: 'Chat backend is currently unavailable. The app is undergoing a rehaul. Your message was: "' + userMessageText + '"',
+        sender: 'ai',
+        responseType: 'backend_disconnected',
+        contextForReply: null,
+        newPendingAction: null
       };
-      // --- End modification ---
-
-      let combinedContext = {};
-      let contextWasSet = false;
-
-      if (pendingAction) {
-        combinedContext.pending_action = pendingAction;
-        contextWasSet = true;
-        console.log("Including pending action in context:", pendingAction);
-      }
-
-      if (currentContextToSend) { // Use the variable captured at the start
-        combinedContext = { ...combinedContext, ...currentContextToSend }; // Merge properties
-        contextWasSet = true;
-        console.log("Including stored context_for_reply in context:", currentContextToSend);
-      }
-
-      if (contextWasSet) {
-        requestBody.context = combinedContext;
-      } else {
-        delete requestBody.context; 
-        console.log("Sending request without pending action or stored context.");
-      }
-
-      let responseOk = false;
-      let responseData = null;
-
-      try {
-          const response = await fetch(
-            url,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${session.access_token}`,
-              },
-              body: JSON.stringify(requestBody),
-            }
-          );
-
-          console.log('Response status:', response.status);
-          responseOk = response.ok;
-
-          if (!responseOk) {
-              let errorData;
-              try {
-                  errorData = await response.json();
-              } catch (e) {
-                  errorData = { message: await response.text() };
-              }
-              console.error("Backend Error Data:", errorData);
-              throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
-          }
-
-          responseData = await response.json();
-          console.log("Received data:", responseData);
-
-      } catch (fetchError) {
-          console.error('Fetch Error:', fetchError);
-          throw fetchError;
-      } finally {
-          setIsAiThinking(false);
-          setIsSending(false);
-      }
-
-      if (responseData && responseData.message) {
-          const aiMessage = {
-            id: (Date.now() + 2).toString(),
-            text: responseData.message,
-            sender: 'ai',
-            responseType: responseData.response_type,
-            contextForReply: responseData.context_for_reply || null,
-            newPendingAction: responseData.pending_action || null
-          };
-          setMessages(prevMessages => [...prevMessages, aiMessage]);
-
-          if (responseData.pending_action) {
-            setPendingAction(responseData.pending_action);
-            console.log("Stored NEW pending action for next turn:", responseData.pending_action);
-          } else {
-            setPendingAction(null);
-            console.log("Cleared pending action state.");
-          }
-
-          if (responseData.context_for_reply) {
-             setContextForNextRequest(responseData.context_for_reply);
-             console.log("Stored context_for_reply for next turn:", responseData.context_for_reply);
-          } else {
-             setContextForNextRequest(null);
-          }
-
-          if (responseData.response_type === 'needs_recommendation_trigger') {
-            console.log("Received needs_recommendation_trigger signal from backend.");
-            triggerRecommendationFetch();
-          }
-      } else {
-          console.error("Invalid response structure received from backend:", responseData);
-          throw new Error("Received an invalid response from the server.");
-      }
+      setMessages(prevMessages => [...prevMessages, aiMessage]);
+      
+      setPendingAction(null);
+      setContextForNextRequest(null);
+      setIsAiThinking(false);
+      setIsSending(false);
 
     } catch (error) {
       console.error('Error in handleSend:', error);
@@ -332,17 +241,6 @@ const ChatScreen = () => {
     const showProactiveMultipleChoice = item.sender === 'ai' && item.responseType === 'saved_recipe_proactive_multiple' && Array.isArray(item.contextForReply?.matches) && item.contextForReply.matches.length > 0;
     // --- End Flags ---
 
-    // --- Add console logs for debugging button conditions ---
-    if (item.sender === 'ai') {
-      console.log(`Rendering AI Msg ID: ${item.id}`);
-      console.log(`  Response Type: ${item.responseType}`);
-      console.log(`  ContextForReply: ${JSON.stringify(item.contextForReply)}`);
-      console.log(`  Show Proactive Single Confirm? ${showProactiveSingleConfirm}`);
-      console.log(`  Show Proactive Multiple Choice? ${showProactiveMultipleChoice}`);
-      console.log(`  Show Standard Saved Confirm? ${showSavedRecipeConfirmButton}`);
-    }
-    // --- End console logs ---
-
     const handleConfirmation = (confirmationMessage) => {
         setInputText(confirmationMessage);
         requestAnimationFrame(() => {
@@ -356,29 +254,15 @@ const ChatScreen = () => {
          setIsSending(true);
 
          try {
-             const supabase = getSupabaseClient(); // Get the client instance
-             const url = `${supabase.supabaseUrl}/functions/v1/ai-handler-v2`;
-             const requestBody = { action: actionName, context: contextPayload };
-
-             const response = await fetch(url, {
-                 method: 'POST',
-                 headers: {
-                     'Content-Type': 'application/json',
-                     'Authorization': `Bearer ${session.access_token}`,
-                 },
-                 body: JSON.stringify(requestBody),
-             });
-
-             if (!response.ok) {
-                 const errorData = await response.json();
-                 throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
-             }
-             const data = await response.json();
+             // BACKEND DISCONNECTED: ai-handler-v2 function has been removed during rehaul
+             // TODO: Implement new backend architecture
+             console.log('[ChatScreen] Backend disconnected - direct action not available:', actionName);
+             
              const aiMessage = {
                  id: (Date.now() + 2).toString(),
-                 text: data.message,
+                 text: 'This action is currently unavailable. The app is undergoing a rehaul.',
                  sender: 'ai',
-                 responseType: data.response_type,
+                 responseType: 'backend_disconnected',
              };
              setMessages(prevMessages => [...prevMessages, aiMessage]);
              setPendingAction(null);

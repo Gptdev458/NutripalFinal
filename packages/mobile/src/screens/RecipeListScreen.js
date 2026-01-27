@@ -148,37 +148,27 @@ const RecipeListScreen = () => {
     setDeletingRecipeId(recipeId);
 
     try {
-        console.log(`Attempting to delete recipe ID: ${recipeId}`);
+        // BACKEND DISCONNECTED: recipe-manager function has been removed during rehaul
+        // Fallback to direct Supabase delete
+        console.log(`Attempting to delete recipe ID: ${recipeId} via direct Supabase call`);
         const supabase = getSupabaseClient();
-        const url = `${supabase.supabaseUrl}/functions/v1/recipe-manager`;
 
-        const response = await fetch(url, {
-            method: 'DELETE',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${session.access_token}`,
-            },
-            body: JSON.stringify({ recipe_id: recipeId }),
-        });
+        const { error: deleteError } = await supabase
+            .from('user_recipes')
+            .delete()
+            .eq('id', recipeId)
+            .eq('user_id', user.id);
 
-        console.log('Delete response status:', response.status);
-
-        if (response.ok) {
+        if (deleteError) {
+            console.error('Failed to delete recipe:', deleteError);
+            Alert.alert('Deletion Failed', `Could not delete recipe: ${deleteError.message || 'Unknown error'}`);
+        } else {
             console.log(`Recipe ${recipeId} deleted successfully.`);
             setRecipes(currentRecipes => currentRecipes.filter(recipe => recipe.id !== recipeId));
             setIsRecipeModalVisible(false);
-        } else {
-            let errorData = { message: `HTTP error! Status: ${response.status}` };
-            try {
-                errorData = await response.json();
-            } catch (e) {
-                console.log("Could not parse error JSON, using status text.");
-            }
-            console.error('Failed to delete recipe:', errorData);
-            Alert.alert('Deletion Failed', `Could not delete recipe: ${errorData.message || 'Unknown error'}`);
         }
     } catch (error) {
-        console.error('Error calling delete function:', error);
+        console.error('Error calling delete:', error);
         Alert.alert('Error', `An error occurred while trying to delete the recipe: ${error.message}`);
     } finally {
         setDeletingRecipeId(null);

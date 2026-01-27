@@ -7,8 +7,7 @@ import Link from 'next/link';
 import ChatDashboardLayout from '@/components/ChatDashboardLayout'; // Import the new layout
 import DashboardShell from '@/components/DashboardShell';
 import DashboardSummaryTable from '@/components/DashboardSummaryTable';
-import ChatMessageList from '@/components/ChatMessageList'; // <-- Import the new component
-import { useDashboardData } from '@/hooks/useDashboardData';
+import ChatMessageList from '@/components/ChatMessageList';
 
 // Force dynamic rendering to bypass cache
 export const dynamic = 'force-dynamic';
@@ -21,19 +20,6 @@ interface ChatMessage {
   actions?: Array<{ label: string; payload: string }>; // Optional actions for bot messages
   flagged?: boolean; // Added flagged property
   message: string; // Added original message field for compatibility
-}
-
-// --- ADDED: Interface for UI Action State ---
-interface UiActionState {
-  actionType: string;
-  payload: any;
-}
-
-// Add type for recipe matches
-interface RecipeMatch {
-    id: string | number;
-    recipe_name: string;
-    // Add other potential fields if known
 }
 
 // --- Types from Dashboard ---
@@ -216,10 +202,7 @@ export default function ChatPage() {
   const [chatSessions, setChatSessions] = useState<ChatSessionMeta[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [loadingChats, setLoadingChats] = useState(false);
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]); // <-- Reinstate chatHistory state
-  // Use more specific types instead of any
-  const [pendingAction, setPendingAction] = useState<Record<string, unknown> | null>(null);
-  const [contextForNextRequest, setContextForNextRequest] = useState<Record<string, unknown> | null>(null);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
 
   // Persist activeChatId to localStorage whenever it changes
   useEffect(() => {
@@ -237,12 +220,6 @@ export default function ChatPage() {
       }
     }
   }, []);
-
-  // Use a unique storageKey for each user and chat session
-  const storageKey = user && activeChatId ? `chatHistory_${user.id}_${activeChatId}` : user ? `chatHistory_${user.id}` : 'chatHistory_guest';
-
-  // --- ADDED: State for UI Actions from Markers ---
-  const [currentUiAction, setCurrentUiAction] = useState<UiActionState | null>(null);
 
   // --- Dashboard State ---
   const [userGoals, setUserGoals] = useState<UserGoal[]>([]);
@@ -425,44 +402,16 @@ export default function ChatPage() {
 
   // --- Process Bot Reply ---
   const processBotReply = (responseData: Record<string, unknown>): ChatMessage => {
-    let replyText = (responseData.message as string) || 'Sorry, I received an empty response.';
-    const responseType = responseData.response_type;
-    let actions: Array<{ label: string; payload: string }> | undefined = undefined;
-
-    // Marker Processing logic remains here to potentially set pending actions/context
-    const markerRegex = /\s*\[UI_ACTION:([A-Z_]+):(.+)\]$/;
-    const match = replyText.match(markerRegex);
-    if (match) {
-        const actionType = match[1];
-        const payloadString = match[2];
-        replyText = replyText.replace(markerRegex, '').trim();
-        try {
-            const payload = JSON.parse(payloadString);
-            // This function shouldn't set currentUiAction directly anymore,
-            // handleSend will manage the state based on the returned message.
-            // We might need to pass back the parsed action/payload if needed.
-            // For now, just return the cleaned message.
-        } catch (e) {
-            console.error('Failed to parse UI_ACTION payload:', e, payloadString);
-        }
-    }
-
-    // Update context/pending based on the full response data
-    const nextContext = responseData.context && typeof responseData.context === 'object' && Object.keys(responseData.context).length > 0 ? responseData.context as Record<string, unknown> : null;
-    const nextPending = responseData.pending_action && typeof responseData.pending_action === 'object' && Object.keys(responseData.pending_action).length > 0 ? responseData.pending_action as Record<string, unknown> : null;
-    setContextForNextRequest(nextContext);
-    setPendingAction(nextPending);
+    const replyText = (responseData.message as string) || 'Sorry, I received an empty response.';
 
     // Determine sender type - always use 'bot' for consistency with database schema
-    // The database only accepts 'user', 'bot', or 'error' as valid sender types
     const senderType = responseData.status === 'error' ? 'error' : 'bot';
 
     const newBotMessage: ChatMessage = {
-        id: Date.now() + 1, // Ensure unique ID generation
+        id: Date.now() + 1,
         sender: senderType,
         text: replyText,
-        message: replyText, // Also include original message for compatibility
-        actions: actions, // Add actions if parsed or based on responseType
+        message: replyText,
     };
 
     return newBotMessage;
@@ -494,10 +443,8 @@ export default function ChatPage() {
     if (!error && data) {
       setChatSessions((prev) => [data, ...prev]);
       setActiveChatId(data.chat_id);
-      setChatHistory([]); // <-- Clear history when starting new chat
+      setChatHistory([]);
       setMessage('');
-      setPendingAction(null);
-      setContextForNextRequest(null);
     }
   };
 
@@ -505,8 +452,6 @@ export default function ChatPage() {
   const handleSelectChat = (chatId: string) => {
     setActiveChatId(chatId);
     setMessage('');
-    setPendingAction(null);
-    setContextForNextRequest(null);
   };
 
   // --- Send message (user) ---
@@ -522,50 +467,21 @@ export default function ChatPage() {
     setChatHistory(prev => [...prev, userMessage]);
 
     setMessage(''); // Clear input
-    // Clear UI Actions when sending a new message
-    setCurrentUiAction(null);
 
     try {
-        const response = await fetch('/api/chat', { 
-             method: 'POST',
-             headers: {
-                 'Content-Type': 'application/json',
-                 Authorization: `Bearer ${session?.access_token}`,
-             },
-             body: JSON.stringify({ 
-                 message: textToSend,
-                 chat_id: activeChatId,
-                 context: contextForNextRequest, 
-                 pending_action: pendingAction, 
-              }),
-        });
+        // BACKEND DISCONNECTED: Chat API has been removed during rehaul
+        // TODO: Implement new backend architecture
+        console.log('[ChatPage] Backend disconnected - chat API not available');
+        
+        const stubResponse = {
+          status: 'info',
+          message: 'Chat backend is currently unavailable. The app is undergoing a rehaul. Your message was: "' + textToSend + '"',
+          response_type: 'backend_disconnected'
+        };
 
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ message: 'Failed to parse error response.' }));
-            throw new Error(errorData.message || `Network response was not ok (${response.status})`);
-        }
-
-        const data = await response.json();
-
-        // Process reply and add bot message to local state
-        const botMessage = processBotReply(data);
+        // Process stub reply and add bot message to local state
+        const botMessage = processBotReply(stubResponse);
         setChatHistory(prev => [...prev, botMessage]);
-
-        // Update context/pending state (handled within processBotReply now)
-        // setContextForNextRequest(data.context || null);
-        // setPendingAction(data.pending_action || null);
-
-         // Handle potential UI actions returned implicitly by processBotReply (if needed)
-         // This logic depends on how processBotReply is structured
-
-         // If dashboard data might change (log, goal update), refresh it
-         const responseType = data.response_type as string; // Get response type
-         console.log(`[ChatPage] Received API response type: ${responseType}`); // Log the response type
-         if (responseType?.includes('log') || responseType?.includes('goal')) {
-             console.log(`[ChatPage] Condition met. Calling fetchDashboardData(true)...`); // Log before call
-             await fetchDashboardData(true); // Ensure await if async
-             console.log(`[ChatPage] fetchDashboardData(true) completed.`); // Log after call
-         }
 
     } catch (error: any) {
       console.error('Error sending message:', error);
@@ -602,28 +518,10 @@ export default function ChatPage() {
       };
       setChatHistory(updatedMessages);
       
-      // Send the flag request to the API
-      const response = await fetch('/api/flag-message', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          messageId,
-          flagged: newFlaggedState
-        }),
-      });
-      
-      if (!response.ok) {
-        // If the request fails, revert the optimistic update
-        const errorData = await response.json().catch(() => ({ message: 'Failed to parse error response.' }));
-        console.error('Error flagging message:', errorData.message);
-        
-        // Revert the change in UI
-        const revertedMessages = [...chatHistory];
-        setChatHistory(revertedMessages);
-      }
+      // BACKEND DISCONNECTED: Flag message API has been removed during rehaul
+      // TODO: Implement new backend architecture
+      console.log('[ChatPage] Backend disconnected - flag message API not available');
+      // Keep the optimistic update for now (UI only)
     } catch (error) {
       console.error('Error flagging message:', error);
     }

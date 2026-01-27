@@ -54,7 +54,7 @@ export default function SavedRecipesPage() {
   const [deletingRecipeId, setDeletingRecipeId] = useState<string | null>(null);
   const [isRecipeModalVisible, setIsRecipeModalVisible] = useState(false);
   const [selectedRecipeData, setSelectedRecipeData] = useState<SavedRecipe | null>(null);
-  const [isModalLoading, setIsModalLoading] = useState(false); // Restore unused state
+  const [isModalLoading, setIsModalLoading] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [userGoals, setUserGoals] = useState<UserGoal[]>([]); // Store user goals
 
@@ -152,20 +152,13 @@ export default function SavedRecipesPage() {
     setModalError(null); // Clear previous modal errors
     
     try {
-      // --- Actual Logging via Edge Function --- 
-      const { error: functionError } = await supabase.functions.invoke('log-saved-recipe', {
-        body: { recipe_id: recipeId }, // Pass recipe ID to the function
-      });
-
-      if (functionError) {
-        throw functionError; // Throw error to be caught below
-      }
-      // --- End Function Call ---
-
-      console.log("Recipe logged successfully via function.");
-      // Show success feedback (e.g., toast notification) - alert for now
-      alert(`Recipe "${recipeName}" logged successfully!`);
-      handleCloseModal(); // Close modal after successful logging
+      // BACKEND DISCONNECTED: log-saved-recipe function has been removed during rehaul
+      // TODO: Implement new backend architecture
+      console.log("[RecipesPage] Backend disconnected - log-saved-recipe function not available");
+      
+      // Show info message instead of actual logging
+      alert(`Backend unavailable: Recipe logging is currently disabled during app rehaul.`);
+      handleCloseModal();
 
     } catch (err: unknown) {
       console.error("Failed to log recipe via function:", err);

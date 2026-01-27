@@ -99,11 +99,12 @@ export const updateUserProfile = async (userId, profileData) => {
 };
 
 /**
- * Calculates recommended nutritional goals by invoking the 'calculate-goals' edge function.
+ * Calculates recommended nutritional goals.
+ * NOTE: The calculate-goals edge function has been removed during rehaul.
+ * This now performs client-side calculations as a fallback.
+ * 
  * @param {object} profileData - An object containing the user's profile data { age, weight_kg, height_cm, sex, activity_level, health_goal }.
- * @returns {Promise<{ data: object | null, error: object | null }>} - The result from the edge function.
- *           On success, `data` should contain `{ recommendations: { calories: number, protein_g: number, ... } }`.
- *           On error, `error` will contain the error details.
+ * @returns {Promise<{ data: object | null, error: object | null }>} - The calculation result.
  */
 export const calculateNutritionalGoals = async (profileData) => {
   // 1. Input Validation
@@ -112,7 +113,6 @@ export const calculateNutritionalGoals = async (profileData) => {
     return { data: null, error: { message: 'Profile data object is required.' } };
   }
 
-  // Keys required by the 'calculate-goals' edge function
   const requiredKeys = ['age', 'weight_kg', 'height_cm', 'sex', 'activity_level', 'health_goal'];
   const missingKeys = requiredKeys.filter(key => !(key in profileData) || profileData[key] === null || profileData[key] === undefined);
 
@@ -122,8 +122,6 @@ export const calculateNutritionalGoals = async (profileData) => {
     return { data: null, error: { message } };
   }
 
-  // Add basic type validation if needed (similar to the old function)
-  // Example:
   if (typeof profileData.age !== 'number' || profileData.age <= 0) return { data: null, error: { message: 'Invalid age.' } };
   if (typeof profileData.weight_kg !== 'number' || profileData.weight_kg <= 0) return { data: null, error: { message: 'Invalid weight.' } };
   if (typeof profileData.height_cm !== 'number' || profileData.height_cm <= 0) return { data: null, error: { message: 'Invalid height.' } };
@@ -131,51 +129,79 @@ export const calculateNutritionalGoals = async (profileData) => {
   if (!['sedentary', 'lightly_active', 'moderately_active', 'very_active', 'extra_active'].includes(profileData.activity_level?.toLowerCase())) return { data: null, error: { message: 'Invalid activity level.' } };
   if (!['weight_loss', 'weight_gain', 'maintenance'].includes(profileData.health_goal?.toLowerCase())) return { data: null, error: { message: 'Invalid health goal.' } };
 
-
   try {
-    console.log('Invoking calculate-goals function with profile:', profileData);
-    const supabase = getSupabaseClient();
-
-    // 2. Invoke the NEW Supabase Edge Function
-    const { data, error } = await supabase.functions.invoke('calculate-goals', { // <--- Call the new function
-      body: {
-        profile: profileData, // Pass the profile data in the body
-      },
-    });
-
-    // 3. Handle Response
-    if (error) {
-      // Catches invocation errors (network, function crash before returning JSON)
-      console.error(`Error invoking Supabase function 'calculate-goals':`, error);
-      throw error;
+    // BACKEND DISCONNECTED: calculate-goals function has been removed during rehaul
+    // Perform client-side calculations as fallback
+    console.log('Calculating goals client-side (edge function removed during rehaul):', profileData);
+    
+    const { age, weight_kg, height_cm, sex, activity_level, health_goal } = profileData;
+    
+    // Mifflin-St Jeor BMR Calculation
+    let bmr;
+    if (sex === 'male') {
+      bmr = (10 * weight_kg) + (6.25 * height_cm) - (5 * age) + 5;
+    } else if (sex === 'female') {
+      bmr = (10 * weight_kg) + (6.25 * height_cm) - (5 * age) - 161;
+    } else {
+      bmr = (10 * weight_kg) + (6.25 * height_cm) - (5 * age) - 78;
     }
-
-    // Check if the function itself returned an error within its JSON response
-    if (data && data.error) {
-        console.error(`Edge function 'calculate-goals' returned an error:`, data.error);
-        return { data: null, error: { message: data.error } };
+    
+    // Activity factor
+    const activityFactors = {
+      sedentary: 1.2,
+      lightly_active: 1.375,
+      moderately_active: 1.55,
+      very_active: 1.725,
+      extra_active: 1.9
+    };
+    const activityFactor = activityFactors[activity_level] || 1.375;
+    
+    // Total Energy Expenditure
+    let tee = bmr * activityFactor;
+    
+    // Adjust for goal
+    if (health_goal === 'weight_loss') {
+      tee -= 500;
+    } else if (health_goal === 'weight_gain') {
+      tee += 500;
     }
-
-    // Check if the expected recommendations object is present
-    if (!data || !data.recommendations) {
-        console.error(`Invalid response structure from 'calculate-goals':`, data);
-        return { data: null, error: { message: 'Received invalid response from calculation service.' } };
-    }
-
-    console.log('Successfully received recommendations from calculate-goals:', data);
-    return { data: data, error: null }; // Return the { recommendations: {...} } object
+    
+    const adjustedCalories = Math.round(tee);
+    
+    // Macros
+    const protein_g = Math.round(weight_kg * 1.8);
+    const fat_g = Math.round((adjustedCalories * 0.25) / 9);
+    const carbs_g = Math.round((adjustedCalories - (protein_g * 4) - (fat_g * 9)) / 4);
+    const fiber_g = Math.round((adjustedCalories / 1000) * 14);
+    const fat_saturated_g = Math.round((adjustedCalories * 0.1) / 9);
+    
+    const recommendations = {
+      calories: adjustedCalories,
+      protein_g,
+      fat_total_g: fat_g,
+      carbs_g,
+      fiber_g,
+      fat_saturated_g,
+      sodium_mg: 2300,
+      sugar_added_g: 30
+    };
+    
+    console.log('Client-side calculated recommendations:', recommendations);
+    return { data: { recommendations }, error: null };
 
   } catch (error) {
     console.error('Error in calculateNutritionalGoals utility:', error);
-    const errorObject = {
-        message: error.message || 'Unknown error calculating nutritional goals.',
-        details: error.details || error
-    };
-     // Handle specific Supabase FunctionError details if present
-    if (error.context) {
-        errorObject.details = error.context;
-        console.error("Supabase FunctionError context:", error.context);
-    }
-    return { data: null, error: errorObject };
+    return { data: null, error: { message: error.message || 'Unknown error calculating nutritional goals.' } };
   }
+};
+
+/**
+ * Fetches goal recommendations based on user profile.
+ * This is an alias for calculateNutritionalGoals for backwards compatibility.
+ * 
+ * @param {object} profileData - User profile data
+ * @returns {Promise<{ data: object | null, error: object | null }>}
+ */
+export const fetchGoalRecommendations = async (profileData) => {
+  return calculateNutritionalGoals(profileData);
 }; 

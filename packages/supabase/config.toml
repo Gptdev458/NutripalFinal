@@ -1,21 +1,5 @@
-[functions.ai-handler]
-enabled = true
-verify_jwt = true
-import_map = "./functions/ai-handler/deno.json"
-# Uncomment to specify a custom file path to the entrypoint.
-# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
-entrypoint = "./functions/ai-handler/index.ts"
-# Specifies static files to be bundled with the function. Supports glob patterns.
-# For example, if you want to serve static HTML pages in your function:
-# static_files = [ "./functions/ai-handler/*.html" ]
+# Supabase Edge Functions Configuration
+# Note: ai-handler and ai-handler-v2 have been removed during the rehaul
+# The nutrition-lookup module is a library, not a deployable function
 
-[functions.ai-handler-v2]
-enabled = true
-verify_jwt = true
-import_map = "./functions/ai-handler-v2/deno.json"
-# Uncomment to specify a custom file path to the entrypoint.
-# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
-entrypoint = "./functions/ai-handler-v2/index.ts"
-# Specifies static files to be bundled with the function. Supports glob patterns.
-# For example, if you want to serve static HTML pages in your function:
-# static_files = [ "./functions/ai-handler-v2/*.html" ]
+# Add new edge function configurations here as they are developed
