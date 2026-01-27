@@ -246,7 +246,7 @@ export default function ChatPage() {
   const handleSend = async (e?: React.FormEvent<HTMLFormElement>, actionPayload?: string) => {
     if (e) e.preventDefault();
     const textToSend = actionPayload || message.trim();
-    if (!textToSend || sending || authLoading || !activeChatId) return;
+    if (!textToSend || sending || authLoading || !activeChatId || !supabase) return;
 
     setSending(true);
     const userMessage: ChatMessage = { id: Date.now(), sender: 'user', text: textToSend };
