@@ -14,12 +14,12 @@ export const dynamic = 'force-dynamic';
 
 // Interface for chat messages
 interface ChatMessage {
-  id: number; // Simple ID for key prop
-  sender: 'user' | 'bot' | 'ai' | 'error';  // Added 'ai' as a possible sender type
+  id: string | number; // Updated to handle UUIDs
+  sender: 'user' | 'bot' | 'assistant' | 'error';
   text: string;
-  actions?: Array<{ label: string; payload: string }>; // Optional actions for bot messages
-  flagged?: boolean; // Added flagged property
-  message: string; // Added original message field for compatibility
+  metadata?: any;
+  message_type?: string;
+  flagged?: boolean;
 }
 
 // --- Types from Dashboard ---
@@ -136,7 +136,7 @@ const DashboardTableRow = ({ nutrient, current, target, unit, goalType }: { nutr
 };
 
 interface ChatSessionMeta {
-  chat_id: string;
+  id: string;
   title: string;
   updated_at: string;
 }
@@ -242,28 +242,23 @@ export default function ChatPage() {
       try {
         // Set loading state if needed
         const { data, error: dbError } = await supabase
-          .from('chat_messages') // Ensure this table name is correct
-          .select('id, sender, message, created_at, flagged') // Also select flagged field
-          .eq('chat_id', activeChatId)
-          .order('created_at', { ascending: true }); // Order by creation time
+          .from('chat_messages') 
+          .select('id, role, content, metadata, message_type, flagged, created_at')
+          .eq('session_id', activeChatId)
+          .order('created_at', { ascending: true });
 
         if (dbError) {
           throw dbError;
         }
 
         // Transform data to ChatMessage interface
-        const formattedMessages: ChatMessage[] = data?.map((msg: any, index: number) => {
-          // Normalize sender to handle both 'ai' and 'bot' consistently
-          let normalizedSender = msg.sender;
-          if (normalizedSender === 'ai') {
-            normalizedSender = 'bot'; // Treat 'ai' sender as 'bot' for display consistency
-          }
-          
+        const formattedMessages: ChatMessage[] = data?.map((msg: any) => {
           return {
-            id: msg.id ?? `msg-${activeChatId}-${index}-${Date.now()}`,
-            sender: normalizedSender as 'user' | 'bot' | 'error',
-            text: msg.message, // Map database 'message' field to component's 'text' field
-            message: msg.message, // Also include original 'message' field for compatibility
+            id: msg.id,
+            sender: msg.role === 'assistant' ? 'bot' : msg.role,
+            text: msg.content,
+            metadata: msg.metadata,
+            message_type: msg.message_type,
             flagged: msg.flagged || false
           };
         }) || [];
@@ -289,19 +284,19 @@ export default function ChatPage() {
     setLoadingChats(true);
     supabase
       .from('chat_sessions')
-      .select('chat_id, title, updated_at')
+      .select('id, title, updated_at')
       .eq('user_id', user.id)
       .order('updated_at', { ascending: false })
       .then(({ data, error }) => {
         if (!error && data) {
           setChatSessions(data);
           if (data.length > 0 && !activeChatId) {
-            setActiveChatId(data[0].chat_id);
+            setActiveChatId(data[0].id);
           }
         }
         setLoadingChats(false);
       });
-  }, [user, supabase]);
+  }, [user, supabase, activeChatId]);
 
   // --- Keep useEffect for fetching chat sessions --- 
   useEffect(() => {
@@ -323,66 +318,66 @@ export default function ChatPage() {
 
     const today = new Date();
     const dateString = formatDate(today);
+    // Use the date part for filtering
     const startOfDay = `${dateString}T00:00:00.000Z`;
     const endOfDay = `${dateString}T23:59:59.999Z`;
 
     try {
-        console.log(`[ChatPage] fetchDashboardData called. Force refresh: ${forceRefresh}`); // Log start
+        console.log(`[ChatPage] fetchDashboardData called. Force refresh: ${forceRefresh}`); 
         const [goalsResponse, logsResponse] = await Promise.all([
             supabase
                 .from('user_goals')
-                .select('nutrient, target_value, unit, goal_type')
-                .eq('user_id', user.id),
+                .select('calories, protein_g, carbs_g, fat_total_g, fiber_g, sugar_g, sodium_mg')
+                .eq('user_id', user.id)
+                .maybeSingle(),
             supabase
                 .from('food_log')
                 .select('*')
                 .eq('user_id', user.id)
-                .gte('timestamp', startOfDay)
-                .lte('timestamp', endOfDay)
-                .order('timestamp', { ascending: false })
+                .gte('log_time', startOfDay)
+                .lte('log_time', endOfDay)
+                .order('log_time', { ascending: false })
         ]);
 
         if (goalsResponse.error) throw goalsResponse.error;
         if (logsResponse.error) throw logsResponse.error;
 
-        const fetchedGoals = goalsResponse.data || [];
+        const goals = goalsResponse.data;
         const fetchedLogs = logsResponse.data || [];
 
-        setUserGoals(fetchedGoals);
-        // Keep track of recent logs for potential future use, but dashboard panel might only show totals
+        // Transform goals to UserGoal[] for the table
+        const formattedGoals: UserGoal[] = [];
+        if (goals) {
+          Object.entries(goals).forEach(([nutrient, target]) => {
+            if (nutrient !== 'user_id' && nutrient !== 'id' && typeof target === 'number') {
+              formattedGoals.push({
+                nutrient,
+                target_value: target,
+                unit: nutrient.endsWith('_mg') ? 'mg' : (nutrient.endsWith('_g') ? 'g' : 'kcal'),
+                goal_type: 'target'
+              });
+            }
+          });
+        }
+        
+        setUserGoals(formattedGoals);
         setRecentLogs(fetchedLogs.slice(0, 5));
 
-        // Calculate totals based on fetched goals and logs for today
         const totals: DailyTotals = {};
-        fetchedGoals.forEach(goal => {
-            let currentIntake = 0;
-            fetchedLogs.forEach(log => {
-                const logValue = log[goal.nutrient];
-                if (typeof logValue === 'number' && !isNaN(logValue)) {
-                    currentIntake += logValue;
-                }
-            });
-            totals[goal.nutrient] = currentIntake;
+        fetchedLogs.forEach(log => {
+          Object.keys(log).forEach(key => {
+            if (typeof log[key] === 'number') {
+              totals[key] = (totals[key] || 0) + (log[key] as number);
+            }
+          });
         });
-        // Ensure calories total is calculated even if not an explicit goal
-        if (!totals['calories']) {
-             let calorieTotal = 0;
-             fetchedLogs.forEach(log => {
-                 if (typeof log.calories === 'number' && !isNaN(log.calories)) {
-                     calorieTotal += log.calories;
-                 }
-             });
-             totals['calories'] = calorieTotal;
-        }
+        
         setDailyTotals(totals);
-
-        console.log("[ChatPage] Dashboard data fetched successfully. Goals:", JSON.stringify(fetchedGoals)); // Log fetched goals content
 
     } catch (err: unknown) {
         console.error("Error fetching dashboard data for chat view:", err);
         const errorMessage = err instanceof Error ? err.message : String(err);
         setDashboardError(`Failed to load dashboard data: ${errorMessage}`);
-        // Reset dashboard specific state on error
         setUserGoals([]);
         setDailyTotals({});
         setRecentLogs([]);
@@ -401,27 +396,23 @@ export default function ChatPage() {
   }, [user, supabase, fetchDashboardData]);
 
   // --- Process Bot Reply ---
-  const processBotReply = (responseData: Record<string, unknown>): ChatMessage => {
-    const replyText = (responseData.message as string) || 'Sorry, I received an empty response.';
-
-    // Determine sender type - always use 'bot' for consistency with database schema
+  const processBotReply = (responseData: any): ChatMessage => {
+    const replyText = responseData.message || 'Sorry, I received an empty response.';
     const senderType = responseData.status === 'error' ? 'error' : 'bot';
 
-    const newBotMessage: ChatMessage = {
-        id: Date.now() + 1,
+    return {
+        id: `bot-${Date.now()}`,
         sender: senderType,
         text: replyText,
-        message: replyText,
+        metadata: responseData.data,
+        message_type: responseData.response_type,
     };
-
-    return newBotMessage;
   };
 
   // --- Mobile Menu Logic (Copied from Profile/Dashboard) ---
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Element;
-      // Ensure sidebar closes if click is outside sidebar AND outside the menu button
       if (menuOpen && !target.closest('.sidebar') && !target.closest('.menu-button')) {
         setMenuOpen(false);
       }
@@ -434,15 +425,15 @@ export default function ChatPage() {
   const handleNewChat = async () => {
     if (!user || !supabase) return;
     const now = new Date();
-    const title = now.toLocaleString();
+    const title = `Chat ${now.toLocaleDateString()} ${now.toLocaleTimeString()}`;
     const { data, error } = await supabase
       .from('chat_sessions')
       .insert([{ user_id: user.id, title }])
-      .select('chat_id, title, updated_at')
+      .select('id, title, updated_at')
       .single();
     if (!error && data) {
       setChatSessions((prev) => [data, ...prev]);
-      setActiveChatId(data.chat_id);
+      setActiveChatId(data.id);
       setChatHistory([]);
       setMessage('');
     }
@@ -469,19 +460,24 @@ export default function ChatPage() {
     setMessage(''); // Clear input
 
     try {
-        // BACKEND DISCONNECTED: Chat API has been removed during rehaul
-        // TODO: Implement new backend architecture
-        console.log('[ChatPage] Backend disconnected - chat API not available');
-        
-        const stubResponse = {
-          status: 'info',
-          message: 'Chat backend is currently unavailable. The app is undergoing a rehaul. Your message was: "' + textToSend + '"',
-          response_type: 'backend_disconnected'
-        };
+        const { data: response, error: funcError } = await supabase.functions.invoke('chat-handler', {
+          body: { 
+            message: textToSend,
+            session_id: activeChatId 
+          }
+        });
 
-        // Process stub reply and add bot message to local state
-        const botMessage = processBotReply(stubResponse);
+        if (funcError) throw funcError;
+
+        // Process actual reply and add bot message to local state
+        const botMessage = processBotReply(response);
         setChatHistory(prev => [...prev, botMessage]);
+
+        // Trigger dashboard refresh if food was logged
+        if (response.response_type === 'food_logged') {
+          console.log('[ChatPage] Food logged successfully, refreshing dashboard data...');
+          fetchDashboardData(true);
+        }
 
     } catch (error: any) {
       console.error('Error sending message:', error);

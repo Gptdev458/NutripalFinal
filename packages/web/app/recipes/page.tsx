@@ -142,29 +142,35 @@ export default function SavedRecipesPage() {
   const handleLogRecipe = async (recipeId: string, recipeName: string) => {
     if (loggingRecipeId || deletingRecipeId) return;
     if (!supabase || !user) { 
-        // Show error feedback (e.g., toast notification or modal error)
         alert("Authentication error. Cannot log recipe."); 
         return;
     }
 
     console.log(`Attempting to log recipe via function: ${recipeName} (${recipeId})`);
     setLoggingRecipeId(recipeId);
-    setModalError(null); // Clear previous modal errors
+    setModalError(null); 
     
     try {
-      // BACKEND DISCONNECTED: log-saved-recipe function has been removed during rehaul
-      // TODO: Implement new backend architecture
-      console.log("[RecipesPage] Backend disconnected - log-saved-recipe function not available");
-      
-      // Show info message instead of actual logging
-      alert(`Backend unavailable: Recipe logging is currently disabled during app rehaul.`);
-      handleCloseModal();
+      const { data: response, error: funcError } = await supabase.functions.invoke('chat-handler', {
+        body: { 
+          message: `Log my recipe: ${recipeName}`,
+          // No session_id needed for direct log, but could add one if wanted
+        }
+      });
+
+      if (funcError) throw funcError;
+
+      if (response.status === 'success') {
+        alert(`Successfully logged ${recipeName}!`);
+        handleCloseModal();
+      } else {
+        throw new Error(response.message || 'Failed to log recipe');
+      }
 
     } catch (err: unknown) {
       console.error("Failed to log recipe via function:", err);
       const errorMessage = err instanceof Error ? err.message : String(err);
-      setModalError(`Failed to log recipe: ${errorMessage || 'Unknown function error'}`);
-      // Don't close modal on error
+      setModalError(`Failed to log recipe: ${errorMessage}`);
     } finally {
         setLoggingRecipeId(null);
     }

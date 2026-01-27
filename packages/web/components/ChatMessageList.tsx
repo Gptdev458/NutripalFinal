@@ -6,11 +6,11 @@ import ReactMarkdown from 'react-markdown';
 
 // Interface for chat messages (keep or import from shared types)
 interface ChatMessage {
-  id: number;
-  sender: 'user' | 'bot' | 'ai' | 'error';
-  text?: string;
-  message?: string;
-  actions?: Array<{ label: string; payload: string }>;
+  id: string | number;
+  sender: 'user' | 'bot' | 'assistant' | 'error';
+  text: string;
+  metadata?: any;
+  message_type?: string;
   flagged?: boolean;
 }
 
@@ -42,14 +42,14 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
            </div>
        )}
       {messages.map((msg) => {
-        // Treat both 'bot' and 'ai' sender types the same way
-        const isBotMessage = msg.sender === 'bot' || msg.sender === 'ai';
-        const messageContent = (msg.text || msg.message || '').trim();
+        // Treat both 'bot' and 'assistant' sender types the same way
+        const isBotMessage = msg.sender === 'bot' || msg.sender === 'assistant';
+        const messageContent = (msg.text || '').trim();
         const isEmpty = messageContent === '';
         
         return (
           <div
-            key={msg.id} // Use message id from prop
+            key={msg.id} 
             className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'} group relative`}
           >
             <div
@@ -62,10 +62,10 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
                   : 'bg-white text-gray-900 border border-gray-200'
               } ${msg.flagged ? 'border-2 border-red-300' : ''}`}
             >
-              {/* Flag/Report Button - positioned in top right of message */}
+              {/* Flag/Report Button */}
               {onFlagMessage && isBotMessage && (
                 <button
-                  onClick={() => onFlagMessage(msg.id)}
+                  onClick={() => onFlagMessage(Number(msg.id))}
                   className={`absolute top-1 right-1 ${
                     msg.flagged ? 'text-red-500' : 'text-gray-400'
                   } opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity duration-200`}
@@ -79,7 +79,6 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
               
               {/* Message Text Content */}
               <div className={`break-words whitespace-pre-line ${isBotMessage ? 'prose prose-sm max-w-none' : ''}`}>
-                {/* For bot/AI messages, render markdown. For user or error messages, just the text */}
                 {isEmpty && isBotMessage ? (
                   <span className="italic text-orange-700 text-sm font-medium">
                     (Empty message)
@@ -97,22 +96,57 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
                 )}
               </div>
               
-              {/* Render action buttons if available */}
-              {msg.actions && msg.actions.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {msg.actions.map((action, index) => (
-                    <button
-                      key={index}
-                      className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm text-gray-800 transition-colors"
-                      onClick={() => {
-                        // You need to handle action button clicks here
-                        // This depends on how your app manages actions
-                        console.log('Action clicked:', action);
-                      }}
-                    >
-                      {action.label}
-                    </button>
-                  ))}
+              {/* Structured Metadata Rendering */}
+              {msg.metadata && isBotMessage && (
+                <div className="mt-3 pt-2 border-t border-gray-100">
+                  {msg.message_type === 'food_logged' && msg.metadata.nutrition && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Nutrients Logged</p>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                        {msg.metadata.nutrition.map((item: any, i: number) => (
+                          <div key={i} className="col-span-2 pb-1 mb-1 border-b border-gray-50 last:border-0">
+                            <div className="flex justify-between text-sm">
+                              <span className="font-semibold">{item.food_name}</span>
+                              <span className="text-blue-600">{item.calories} kcal</span>
+                            </div>
+                            <div className="flex gap-3 text-xs text-gray-500">
+                              <span>P: {item.protein_g}g</span>
+                              <span>C: {item.carbs_g}g</span>
+                              <span>F: {item.fat_total_g}g</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {msg.message_type === 'nutrition_info' && msg.metadata.nutrition && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Nutritional Info</p>
+                      {msg.metadata.nutrition.map((item: any, i: number) => (
+                        <div key={i} className="text-sm bg-blue-50 p-2 rounded">
+                          <div className="flex justify-between font-bold">
+                            <span>{item.food_name}</span>
+                            <span>{item.calories} kcal</span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-1 text-xs mt-1">
+                            <div>Protein: {item.protein_g}g</div>
+                            <div>Carbs: {item.carbs_g}g</div>
+                            <div>Fat: {item.fat_total_g}g</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {msg.metadata.warnings && msg.metadata.warnings.length > 0 && (
+                    <div className="mt-2 p-2 bg-yellow-50 rounded border border-yellow-100">
+                      <p className="text-xs font-bold text-yellow-700 uppercase mb-1">Warnings</p>
+                      {msg.metadata.warnings.map((w: string, i: number) => (
+                        <p key={i} className="text-xs text-yellow-600">• {w}</p>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
