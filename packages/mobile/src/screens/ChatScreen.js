@@ -35,8 +35,8 @@ const ChatScreen = () => {
   const [isOffline, setIsOffline] = useState(false);
   const [isFetchingRecommendations, setIsFetchingRecommendations] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
-  const [contextForNextRequest, setContextForNextRequest] = useState(null);
   const [isSending, setIsSending] = useState(false);
+  const [sessionId, setSessionId] = useState(null);
 
   const flatListRef = useRef(null);
   const netInfo = useNetInfo();
@@ -52,6 +52,31 @@ const ChatScreen = () => {
   }, []);
 
   useEffect(() => {
+    const initSession = async () => {
+      if (!user) return;
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase
+        .from('chat_sessions')
+        .select('id, title')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false })
+        .limit(1);
+
+      if (data && data.length > 0) {
+        setSessionId(data[0].id);
+      } else {
+        const { data: newSession, error: createError } = await supabase
+          .from('chat_sessions')
+          .insert([{ user_id: user.id, title: 'Mobile Chat' }])
+          .select('id')
+          .single();
+        if (newSession) setSessionId(newSession.id);
+      }
+    };
+    initSession();
+  }, [user]);
+
+  useEffect(() => {
     if (messages.length > 0 && flatListRef.current) {
       flatListRef.current.scrollToEnd({ animated: true });
     }
@@ -60,8 +85,8 @@ const ChatScreen = () => {
   useEffect(() => {
     setIsOffline(netInfo.isConnected === false);
     if (netInfo.isConnected === false) {
-        // Optionally show an alert or banner when offline
-        // Alert.alert("Offline", "You are currently offline. Chat functionality may be limited.");
+      // Optionally show an alert or banner when offline
+      // Alert.alert("Offline", "You are currently offline. Chat functionality may be limited.");
     }
   }, [netInfo.isConnected]);
 
@@ -73,10 +98,10 @@ const ChatScreen = () => {
       // Add a temporary "Fetching..." message
       fetchingMessageId = (Date.now() + 3).toString();
       const fetchingMessage = {
-          id: fetchingMessageId,
-          text: "Fetching recommendations...",
-          sender: 'ai',
-          isLoading: true
+        id: fetchingMessageId,
+        text: "Fetching recommendations...",
+        sender: 'ai',
+        isLoading: true
       };
       setMessages(prevMessages => [...prevMessages, fetchingMessage]);
 
@@ -87,7 +112,7 @@ const ChatScreen = () => {
         throw new Error(profileError?.message || 'Could not load your profile.');
       }
       if (!profileData.age || !profileData.weight_kg || !profileData.height_cm || !profileData.sex) {
-         throw new Error('Your profile is incomplete. Please update it in Settings.');
+        throw new Error('Your profile is incomplete. Please update it in Settings.');
       }
 
       // 2. Fetch recommendations using the profile
@@ -98,7 +123,7 @@ const ChatScreen = () => {
       }
 
       // Remove the temporary fetching message
-       setMessages(prevMessages => prevMessages.filter(msg => msg.id !== fetchingMessageId));
+      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== fetchingMessageId));
 
       // Add success message
       const successMessage = {
@@ -109,26 +134,26 @@ const ChatScreen = () => {
       setMessages(prevMessages => [...prevMessages, successMessage]);
 
     } catch (error) {
-       console.error('Error triggering recommendation fetch:', error);
-       // Remove the temporary fetching message
-       setMessages(prevMessages => prevMessages.filter(msg => msg.id !== fetchingMessageId));
-       // Add error message
-        const errorMessage = {
-            id: (Date.now() + 4).toString(),
-            text: `Error fetching recommendations: ${error.message}`,
-            sender: 'ai',
-            isError: true,
-        };
-       setMessages(prevMessages => [...prevMessages, errorMessage]);
+      console.error('Error triggering recommendation fetch:', error);
+      // Remove the temporary fetching message
+      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== fetchingMessageId));
+      // Add error message
+      const errorMessage = {
+        id: (Date.now() + 4).toString(),
+        text: `Error fetching recommendations: ${error.message}`,
+        sender: 'ai',
+        isError: true,
+      };
+      setMessages(prevMessages => [...prevMessages, errorMessage]);
     } finally {
-       setIsFetchingRecommendations(false);
+      setIsFetchingRecommendations(false);
     }
   };
 
   const handleSend = useCallback(async () => {
     if (!inputText.trim() || isSending || isFetchingRecommendations || isAiThinking) {
       if (isOffline) {
-          Alert.alert("Offline", "Cannot send messages while offline.");
+        Alert.alert("Offline", "Cannot send messages while offline.");
       }
       return;
     }
@@ -138,11 +163,6 @@ const ChatScreen = () => {
       hasSession: !!session,
       hasToken: !!session?.access_token,
     });
-
-    // Store context *before* clearing inputText or setting loading states
-    const currentContextToSend = contextForNextRequest;
-    // Clear the context state immediately so it's only used for this message
-    setContextForNextRequest(null); 
 
     const userMessageText = inputText.trim();
     const userMessage = {
@@ -163,10 +183,11 @@ const ChatScreen = () => {
 
       const supabase = getSupabaseClient();
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      
+
       const { data: response, error: funcError } = await supabase.functions.invoke('chat-handler', {
-        body: { 
+        body: {
           message: userMessageText,
+          session_id: sessionId,
           timezone
         }
       });
@@ -181,25 +202,25 @@ const ChatScreen = () => {
         data: response.data
       };
       setMessages(prevMessages => [...prevMessages, aiMessage]);
-      
+
       setPendingAction(null);
-      setContextForNextRequest(null);
+      setPendingAction(null);
       setIsAiThinking(false);
       setIsSending(false);
 
     } catch (error) {
       console.error('Error in handleSend:', error);
-       const errorMessage = {
-         id: (Date.now() + 3).toString(),
-         text: `Sorry, something went wrong: ${error.message}`,
-         sender: 'ai',
-         isError: true,
-       };
-       setMessages(prevMessages => [...prevMessages, errorMessage]);
-       setPendingAction(null);
+      const errorMessage = {
+        id: (Date.now() + 3).toString(),
+        text: `Sorry, something went wrong: ${error.message}`,
+        sender: 'ai',
+        isError: true,
+      };
+      setMessages(prevMessages => [...prevMessages, errorMessage]);
+      setPendingAction(null);
     } finally {
-        setIsAiThinking(false);
-        setIsSending(false);
+      setIsAiThinking(false);
+      setIsSending(false);
     }
   }, [inputText, isSending, isFetchingRecommendations, isAiThinking, session, pendingAction, contextForNextRequest, isOffline]);
 
@@ -216,12 +237,12 @@ const ChatScreen = () => {
 
     // Theme-dependent inline styles
     const messageContainerInlineStyle = {
-        backgroundColor: isUser ? theme.colors.primary : theme.colors.surface,
-        borderColor: item.isError ? theme.colors.error : (isUser ? theme.colors.primary : theme.colors.outline),
-        borderWidth: item.isError || item.sender === 'ai' ? 1 : 0, // Border for AI or errors
+      backgroundColor: isUser ? theme.colors.primary : theme.colors.surface,
+      borderColor: item.isError ? theme.colors.error : (isUser ? theme.colors.primary : theme.colors.outline),
+      borderWidth: item.isError || item.sender === 'ai' ? 1 : 0, // Border for AI or errors
     };
     const textInlineStyle = {
-        color: isUser ? theme.colors.onPrimary : (item.isError ? theme.colors.error : theme.colors.text)
+      color: isUser ? theme.colors.onPrimary : (item.isError ? theme.colors.error : theme.colors.text)
     };
     const thinkingInlineStyle = { color: theme.colors.textSecondary }; // Apply thinking color inline
     const errorInlineStyle = { color: theme.colors.error }; // Apply error color inline
@@ -230,67 +251,63 @@ const ChatScreen = () => {
     const combinedContainerStyle = [messageContainerBaseStyle, messageSpecificBaseStyle, messageContainerInlineStyle];
     const combinedTextStyle = [textBaseStyle, textInlineStyle, item.isLoading ? thinkingInlineStyle : {}, item.isError ? errorInlineStyle : {}];
 
-    const isRecipeConfirmation = item.responseType === 'recipe_save_confirmation_prompt' && pendingAction;
-    const showRecipeAnalysisButtons = item.sender === 'ai' && item.responseType === 'recipe_analysis_prompt' && pendingAction?.type === 'log_analyzed_recipe';
-    const showSavedRecipeConfirmButton = item.sender === 'ai' && item.responseType === 'saved_recipe_confirmation_prompt' && item.contextForReply?.recipe_id;
-    
-    // --- Add Flags for Proactive Recipe Buttons ---
-    const showProactiveSingleConfirm = item.sender === 'ai' && item.responseType === 'saved_recipe_proactive_confirm' && item.contextForReply?.recipe_id;
-    const showProactiveMultipleChoice = item.sender === 'ai' && item.responseType === 'saved_recipe_proactive_multiple' && Array.isArray(item.contextForReply?.matches) && item.contextForReply.matches.length > 0;
-    // --- End Flags ---
+    const isFoodConfirmation = item.sender === 'ai' && item.responseType === 'confirmation_food_log';
+    const isRecipeSaveConfirmation = item.sender === 'ai' && item.responseType === 'confirmation_recipe_save';
+    const isRecipeNotFound = item.sender === 'ai' && item.responseType === 'recipe_not_found';
 
     const handleConfirmation = (confirmationMessage) => {
-        setInputText(confirmationMessage);
-        requestAnimationFrame(() => {
-            handleSend();
-        });
+      setInputText(confirmationMessage);
+      requestAnimationFrame(() => {
+        handleSend();
+      });
     };
 
     const handleDirectAction = async (actionName, contextPayload) => {
-        if (isSending || isAiThinking) return;
-        
-        let messageToSend = '';
-        if (actionName === 'confirm_log_saved_recipe') {
-            messageToSend = `Yes, log ${contextPayload.recipe_name}`;
-        } else {
-            messageToSend = actionName;
-        }
+      if (isSending || isAiThinking) return;
 
-         setIsAiThinking(true);
-         setIsSending(true);
+      let messageToSend = '';
+      if (actionName === 'confirm_log_saved_recipe') {
+        messageToSend = `Yes, log ${contextPayload.recipe_name}`;
+      } else {
+        messageToSend = actionName;
+      }
 
-         try {
-             const supabase = getSupabaseClient();
-             const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-             
-             const { data: response, error: funcError } = await supabase.functions.invoke('chat-handler', {
-                 body: { 
-                     message: messageToSend,
-                     timezone
-                 }
-             });
+      setIsAiThinking(true);
+      setIsSending(true);
 
-             if (funcError) throw funcError;
+      try {
+        const supabase = getSupabaseClient();
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-             const aiMessage = {
-                 id: (Date.now() + 2).toString(),
-                 text: response.message,
-                 sender: 'ai',
-                 responseType: response.response_type,
-                 data: response.data
-             };
-             setMessages(prevMessages => [...prevMessages, aiMessage]);
-             setPendingAction(null);
+        const { data: response, error: funcError } = await supabase.functions.invoke('chat-handler', {
+          body: {
+            message: messageToSend,
+            session_id: sessionId,
+            timezone
+          }
+        });
 
-         } catch (error) {
-             console.error('Error sending direct action:', error);
-             const errorMessage = { id: (Date.now() + 3).toString(), text: `Action failed: ${error.message}`, sender: 'ai', isError: true };
-             setMessages(prevMessages => [...prevMessages, errorMessage]);
-         } finally {
-             setIsAiThinking(false);
-             setIsSending(false);
-         }
-     };
+        if (funcError) throw funcError;
+
+        const aiMessage = {
+          id: (Date.now() + 2).toString(),
+          text: response.message,
+          sender: 'ai',
+          responseType: response.response_type,
+          data: response.data
+        };
+        setMessages(prevMessages => [...prevMessages, aiMessage]);
+        setPendingAction(null);
+
+      } catch (error) {
+        console.error('Error sending direct action:', error);
+        const errorMessage = { id: (Date.now() + 3).toString(), text: `Action failed: ${error.message}`, sender: 'ai', isError: true };
+        setMessages(prevMessages => [...prevMessages, errorMessage]);
+      } finally {
+        setIsAiThinking(false);
+        setIsSending(false);
+      }
+    };
 
     return (
       <View style={combinedContainerStyle}>
@@ -303,119 +320,56 @@ const ChatScreen = () => {
             </PaperText>
           )}
         </View>
-        
-        {isRecipeConfirmation && (
-          <View style={[styles.actionButtonsContainer, { backgroundColor: theme.colors.surfaceVariant }]}>
+
+        {isFoodConfirmation && (
+          <View style={styles.buttonContainer}>
             <Button
               mode="contained"
-              onPress={() => handleConfirmation("Save and log")}
-              disabled={isFetchingRecommendations}
-              style={styles.actionButton}
-              labelStyle={styles.buttonLabel}
+              onPress={() => handleConfirmation("Yes")}
+              style={styles.confirmButton}
             >
-              Yes, save recipe & log
+              Log it
             </Button>
             <Button
               mode="outlined"
-              onPress={() => handleConfirmation("Log only")}
-              disabled={isFetchingRecommendations}
-              style={[styles.actionButton, styles.secondaryButton]}
-              labelStyle={[styles.secondaryButtonLabel, { color: theme.colors.primary }]}
+              onPress={() => handleConfirmation("No, change something")}
+              style={styles.confirmButton}
             >
-              No, just log (don't save)
+              Wait, change something
             </Button>
-            {isFetchingRecommendations && <ActivityIndicator size="small" style={styles.loader} color={theme.colors.primary} />}
           </View>
         )}
 
-        {showRecipeAnalysisButtons && (
-          <View style={styles.buttonContainer}>
-            <Button mode="contained" onPress={() => handleConfirmation("Save and log")} style={styles.confirmButton}>Save & Log</Button>
-            <Button mode="outlined" onPress={() => handleConfirmation("Log only")} style={styles.confirmButton}>Log Only</Button>
-            <Button mode="text" onPress={() => handleConfirmation("Cancel")} style={styles.cancelButton}>Cancel</Button>
-          </View>
-        )}
-
-        {showSavedRecipeConfirmButton && (
+        {isRecipeSaveConfirmation && (
           <View style={styles.buttonContainer}>
             <Button
               mode="contained"
-              onPress={() => handleDirectAction('confirm_log_saved_recipe', item.contextForReply)}
+              onPress={() => handleConfirmation("Yes, save it")}
               style={styles.confirmButton}
             >
-              Log '{item.contextForReply.recipe_name}'
+              Save & Log
             </Button>
             <Button
-                mode="text"
-                onPress={() => handleConfirmation("No, don't log it")}
-                style={styles.cancelButton}
+              mode="outlined"
+              onPress={() => handleConfirmation("Don't save")}
+              style={styles.confirmButton}
             >
-                Cancel
+              Just log (don't save)
             </Button>
           </View>
         )}
 
-        {/* --- Add Buttons for Proactive Single Confirm --- */}
-        {showProactiveSingleConfirm && (
+        {isRecipeNotFound && (
           <View style={styles.buttonContainer}>
             <Button
               mode="contained"
-              onPress={() => {
-                // Add debug log here
-                console.log(`[Action Button Press] Proactive Single Confirm: Logging recipe ID ${item.contextForReply?.recipe_id}`);
-                handleDirectAction('confirm_log_saved_recipe', item.contextForReply);
-              }}
+              onPress={() => handleConfirmation("Okay, here are the ingredients")}
               style={styles.confirmButton}
             >
-              {`Yes, Log '${item.contextForReply.recipe_name}'`}
-            </Button>
-            <Button
-                mode="text"
-                onPress={() => {
-                  // Add debug log here
-                  console.log("[Action Button Press] Proactive Single Confirm: Something else");
-                  handleConfirmation("No, something else");
-                }}
-                style={styles.cancelButton}
-            >
-                Something else
+              Provide Ingredients
             </Button>
           </View>
         )}
-        {/* --- End Buttons for Proactive Single Confirm --- */}
-
-        {/* --- Add Buttons for Proactive Multiple Choice --- */}
-        {showProactiveMultipleChoice && (
-          <View style={styles.buttonContainerMulti}>
-            {item.contextForReply.matches.map((match) => (
-              <Button
-                key={match.id}
-                mode="outlined"
-                onPress={() => {
-                   // Add debug log here
-                  console.log(`[Action Button Press] Proactive Multi Choice: Logging recipe ID ${match.id}`);
-                  handleDirectAction('confirm_log_saved_recipe', { recipe_id: match.id, recipe_name: match.recipe_name });
-                }}
-                style={[styles.multiChoiceButton, { borderColor: theme.colors.primary }]}
-                labelStyle={[styles.multiChoiceButtonLabel, { color: theme.colors.primary }]}
-              >
-                {`Log '${match.recipe_name}'`}
-              </Button>
-            ))}
-            <Button
-              mode="text"
-              onPress={() => {
-                // Add debug log here
-                console.log("[Action Button Press] Proactive Multi Choice: Something else");
-                handleConfirmation("Something else");
-              }}
-              style={[styles.cancelButton, { marginTop: 5 }]}
-            >
-              Something else
-            </Button>
-          </View>
-        )}
-        {/* --- End Buttons for Proactive Multiple Choice --- */}
       </View>
     );
   };
@@ -423,55 +377,55 @@ const ChatScreen = () => {
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.background }]}>
       {isOffline && (
-            <View style={[styles.offlineBanner, { backgroundColor: theme.colors.warning }]}>
-                <PaperText style={[styles.offlineText, { color: theme.colors.surface }]}>You are offline</PaperText>
-            </View>
-        )}
+        <View style={[styles.offlineBanner, { backgroundColor: theme.colors.warning }]}>
+          <PaperText style={[styles.offlineText, { color: theme.colors.surface }]}>You are offline</PaperText>
+        </View>
+      )}
 
-        <FlatList
-          ref={flatListRef}
-          data={messages}
-          renderItem={renderMessageItem}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContentContainer}
-          style={styles.messageList}
+      <FlatList
+        ref={flatListRef}
+        data={messages}
+        renderItem={renderMessageItem}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.listContentContainer}
+        style={styles.messageList}
+      />
+
+      {isFetchingRecommendations && (
+        <Caption style={[styles.fetchingStatus, { color: theme.colors.textSecondary }]}>Fetching recommendations...</Caption>
+      )}
+
+      {isAiThinking && (
+        <View style={[styles.loadingContainer, { backgroundColor: theme.colors.background }]}>
+          <ActivityIndicator size="small" color={theme.colors.primary} />
+          <Caption style={[styles.loadingText, { color: theme.colors.textSecondary }]}>NutriPal is thinking...</Caption>
+        </View>
+      )}
+
+      <Surface style={[styles.inputSurface, { backgroundColor: theme.colors.surface, borderTopColor: theme.colors.outline }]} elevation={4}>
+        <PaperTextInput
+          style={[styles.input, { backgroundColor: theme.colors.background }]}
+          value={inputText}
+          onChangeText={setInputText}
+          placeholder={isOffline ? "Offline - Cannot send" : "Type your message..."}
+          mode="outlined"
+          dense
+          multiline
+          editable={!isAiThinking && !isSending && !isOffline && !isFetchingRecommendations}
         />
-
-        {isFetchingRecommendations && (
-              <Caption style={[styles.fetchingStatus, { color: theme.colors.textSecondary }]}>Fetching recommendations...</Caption>
-        )}
-
-        {isAiThinking && (
-          <View style={[styles.loadingContainer, { backgroundColor: theme.colors.background }]}>
-            <ActivityIndicator size="small" color={theme.colors.primary} />
-            <Caption style={[styles.loadingText, { color: theme.colors.textSecondary }]}>NutriPal is thinking...</Caption>
-          </View>
-        )}
-
-        <Surface style={[styles.inputSurface, { backgroundColor: theme.colors.surface, borderTopColor: theme.colors.outline }]} elevation={4}>
-          <PaperTextInput
-            style={[styles.input, { backgroundColor: theme.colors.background }]}
-            value={inputText}
-            onChangeText={setInputText}
-            placeholder={isOffline ? "Offline - Cannot send" : "Type your message..."}
-            mode="outlined"
-            dense
-            multiline
-            editable={!isAiThinking && !isSending && !isOffline && !isFetchingRecommendations}
+        {(isAiThinking || isSending) ? (
+          <ActivityIndicator animating={true} color={theme.colors.primary} style={styles.sendButtonContainer} />
+        ) : (
+          <IconButton
+            icon="send"
+            iconColor={theme.colors.primary}
+            size={28}
+            onPress={handleSend}
+            disabled={!inputText.trim() || isAiThinking || isSending || isOffline || isFetchingRecommendations}
+            style={styles.sendButtonContainer}
           />
-          {(isAiThinking || isSending) ? (
-              <ActivityIndicator animating={true} color={theme.colors.primary} style={styles.sendButtonContainer}/>
-          ) : (
-             <IconButton
-               icon="send"
-               iconColor={theme.colors.primary}
-               size={28}
-               onPress={handleSend}
-               disabled={!inputText.trim() || isAiThinking || isSending || isOffline || isFetchingRecommendations}
-               style={styles.sendButtonContainer}
-             />
-          )}
-        </Surface>
+        )}
+      </Surface>
     </SafeAreaView>
   );
 };
@@ -545,11 +499,11 @@ const styles = StyleSheet.create({
     textAlignVertical: 'center',
   },
   sendButtonContainer: {
-      margin: 0,
-      width: 48,
-      height: 48,
-      alignItems: 'center',
-      justifyContent: 'center',
+    margin: 0,
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   fetchingStatus: {
     textAlign: 'center',

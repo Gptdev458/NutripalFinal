@@ -267,7 +267,10 @@ export default function ChatPage() {
       const botMessage = processBotReply(response);
       setChatHistory(prev => [...prev, botMessage]);
 
-      if (response.response_type === 'food_logged' || response.response_type === 'recipe_logged') {
+      if (response.response_type === 'food_logged' ||
+        response.response_type === 'recipe_logged' ||
+        response.response_type === 'goal_updated' ||
+        response.response_type === 'goals_updated') {
         fetchDashboardData(true);
       }
     } catch (error: any) {

@@ -71,7 +71,7 @@ export interface AgentResponse {
 }
 
 export interface IntentExtraction {
-  intent: 'log_food' | 'log_recipe' | 'save_recipe' | 'query_nutrition' | 'update_goals' | 'suggest_goals' | 'clarify' | 'off_topic'
+  intent: 'log_food' | 'log_recipe' | 'save_recipe' | 'query_nutrition' | 'update_goals' | 'suggest_goals' | 'clarify' | 'confirm' | 'decline' | 'modify' | 'off_topic'
   food_items?: string[]
   portions?: string[]
   recipe_text?: string
@@ -81,6 +81,8 @@ export interface IntentExtraction {
   value?: number
   unit?: string
   clarification_needed?: string
+  modification_details?: string
+  modified_items?: { index?: number, item?: string, portion?: string }[]
 }
 
 export interface NutritionData {
@@ -144,5 +146,5 @@ export interface NutritionalGoals {
 }
 
 export interface CalculatedGoalsResponse {
-    recommendations: NutritionalGoals;
+  recommendations: NutritionalGoals;
 }

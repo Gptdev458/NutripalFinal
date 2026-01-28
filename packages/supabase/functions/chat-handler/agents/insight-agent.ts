@@ -9,7 +9,7 @@ export class InsightAgent implements Agent<void, InsightResult> {
   async execute(_input: void, context: AgentContext): Promise<InsightResult> {
     const { userId, supabase: contextSupabase, timezone = 'UTC' } = context
     const supabase = contextSupabase || createAdminClient()
-    
+
     const now = new Date()
     const todayRange = getStartAndEndOfDay(now, timezone)
     const weekRange = getDateRange(now, 7, timezone)
@@ -55,7 +55,16 @@ export class InsightAgent implements Agent<void, InsightResult> {
     }
 
     // 2. Calculate Weekly Averages
-    const weekTotals: Record<string, number> = { ...totals, calories: 0, protein_g: 0, carbs_g: 0, fat_total_g: 0 }
+    const weekTotals: Record<string, number> = {
+      calories: 0,
+      protein_g: 0,
+      carbs_g: 0,
+      fat_total_g: 0,
+      fiber_g: 0,
+      sugar_g: 0,
+      sodium_mg: 0
+    }
+
     if (weekLogs) {
       weekLogs.forEach((log: any) => {
         Object.keys(weekTotals).forEach(key => {
@@ -65,6 +74,7 @@ export class InsightAgent implements Agent<void, InsightResult> {
         })
       })
     }
+
     const weeklyAverages: Record<string, number> = {}
     Object.keys(weekTotals).forEach(key => {
       weeklyAverages[key] = Math.round(weekTotals[key] / 7)
@@ -103,7 +113,7 @@ Keep it under 40 words total.
       max_tokens: 150
     })
 
-    const suggestions = response.choices[0].message.content?.split('\n').filter(s => s.trim()) || []
+    const suggestions = response.choices[0].message.content?.split('\n').filter((s: string) => s.trim()) || []
 
     return {
       daily_totals: totals,

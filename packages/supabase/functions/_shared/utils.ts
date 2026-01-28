@@ -40,15 +40,15 @@ export function normalizeString(str: string): string {
  * Normalizes a food name by removing stop words and standardizing format
  */
 export function normalizeFoodName(name: string): string {
-  const stopWords = new Set(['a', 'an', 'the', 'of', 'with', 'and', 'for', 'at', 'some', 'any']);
+  const stopWords = new Set(['a', 'an', 'the', 'of', 'with', 'and', 'for', 'at', 'some', 'any', 'i', 'ate', 'had']);
   return name
     .toLowerCase()
+    .replace(/[^\w\s]/g, ' ') // Replace punctuation with space first
     .trim()
     .split(/\s+/)
     .filter(word => !stopWords.has(word))
     .join(' ')
-    .replace(/[^\w\s]/g, '')
-    .replace(/\s+/g, ' ');
+    .replace(/\s+/g, ' '); // Final cleanup of whitespace
 }
 
 /**
@@ -85,15 +85,15 @@ export function getStartAndEndOfDay(date: Date, timezone = 'UTC'): { start: stri
     // A simpler way for Edge Functions:
     const start = new Date(new Date(startLocal).toLocaleString('en-US', { timeZone: timezone })).toISOString();
     // This is still not quite right for all cases but better than server-side local time.
-    
+
     // Let's use a more reliable method:
     const tzDate = new Date(date.toLocaleString('en-US', { timeZone: timezone }));
     const diff = date.getTime() - tzDate.getTime();
-    
+
     const startOfDay = new Date(date);
     startOfDay.setHours(0, 0, 0, 0);
     const startUTC = new Date(startOfDay.getTime() + diff).toISOString();
-    
+
     const endOfDay = new Date(date);
     endOfDay.setHours(23, 59, 59, 999);
     const endUTC = new Date(endOfDay.getTime() + diff).toISOString();

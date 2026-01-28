@@ -1,13 +1,16 @@
 export interface IntentExtraction {
-  intent: 'log_food' | 'log_recipe' | 'save_recipe' | 'query_nutrition' | 'update_goals' | 'clarify' | 'off_topic' | 'confirm' | 'decline' | 'modify'
+  intent: 'log_food' | 'log_recipe' | 'save_recipe' | 'query_nutrition' | 'update_goals' | 'suggest_goals' | 'clarify' | 'confirm' | 'decline' | 'modify' | 'off_topic'
   food_items?: string[]
   portions?: string[]
   recipe_text?: string
   recipe_portion?: string
+  goal_action?: 'add' | 'remove' | 'update' | 'recommend'
+  nutrient?: string
+  value?: number
+  unit?: string
   clarification_needed?: string
-  // For modify intent
   modification_details?: string
-  modified_items?: { index: number, item?: string, portion?: string }[]
+  modified_items?: { index?: number, item?: string, portion?: string }[]
 }
 
 export interface AgentContext {
@@ -23,7 +26,7 @@ export interface Agent<TInput, TOutput> {
 }
 
 export interface AgentResponse {
-  status: 'success' | 'error' | 'ambiguous' | 'clarification'
+  status: 'success' | 'error' | 'ambiguous' | 'clarification' | 'proposal'
   message: string
   response_type: string // 'food_logged' | 'confirmation_food_log' | 'confirmation_recipe_save' | ...
   data?: any

@@ -4,7 +4,7 @@ import { FoodLogEntry, UserGoal } from '../../_shared/types.ts'
  * Service to handle database operations, decoupling persistence from orchestrator
  */
 export class DbService {
-  constructor(private supabase: any) { }
+  constructor(public supabase: any) { }
 
   /**
    * Logs food items to the database
@@ -88,6 +88,26 @@ export class DbService {
   }
 
   /**
+   * Updates a user's nutritional goal
+   */
+  async updateUserGoal(userId: string, nutrient: string, value: number, unit: string) {
+    const { error } = await this.supabase
+      .from('user_goals')
+      .upsert({
+        user_id: userId,
+        nutrient: nutrient,
+        target_value: value,
+        unit: unit,
+        goal_type: 'goal'
+      }, { onConflict: 'user_id, nutrient' })
+
+    if (error) {
+      console.error('[DbService] Error updating user goal:', error)
+      throw error
+    }
+  }
+
+  /**
    * Fetches recent messages for context
    */
   async getRecentMessages(userId: string, sessionId: string, limit = 10) {
@@ -104,5 +124,43 @@ export class DbService {
       throw error
     }
     return data
+  }
+
+  /**
+   * Updates multiple user nutritional goals in a single transaction-like call
+   */
+  async updateUserGoals(userId: string, goals: { nutrient: string, value: number, unit: string }[]) {
+    const { error } = await this.supabase
+      .from('user_goals')
+      .upsert(
+        goals.map(g => ({
+          user_id: userId,
+          nutrient: g.nutrient,
+          target_value: g.value,
+          unit: g.unit,
+          goal_type: 'goal'
+        })),
+        { onConflict: 'user_id, nutrient' }
+      )
+
+    if (error) {
+      console.error('[DbService] Error updating user goals:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Updates a user's profile information
+   */
+  async updateUserProfile(userId: string, data: any) {
+    const { error } = await this.supabase
+      .from('user_profiles')
+      .update(data)
+      .eq('id', userId)
+
+    if (error) {
+      console.error('[DbService] Error updating user profile:', error)
+      throw error
+    }
   }
 }

@@ -59,7 +59,11 @@ Return a JSON object:
   ],
   "instructions": "string"
 }
-If servings is not mentioned, default to 1.`
+Important:
+- If the text is a recipe, extract all details.
+- If the name is missing but a title can be inferred (e.g., from the first line), use it.
+- If servings is not mentioned, default to 1.
+- If the text is NOT a recipe (e.g., "save that recipe"), look for recipe details in the context of a conversation (if provided) or return what you can find.`
           },
           { role: "user", content: action.text }
         ],
@@ -86,11 +90,13 @@ If servings is not mentioned, default to 1.`
         const nutritionResults = await nutritionAgent.execute({ items: ingredientNames, portions: ingredientPortions }, context)
 
         // Match results back to ingredients
+        // Note: nutritionResults might be shorter than parsed.ingredients if some lookups failed
         parsed.ingredients.forEach((ing, index) => {
+          // Try to find by name match
           const nut = nutritionResults.find(n =>
             n.food_name.toLowerCase().includes(ing.name.toLowerCase()) ||
             ing.name.toLowerCase().includes(n.food_name.toLowerCase())
-          ) || nutritionResults[index]
+          )
 
           if (nut) {
             ingredientsWithNutrition.push({
@@ -104,6 +110,7 @@ If servings is not mentioned, default to 1.`
               }
             })
           } else {
+            console.warn(`[RecipeAgent] No nutrition found for ingredient: ${ing.name}`)
             ingredientsWithNutrition.push({ ...ing, nutrition: null })
           }
         })
@@ -125,7 +132,7 @@ If servings is not mentioned, default to 1.`
             recipe_name: parsed.recipe_name,
             servings: parsed.servings,
             instructions: parsed.instructions,
-            nutrition_data: batchNutrition
+            nutrition_data: { ...batchNutrition, food_name: parsed.recipe_name }
           },
           ingredients: ingredientsWithNutrition
         }

@@ -23,7 +23,7 @@ export async function getScalingMultiplier(userPortion: string, servingSize: str
   if (userParsed && officialParsed) {
     const userGrams = convertToGrams(userParsed.amount, userParsed.unit)
     const officialGrams = convertToGrams(officialParsed.amount, officialParsed.unit)
-    
+
     if (userGrams && officialGrams) {
       const multiplier = userGrams / officialGrams
       console.log(`[NutritionAgent] Weight-based scaling: ${userGrams}g / ${officialGrams}g = ${multiplier}`)
@@ -54,20 +54,48 @@ Return ONLY the numerical multiplier (e.g., 1.5, 0.5, 2). If unsure, return 1.
 }
 
 function parseUnitAndAmount(str: string): { amount: number, unit: string } | null {
-  const match = str.toLowerCase().match(/^([\d\/\.]+)\s*(.*)$/);
+  const cleaned = str.toLowerCase().trim()
+
+  // Handle cases like "a cup", "an egg", "some milk"
+  const wordAmounts: Record<string, number> = {
+    'a': 1, 'an': 1, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+    'half': 0.5, 'quarter': 0.25, 'double': 2, 'triple': 3, 'couple': 2
+  }
+
+  const firstWord = cleaned.split(/\s+/)[0]
+  if (wordAmounts[firstWord]) {
+    const unit = cleaned.substring(firstWord.length).trim().replace(/s$/, '')
+    return { amount: wordAmounts[firstWord], unit: unit || 'serving' }
+  }
+
+  const match = cleaned.match(/^([\d\/\.\s\-]+)\s*(.*)$/);
   if (!match) return null;
-  
-  let amountStr = match[1];
+
+  let amountStr = match[1].trim();
   let amount: number;
-  
-  if (amountStr.includes('/')) {
+
+  // Handle mixed fractions like "1 1/2"
+  if (amountStr.includes(' ')) {
+    const parts = amountStr.split(' ');
+    amount = 0;
+    for (const part of parts) {
+      if (part.includes('/')) {
+        const [num, den] = part.split('/').map(parseFloat);
+        amount += num / den;
+      } else {
+        amount += parseFloat(part);
+      }
+    }
+  } else if (amountStr.includes('/')) {
     const [num, den] = amountStr.split('/').map(parseFloat);
     amount = num / den;
   } else {
     amount = parseFloat(amountStr);
   }
-  
-  return { amount, unit: match[2].trim().replace(/s$/, '') }; // Simple plural removal
+
+  if (isNaN(amount)) return null;
+
+  return { amount, unit: match[2].trim().replace(/s$/, '') || 'serving' };
 }
 
 function convertToGrams(amount: number, unit: string): number | null {
@@ -91,8 +119,8 @@ export function scaleNutrition(data: NutritionData, multiplier: number): Nutriti
 
   const scaled = { ...data }
   const keysToScale: (keyof NutritionData)[] = [
-    'calories', 'protein_g', 'fat_total_g', 'carbs_g', 'fiber_g', 
-    'sugar_g', 'sodium_mg', 'fat_saturated_g', 'cholesterol_mg', 
+    'calories', 'protein_g', 'fat_total_g', 'carbs_g', 'fiber_g',
+    'sugar_g', 'sodium_mg', 'fat_saturated_g', 'cholesterol_mg',
     'potassium_mg', 'fat_trans_g', 'calcium_mg', 'iron_mg', 'sugar_added_g'
   ]
 
@@ -141,12 +169,16 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
 
           if (lookupResult.status === 'success' && lookupResult.nutrition_data) {
             nutrition = lookupResult.nutrition_data as NutritionData
-            
+
             // 3. Save to Cache with both original and normalized search term
             await supabase.from('food_products').insert({
               product_name: lookupResult.product_name,
               search_term: normalizedSearch,
               nutrition_data: nutrition,
+              calories: nutrition.calories,
+              protein_g: nutrition.protein_g,
+              carbs_g: nutrition.carbs_g,
+              fat_total_g: nutrition.fat_total_g,
               source: lookupResult.source,
               brand: lookupResult.brand
             })
