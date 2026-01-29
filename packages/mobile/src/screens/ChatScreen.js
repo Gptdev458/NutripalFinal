@@ -26,6 +26,56 @@ import { fetchUserProfile, fetchGoalRecommendations } from '../utils/profileUtil
 import { getSupabaseClient } from 'shared';
 import useSafeTheme from '../hooks/useSafeTheme';
 
+const NutritionCard = ({ nutrition, theme }) => {
+  if (!nutrition || !Array.isArray(nutrition) || nutrition.length === 0) return null;
+
+  // Calculate totals if multiple items
+  const totals = nutrition.reduce((acc, item) => ({
+    calories: acc.calories + (item.calories || 0),
+    protein: acc.protein + (item.protein_g || 0),
+    carbs: acc.carbs + (item.carbs_g || 0),
+    fat: acc.fat + (item.fat_total_g || 0),
+  }), { calories: 0, protein: 0, carbs: 0, fat: 0 });
+
+  return (
+    <Surface style={[styles.nutritionCard, { backgroundColor: theme.colors.elevation.level2 }]} elevation={2}>
+      <View style={styles.cardHeader}>
+        <PaperText style={styles.cardTitle}>Nutrition Summary</PaperText>
+        <View style={styles.calorieBadge}>
+          <PaperText style={styles.calorieValue}>{Math.round(totals.calories)}</PaperText>
+          <PaperText style={styles.calorieUnit}>kcal</PaperText>
+        </View>
+      </View>
+
+      <View style={styles.macroGrid}>
+        <View style={[styles.macroPill, { backgroundColor: '#E8F5E9' }]}>
+          <PaperText style={[styles.macroLabel, { color: '#2E7D32' }]}>Protein</PaperText>
+          <PaperText style={[styles.macroValue, { color: '#2E7D32' }]}>{Math.round(totals.protein)}g</PaperText>
+        </View>
+        <View style={[styles.macroPill, { backgroundColor: '#E3F2FD' }]}>
+          <PaperText style={[styles.macroLabel, { color: '#1565C0' }]}>Carbs</PaperText>
+          <PaperText style={[styles.macroValue, { color: '#1565C0' }]}>{Math.round(totals.carbs)}g</PaperText>
+        </View>
+        <View style={[styles.macroPill, { backgroundColor: '#FFF3E0' }]}>
+          <PaperText style={[styles.macroLabel, { color: '#E65100' }]}>Fat</PaperText>
+          <PaperText style={[styles.macroValue, { color: '#E65100' }]}>{Math.round(totals.fat)}g</PaperText>
+        </View>
+      </View>
+
+      {nutrition.length > 1 && (
+        <View style={styles.ingredientsList}>
+          {nutrition.map((item, idx) => (
+            <View key={idx} style={styles.ingredientRow}>
+              <PaperText style={styles.ingredientName} numberOfLines={1}>• {item.food_name}</PaperText>
+              <PaperText style={styles.ingredientCals}>{Math.round(item.calories)} kcal</PaperText>
+            </View>
+          ))}
+        </View>
+      )}
+    </Surface>
+  );
+};
+
 const ChatScreen = () => {
   const theme = useSafeTheme();
   const { user, session } = useAuth();
@@ -321,6 +371,23 @@ const ChatScreen = () => {
           )}
         </View>
 
+        {item.data?.validation?.warnings?.length > 0 && (
+          <Surface style={[styles.warningBox, { backgroundColor: '#FFF9C4' }]} elevation={0}>
+            <IconButton icon="alert-circle" iconColor="#FBC02D" size={20} style={{ margin: 0 }} />
+            <PaperText style={styles.warningText}>
+              {item.data.validation.warnings[0]}
+            </PaperText>
+          </Surface>
+        )}
+
+        {(isFoodConfirmation || isRecipeSaveConfirmation) && item.data?.nutrition && (
+          <NutritionCard
+            nutrition={item.data.nutrition}
+            theme={theme}
+            isAmbiguous={item.responseType === 'ambiguous'}
+          />
+        )}
+
         {isFoodConfirmation && (
           <View style={styles.buttonContainer}>
             <Button
@@ -568,6 +635,97 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginLeft: 8,
+  },
+  // Rich Nutrition Card Styles
+  nutritionCard: {
+    margin: 10,
+    borderRadius: 12,
+    padding: 12,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    opacity: 0.7,
+  },
+  calorieBadge: {
+    alignItems: 'flex-end',
+  },
+  calorieValue: {
+    fontSize: 24,
+    fontWeight: '900',
+    lineHeight: 28,
+  },
+  calorieUnit: {
+    fontSize: 12,
+    opacity: 0.6,
+    marginTop: -4,
+  },
+  macroGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  macroPill: {
+    flex: 1,
+    marginHorizontal: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  macroLabel: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  macroValue: {
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  ingredientsList: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 0.5,
+    borderTopColor: 'rgba(0,0,0,0.1)',
+  },
+  ingredientRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  ingredientName: {
+    fontSize: 12,
+    flex: 1,
+    marginRight: 8,
+    opacity: 0.8,
+  },
+  ingredientCals: {
+    fontSize: 12,
+    fontWeight: '600',
+    opacity: 0.8,
+  },
+  warningBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    margin: 10,
+    marginTop: 0,
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FBC02D',
+  },
+  warningText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#827717',
+    fontWeight: '600',
   },
 });
 

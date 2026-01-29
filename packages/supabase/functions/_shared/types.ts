@@ -18,6 +18,7 @@ export interface AgentContext {
   sessionId?: string;
   supabase: any;
   timezone?: string;
+  session?: SessionState;
 }
 
 export interface Agent<TInput, TOutput> {
@@ -56,6 +57,7 @@ export type ResponseType =
   // Goals
   | 'goal_updated'
   | 'goals_updated'
+  | 'goals_summary'
   | 'confirmation_goal_update'
   | 'confirmation_multi_goal_update'
   // General
@@ -126,4 +128,13 @@ export interface InsightResult {
   goal_progress: Record<string, number>
   suggestions: string[]
   patterns?: string[]
+}
+
+export interface SessionState {
+  user_id: string
+  current_mode: 'idle' | 'flow_log_food' | 'flow_recipe_create' | 'flow_recipe_mod' | 'flow_goal_query' | 'flow_ambiguous'
+  buffer: Record<string, any>
+  missing_fields: string[]
+  last_agent?: string
+  metadata?: Record<string, any>
 }

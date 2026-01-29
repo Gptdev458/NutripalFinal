@@ -412,19 +412,33 @@ export class IntentRouter {
 
         const isLikelyRecipe = items.length > 5 || (items.length === 1 && items[0].length > 100)
 
-        if (isLikelyRecipe || (items.length === 1 && items[0].length < 100)) {
+        // DE-ESCALATION: Only check recipes if NOT a generic basic ingredient
+        // Use word boundaries to prevent "chicken soup" matching "chicken"
+        const basicIngredients = /\b(chicken|beef|pork|egg|apple|banana|rice|bread|milk|juice|water|oil|butter|steak|fish|salmon)\b/i
+        const isBasic = items.length === 1 && basicIngredients.test(items[0])
+
+        if (!isBasic && (isLikelyRecipe || (items.length === 1 && items[0].length < 100))) {
             const recipeAgent = new RecipeAgent()
             const findResult = await recipeAgent.execute({ type: 'find', name: items[0] || '' }, context) as RecipeActionResult
 
             if (findResult.type === 'found' && findResult.recipe) {
-                console.log(`[IntentRouter] handleLogFood found saved recipe match: "${findResult.recipe.recipe_name}" for "${items[0]}"`)
-                const modifiedIntent: IntentExtraction = {
-                    ...intentResult,
-                    intent: 'log_recipe',
-                    recipe_text: findResult.recipe.recipe_name,
-                    recipe_portion: portions[0] || '1 serving'
+                // High confidence match OR explicit recipe mention needed
+                const isExplicit = items[0].toLowerCase().includes('recipe')
+                // If the user input is very short (e.g. "soup"), rely on exact match. 
+                // If it's "chicken soup", it should match.
+                // We perform a length comparison to ensure we don't match "soup" to "super complicated soup" loosely
+                const nameLengthRatio = items[0].length / findResult.recipe.recipe_name.length
+
+                if (isExplicit || (findResult.recipe.recipe_name.toLowerCase() === items[0].toLowerCase()) || nameLengthRatio > 0.8) {
+                    console.log(`[IntentRouter] handleLogFood found saved recipe match: "${findResult.recipe.recipe_name}" for "${items[0]}"`)
+                    const modifiedIntent: IntentExtraction = {
+                        ...intentResult,
+                        intent: 'log_recipe',
+                        recipe_text: findResult.recipe.recipe_name,
+                        recipe_portion: portions[0] || '1 serving'
+                    }
+                    return await this.handleLogRecipe(modifiedIntent, context, agentsInvolved, response)
                 }
-                return await this.handleLogRecipe(modifiedIntent, context, agentsInvolved, response)
             }
         }
 
@@ -445,12 +459,22 @@ export class IntentRouter {
         const validatorAgent = new ValidatorAgent()
         const validation = await validatorAgent.execute(nutritionData, context)
 
-        response.response_type = 'confirmation_food_log'
-        response.status = validation.passed ? 'success' : 'ambiguous'
+        if (!validation.passed) {
+            response.status = 'error'
+            response.response_type = 'nutrition_not_found' // Use this to trigger clarification in ChatAgent
+            response.message = `I found some data, but it looks incorrect: ${validation.errors.join(' ')} Could you try describing it differently?`
+            return { error: 'Validation failed', validation }
+        }
 
-        response.message = validation.passed
-            ? `I found the nutrition info for ${items.join(', ')}. Does this look right?`
-            : `I found the info, but there are some warnings: ${validation.errors.join(' ')}. Do you want to log this anyway?`
+        response.response_type = 'confirmation_food_log'
+
+        if (validation.warnings.length > 0) {
+            response.status = 'ambiguous'
+            response.message = `I found the info, but I have a few notes: ${validation.warnings.join(' ')}. Does this look right to you?`
+        } else {
+            response.status = 'proposal'
+            response.message = `I found the nutrition info for ${items.join(', ')}. Does this look right?`
+        }
 
         return { nutrition: nutritionData, validation }
     }
@@ -508,9 +532,28 @@ export class IntentRouter {
             nutritionData = [scaledNut]
         }
 
+        agentsInvolved.push('validator')
+        const validatorAgent = new ValidatorAgent()
+        const validation = await validatorAgent.execute(nutritionData, context)
+
+        if (!validation.passed) {
+            response.status = 'error'
+            response.response_type = 'nutrition_not_found'
+            response.message = `There's an issue with this recipe's nutrition: ${validation.errors.join(' ')}`
+            return { error: 'Validation failed', validation }
+        }
+
         response.response_type = 'confirmation_food_log'
-        response.message = `Ready to log ${savedRecipe.recipe_name}. Confirm?`
-        return { nutrition: nutritionData, recipe: savedRecipe }
+
+        if (validation.warnings.length > 0) {
+            response.status = 'ambiguous'
+            response.message = `I'm ready to log ${savedRecipe.recipe_name}, but I noticed a few things: ${validation.warnings.join(' ')}. Does this look right?`
+        } else {
+            response.status = 'proposal'
+            response.message = `Ready to log ${savedRecipe.recipe_name}. Confirm?`
+        }
+
+        return { nutrition: nutritionData, recipe: savedRecipe, validation }
     }
 
     private async handleSaveRecipe(intentResult: IntentExtraction, context: AgentContext, agentsInvolved: string[], response: AgentResponse) {
@@ -520,7 +563,7 @@ export class IntentRouter {
         let recipeText = intentResult.recipe_text || ''
         if (!recipeText) {
             const lastMessages = await this.db.getRecentMessages(context.userId, context.sessionId!)
-            const lastUserMessageWithRecipe = lastMessages.find((m: any) => m.role === 'user' && (m.content.toLowerCase().includes('recipe') || m.content.length > 50))
+            const lastUserMessageWithRecipe = lastMessages.find((m: any) => m.role === 'user' && (m.content.length > 50))
             if (lastUserMessageWithRecipe) {
                 recipeText = lastUserMessageWithRecipe.content
             }
@@ -549,9 +592,19 @@ export class IntentRouter {
     }
 
     private async handleUpdateGoal(intentResult: IntentExtraction, context: AgentContext, agentsInvolved: string[], response: AgentResponse) {
-        const { nutrient, value, unit } = intentResult
+        const { nutrient, value, unit, intent } = intentResult
+
+        // If intent is clearly 'query_nutrition' but mentions 'goals', redirect
+        if (intent === 'query_nutrition' && intentResult.food_items?.some(i => i.includes('goal'))) {
+            return await this.handleQueryGoals(context, response)
+        }
 
         if (!nutrient || value === undefined || value === null || isNaN(Number(value))) {
+            // Check if user is asking to see goals
+            if (intentResult.food_items?.some(i => i.includes('goal'))) {
+                return await this.handleQueryGoals(context, response)
+            }
+
             response.status = 'clarification'
             response.message = "I couldn't quite catch the goal you want to set. Could you specify the nutrient and value? (e.g. 'set calories to 2500')"
             return {}
@@ -584,9 +637,36 @@ export class IntentRouter {
         const normalizedNutrient = nutrient.toLowerCase()
         await this.db.updateUserGoal(context.userId, normalizedNutrient, value, unit || 'units')
 
-        response.response_type = 'goal_updated'
-        response.message = `Your daily ${nutrient} goal is now set to ${value} ${unit || ''}.`
-        return { nutrient, value, unit }
+        // Verify persistence
+        const goals = await this.db.getUserGoals(context.userId)
+        const updatedGoal = goals.find((g: any) => g.nutrient === normalizedNutrient)
+
+        if (updatedGoal && updatedGoal.target_value === value) {
+            response.response_type = 'goal_updated'
+            response.message = `Your daily ${nutrient} goal is now set to ${value} ${unit || ''}.`
+            return { nutrient, value, unit }
+        } else {
+            console.error(`[IntentRouter] Goal update failed verification. Expected ${value}, got ${updatedGoal?.target_value}`)
+            response.status = 'error'
+            response.message = "I tried to update your goal, but it didn't seem to stick. Could you try again?"
+            return { error: 'Persistence failure' }
+        }
+    }
+
+    private async handleQueryGoals(context: AgentContext, response: AgentResponse) {
+        const goals = await this.db.getUserGoals(context.userId)
+
+        response.response_type = 'goals_summary'
+        response.status = 'success'
+
+        if (!goals || goals.length === 0) {
+            response.message = "You haven't set any nutritional goals yet. Would you like me to suggest some?"
+            return { goals: [] }
+        }
+
+        const summary = goals.map(g => `• ${g.nutrient}: ${g.target_value} ${g.unit}`).join('\n')
+        response.message = `Here are your current goals:\n${summary}`
+        return { goals }
     }
 
     private async handleSuggestGoals(intentResult: IntentExtraction, context: AgentContext, agentsInvolved: string[], response: AgentResponse) {

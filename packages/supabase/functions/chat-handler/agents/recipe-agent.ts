@@ -36,6 +36,7 @@ export interface RecipeFlowState {
 export type RecipeAction =
   | { type: 'find', name: string }
   | { type: 'parse', text: string }
+  | { type: 'interactive', message: string }
   | { type: 'confirm_batch', flowState: RecipeFlowState, userResponse: string }
   | { type: 'confirm_servings', flowState: RecipeFlowState, userResponse: string }
   | { type: 'handle_duplicate', flowState: RecipeFlowState, choice: 'update' | 'new' | 'log' }
@@ -56,6 +57,42 @@ export class RecipeAgent implements Agent<RecipeAction, any> {
   async execute(action: RecipeAction, context: AgentContext): Promise<RecipeActionResult | any> {
     const { userId, supabase: contextSupabase } = context
     const supabase = contextSupabase || createAdminClient()
+
+    if (action.type === 'interactive') {
+      const session = context.session
+      if (!session) throw new Error('[RecipeAgent] Session required for interactive mode')
+
+      const flowState = session.buffer?.flowState as RecipeFlowState
+
+      // 1. No active flow? Treat as new Parse intent
+      if (!flowState) {
+        console.log('[RecipeAgent] Interactive: Starting new flow with parse')
+        return this.execute({ type: 'parse', text: action.message }, context)
+      }
+
+      // 2. Resume Flow based on Step
+      console.log(`[RecipeAgent] Interactive: Resuming step ${flowState.step}`)
+
+      if (flowState.step === 'pending_batch_confirm') {
+        return this.execute({ type: 'confirm_batch', flowState, userResponse: action.message }, context)
+      }
+
+      if (flowState.step === 'pending_servings_confirm') {
+        return this.execute({ type: 'confirm_servings', flowState, userResponse: action.message }, context)
+      }
+
+      if (flowState.step === 'pending_duplicate_confirm') {
+        // Map message to choice (update/new/log) if possible, or use explicit Planner extraction if available
+        // For now simple keyword matching
+        const text = action.message.toLowerCase()
+        let choice: 'update' | 'new' | 'log' = 'log' // default safety
+        if (text.includes('update')) choice = 'update'
+        else if (text.includes('save') || text.includes('new')) choice = 'new'
+        else if (text.includes('log')) choice = 'log'
+
+        return this.execute({ type: 'handle_duplicate', flowState, choice }, context)
+      }
+    }
 
     if (action.type === 'find') {
       const name = action.name.trim()
@@ -129,7 +166,7 @@ Return a JSON object:
   "instructions": "string"
 }
 Important:
-- If the text is a recipe, extract all details.
+- USE THE USER'S PROVIDED NAME EXACTLY if they say "Call it X" or "Name it X".
 - If the name is missing but a title can be inferred (e.g., from the first line), use it.
 - If servings is not mentioned, default to 1.
 - Extract total_batch_size if mentioned (e.g., "makes 6 cups", "yields 48 oz", "total: 2 liters")
@@ -184,7 +221,9 @@ Important:
             `What would you like to do?\n` +
             `• **Update** - Replace the existing recipe with this new version\n` +
             `• **Save new** - Keep both recipes (I'll add a suffix)\n` +
-            `• **Log existing** - Don't save, just log the existing recipe`
+            `• **Log existing** - Don't save, just log the existing recipe`,
+          // ADD RESPONSE TYPE FOR BUTTONS
+          response_type: 'pending_duplicate_confirm'
         }
       }
 
@@ -286,7 +325,7 @@ Important:
       flowState.parsed.servings = flowState.confirmedServings
 
       // Now calculate nutrition
-      const { batchNutrition, ingredientsWithNutrition } = await this.calculateNutrition(
+      const { batchNutrition, ingredientsWithNutrition, warnings } = await this.calculateNutrition(
         flowState.parsed,
         context
       )
@@ -294,7 +333,10 @@ Important:
       flowState.ingredientsWithNutrition = ingredientsWithNutrition
 
       // Calculate per-serving nutrition for response
-      const perServingCalories = Math.round((batchNutrition.calories || 0) / flowState.confirmedServings)
+      const servings = flowState.confirmedServings || 1
+      const perServingNutrition = scaleNutrition(batchNutrition, 1 / servings)
+      perServingNutrition.food_name = flowState.parsed.recipe_name
+      const perServingCalories = Math.round(perServingNutrition.calories)
 
       // Check for duplicate recipe before showing final save prompt
       const { data: existing } = await supabase
@@ -304,6 +346,8 @@ Important:
         .ilike('recipe_name', flowState.parsed.recipe_name)
         .maybeSingle()
 
+      // Duplicate check
+
       if (existing) {
         // Duplicate found - ask user what to do
         flowState.step = 'pending_duplicate_confirm'
@@ -311,30 +355,39 @@ Important:
         flowState.existingRecipeName = existing.recipe_name
         console.log(`[RecipeAgent] Found existing recipe: "${existing.recipe_name}" (${existing.id})`)
 
+        const warningText = warnings.length > 0 ? `\n\n⚠️ **Validation Notes:**\n• ${warnings.join('\n• ')}` : ''
+
         return {
           type: 'needs_confirmation',
           flowState,
           prompt: `You already have a recipe called "${existing.recipe_name}".\n\n` +
-            `This new recipe has ${batchNutrition.calories || 0} calories total (${perServingCalories} per serving).\n\n` +
-            `Would you like to **update** the existing recipe or **save as new**?`
+            `This new recipe has ${batchNutrition.calories || 0} calories total (${perServingCalories} per serving).${warningText}\n\n` +
+            `Would you like to **update** the existing recipe or **save as new**?`,
+          response_type: 'pending_duplicate_confirm',
+          data: {
+            nutrition: [perServingNutrition],
+            validation: { warnings, passed: warnings.length === 0, errors: [] }
+          }
         }
       }
 
       // No duplicate - proceed to save confirmation
       flowState.step = 'ready_to_save'
 
-      // Prepare per-serving nutrition for the flow state
-      const servings = flowState.confirmedServings || 1
-      const perServingNutrition = scaleNutrition(batchNutrition, 1 / servings)
-      perServingNutrition.food_name = flowState.parsed.recipe_name
-
       const isLargeBatch = servings > 10
       const prefix = isLargeBatch ? `⚠️ **Confirming ${servings} servings.** ` : ''
+
+      const warningText = warnings.length > 0 ? `\n\n⚠️ **Validation Notes:**\n• ${warnings.join('\n• ')}` : ''
 
       return {
         type: 'needs_confirmation',
         flowState,
-        prompt: prefix + `I've calculated the nutrition for "${flowState.parsed.recipe_name}". It has ${batchNutrition.calories || 0} calories total (${perServingCalories} per serving). Ready to save?`
+        prompt: prefix + `I've calculated the nutrition for "${flowState.parsed.recipe_name}". It has ${batchNutrition.calories || 0} calories total (${perServingCalories} per serving).${warningText}\n\nReady to save?`,
+        response_type: 'ready_to_save',
+        data: {
+          nutrition: [perServingNutrition],
+          validation: { warnings, passed: warnings.length === 0, errors: [] }
+        }
       }
     }
 
@@ -388,7 +441,7 @@ Important:
       // choice === 'new': Save as new recipe
       // Need to calculate nutrition first if not done yet
       if (!flowState.batchNutrition) {
-        const { batchNutrition, ingredientsWithNutrition } = await this.calculateNutrition(
+        const { batchNutrition, ingredientsWithNutrition, warnings } = await this.calculateNutrition(
           flowState.parsed,
           context
         )
@@ -427,7 +480,7 @@ Important:
         }
       }
 
-      const { batchNutrition, ingredientsWithNutrition } = await this.calculateNutrition(parsed, context)
+      const { batchNutrition, ingredientsWithNutrition, warnings } = await this.calculateNutrition(parsed, context)
 
       if (mode === 'preview') {
         return {
@@ -461,12 +514,13 @@ Important:
   private async calculateNutrition(
     parsed: ParsedRecipe,
     context: AgentContext
-  ): Promise<{ batchNutrition: any, ingredientsWithNutrition: any[] }> {
+  ): Promise<{ batchNutrition: any, ingredientsWithNutrition: any[], warnings: string[] }> {
     const ingredientNames = parsed.ingredients.map(ing => ing.name)
     const ingredientPortions = parsed.ingredients.map(ing => `${ing.quantity} ${ing.unit}`)
 
     let batchNutrition: any = {}
     let ingredientsWithNutrition: any[] = []
+    let warnings: string[] = []
 
     try {
       const nutritionAgent = new NutritionAgent()
@@ -474,6 +528,9 @@ Important:
         { items: ingredientNames, portions: ingredientPortions },
         context
       )
+
+      // 4. Validate ingredients (Early Warning)
+      const likelyCaloric = /protein|oil|butter|fat|carb|flour|bread|meat|chicken|beef|egg|milk|cheese|rice|pasta|sugar|honey|syrup|avocado|nut|almond|peanut|snack|cookie|cake|chip|potato|corn|bean|lentil|salmon|tuna|steak|pork|bacon|yogurt/i
 
       parsed.ingredients.forEach((ing) => {
         const nut = nutritionResults.find(n =>
@@ -483,13 +540,19 @@ Important:
 
         if (nut) {
           ingredientsWithNutrition.push({ ...ing, nutrition: nut })
+
+          // Early validation: check for ghost calories
+          if (nut.calories === 0 && likelyCaloric.test(ing.name)) {
+            warnings.push(`Ingredient \"${ing.name}\" returned 0 calories, which seems incorrect.`)
+          }
+
           Object.keys(nut).forEach(key => {
             if (typeof (nut as any)[key] === 'number') {
               batchNutrition[key] = (batchNutrition[key] || 0) + (nut as any)[key]
             }
           })
         } else {
-          console.warn(`[RecipeAgent] No nutrition found for ingredient: ${ing.name}`)
+          warnings.push(`I couldn't find nutrition data for \"${ing.name}\".`)
           ingredientsWithNutrition.push({ ...ing, nutrition: null })
         }
       })
@@ -507,7 +570,7 @@ Important:
     // Ensure food_name is set for downstream logging
     batchNutrition.food_name = parsed.recipe_name
 
-    return { batchNutrition, ingredientsWithNutrition }
+    return { batchNutrition, ingredientsWithNutrition, warnings }
   }
 
   /**

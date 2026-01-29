@@ -145,10 +145,24 @@ function findFallbackNutrition(searchTerm: string): NutritionData | null {
 /**
  * Log failed ingredient lookup for analytics
  */
-function logFailedLookup(ingredient: string, reason: string): void {
+async function logFailedLookup(ingredient: string, reason: string, context?: { supabase: any, userId: string, portion?: string }): Promise<void> {
   const count = (failedLookups.get(ingredient) || 0) + 1
   failedLookups.set(ingredient, count)
   console.warn(`[NutritionAgent] FAILED LOOKUP: "${ingredient}" - ${reason} (attempt ${count})`)
+
+  if (context?.supabase && context?.userId) {
+    try {
+      await context.supabase.from('analytics_failed_lookups').insert({
+        user_id: context.userId,
+        query: ingredient,
+        portion: context.portion,
+        failure_type: 'no_data',
+        details: { reason, attempt: count }
+      })
+    } catch (err) {
+      console.error('[NutritionAgent] Error logging analytics:', err)
+    }
+  }
 }
 
 /**
@@ -169,23 +183,24 @@ function isValidNutrition(data: NutritionData | null, itemName: string): boolean
   return true
 }
 
-export async function getScalingMultiplier(userPortion: string, servingSize: string | undefined): Promise<number> {
+export async function getScalingMultiplier(userPortion: string, servingSize: string | undefined, foodName?: string, supabase?: any): Promise<number> {
   if (!servingSize) return 1
 
   // 1. Rule-based scaling for common units
   const userParsed = parseUnitAndAmount(userPortion)
   const officialParsed = parseUnitAndAmount(servingSize)
 
-  if (userParsed && officialParsed && userParsed.unit === officialParsed.unit) {
-    const multiplier = userParsed.amount / officialParsed.amount
-    if (!isNaN(multiplier) && multiplier > 0) {
-      console.log(`[NutritionAgent] Rule-based scaling: ${userPortion} / ${servingSize} = ${multiplier}`)
-      return multiplier
-    }
-  }
-
-  // Handle common weight-based scaling (g, oz, lb)
   if (userParsed && officialParsed) {
+    // Exact unit match
+    if (userParsed.unit === officialParsed.unit) {
+      const multiplier = userParsed.amount / officialParsed.amount
+      if (!isNaN(multiplier) && multiplier > 0) {
+        console.log(`[NutritionAgent] Rule-based scaling: ${userPortion} / ${servingSize} = ${multiplier}`)
+        return multiplier
+      }
+    }
+
+    // Handle common weight-based scaling (g, oz, lb)
     const userGrams = convertToGrams(userParsed.amount, userParsed.unit)
     const officialGrams = convertToGrams(officialParsed.amount, officialParsed.unit)
 
@@ -194,9 +209,69 @@ export async function getScalingMultiplier(userPortion: string, servingSize: str
       console.log(`[NutritionAgent] Weight-based scaling: ${userGrams}g / ${officialGrams}g = ${multiplier}`)
       return multiplier
     }
+
+    // Cross-unit scaling (e.g., cups to ml, tbsp to tsp)
+    const userVol = convertToMl(userParsed.amount, userParsed.unit)
+    const officialVol = convertToMl(officialParsed.amount, officialParsed.unit)
+
+    if (userVol && officialVol) {
+      const multiplier = userVol / officialVol
+      console.log(`[NutritionAgent] Volume-based scaling: ${userVol}ml / ${officialVol}ml = ${multiplier}`)
+      return multiplier
+    }
   }
 
-  // 2. Fallback to LLM for ambiguous descriptions
+  // Handle case where servingSize contains weight in parens: "1 cup (240g)" or "1 tbsp (15 ml)"
+  if (userParsed && servingSize.includes('(')) {
+    const parenMatch = servingSize.match(/\(([^)]+)\)/)
+    if (parenMatch) {
+      const parenContent = parenMatch[1]
+      const parenParsed = parseUnitAndAmount(parenContent)
+      if (parenParsed) {
+        // Try weight scaling first
+        const userGrams = convertToGrams(userParsed.amount, userParsed.unit)
+        const parenGrams = convertToGrams(parenParsed.amount, parenParsed.unit)
+        if (userGrams && parenGrams) {
+          const multiplier = userGrams / parenGrams
+          console.log(`[NutritionAgent] Paren-weight scaling: ${userGrams}g / ${parenGrams}g = ${multiplier}`)
+          return multiplier
+        }
+
+        // Try volume scaling
+        const userVol = convertToMl(userParsed.amount, userParsed.unit)
+        const parenVol = convertToMl(parenParsed.amount, parenParsed.unit)
+        if (userVol && parenVol) {
+          const multiplier = userVol / parenVol
+          console.log(`[NutritionAgent] Paren-volume scaling: ${userVol}ml / ${parenVol}ml = ${multiplier}`)
+          return multiplier
+        }
+      }
+    }
+  }
+
+  // 2. Check conversion cache if foodName provided
+  if (foodName && supabase) {
+    try {
+      const normalizedFood = foodName.toLowerCase().trim()
+      const { data: cached } = await supabase
+        .from('unit_conversions')
+        .select('multiplier')
+        .eq('food_name', normalizedFood)
+        .eq('from_unit', userPortion.toLowerCase().trim())
+        .eq('to_unit', servingSize.toLowerCase().trim())
+        .limit(1)
+        .maybeSingle()
+
+      if (cached) {
+        console.log(`[NutritionAgent] Conversion cache hit: ${userPortion} -> ${servingSize} = ${cached.multiplier}`)
+        return cached.multiplier
+      }
+    } catch (err) {
+      console.error('[NutritionAgent] Error checking conversion cache:', err)
+    }
+  }
+
+  // 3. Fallback to LLM for ambiguous descriptions
   console.log(`[NutritionAgent] Falling back to LLM for scaling: "${userPortion}" vs "${servingSize}"`)
   const openai = createOpenAIClient()
   const prompt = `
@@ -215,7 +290,23 @@ Return ONLY the numerical multiplier (e.g., 1.5, 0.5, 2). If unsure, return 1.
 
   const content = response.choices[0].message.content?.trim()
   const multiplier = parseFloat(content || '1')
-  return isNaN(multiplier) ? 1 : multiplier
+  const finalMultiplier = isNaN(multiplier) ? 1 : multiplier
+
+  // 4. Save to cache if successful
+  if (foodName && supabase && !isNaN(finalMultiplier)) {
+    try {
+      await supabase.from('unit_conversions').insert({
+        food_name: foodName.toLowerCase().trim(),
+        from_unit: userPortion.toLowerCase().trim(),
+        to_unit: servingSize.toLowerCase().trim(),
+        multiplier: finalMultiplier
+      })
+    } catch (err) {
+      console.error('[NutritionAgent] Error saving to conversion cache:', err)
+    }
+  }
+
+  return finalMultiplier
 }
 
 function parseUnitAndAmount(str: string): { amount: number, unit: string } | null {
@@ -275,6 +366,29 @@ function convertToGrams(amount: number, unit: string): number | null {
     'ounce': 28.35,
     'lb': 453.59,
     'pound': 453.59,
+  }
+  return units[unit] ? amount * units[unit] : null
+}
+
+function convertToMl(amount: number, unit: string): number | null {
+  const units: Record<string, number> = {
+    'ml': 1,
+    'milliliter': 1,
+    'l': 1000,
+    'liter': 1000,
+    'tsp': 4.92,
+    'teaspoon': 4.92,
+    'tbsp': 14.78,
+    'tablespoon': 14.78,
+    'cup': 240,
+    'fl oz': 29.57,
+    'fluid ounce': 29.57,
+    'pt': 473.17,
+    'pint': 473.17,
+    'qt': 946.35,
+    'quart': 946.35,
+    'gal': 3785.41,
+    'gallon': 3785.41,
   }
   return units[unit] ? amount * units[unit] : null
 }
@@ -373,7 +487,7 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
             nutrition = findFallbackNutrition(itemName)
 
             if (!nutrition) {
-              logFailedLookup(itemName, 'API returned no data and no fallback found')
+              await logFailedLookup(itemName, 'API returned no data and no fallback found', { supabase, userId: context.userId, portion: userPortion })
             }
           }
         } catch (e) {
@@ -382,14 +496,14 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
           nutrition = findFallbackNutrition(itemName)
 
           if (!nutrition) {
-            logFailedLookup(itemName, `API error: ${e instanceof Error ? e.message : 'Unknown error'}`)
+            await logFailedLookup(itemName, `API error: ${e instanceof Error ? e.message : 'Unknown error'}`, { supabase, userId: context.userId, portion: userPortion })
           }
         }
       }
 
       if (nutrition) {
         // 4. Portion scaling
-        const multiplier = await getScalingMultiplier(userPortion, nutrition.serving_size)
+        const multiplier = await getScalingMultiplier(userPortion, nutrition.serving_size, itemName, supabase)
         console.log(`[NutritionAgent] Scaling ${itemName} by ${multiplier} (user: ${userPortion}, official: ${nutrition.serving_size})`)
         const scaledNutrition = scaleNutrition(nutrition, multiplier)
         results.push(scaledNutrition)
@@ -399,12 +513,12 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
         const estimation = await this.estimateNutritionWithLLM(itemName)
         if (estimation) {
           console.log(`[NutritionAgent] LLM Estimation successful for "${itemName}"`)
-          const multiplier = await getScalingMultiplier(userPortion, estimation.serving_size)
+          const multiplier = await getScalingMultiplier(userPortion, estimation.serving_size, itemName, supabase)
           const scaledNutrition = scaleNutrition(estimation, multiplier)
           results.push(scaledNutrition)
         } else {
           // Log as failed - no nutrition data at all
-          logFailedLookup(itemName, 'No nutrition data available from any source including LLM')
+          await logFailedLookup(itemName, 'No nutrition data available from any source including LLM', { supabase, userId: context.userId, portion: userPortion })
         }
       }
     }

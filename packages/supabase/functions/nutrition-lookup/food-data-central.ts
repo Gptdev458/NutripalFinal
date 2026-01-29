@@ -71,26 +71,26 @@ export const popularBrandedFoods: PopularBrandedFood[] = [
   { name: 'cheetos', brand: 'frito-lay' },
   { name: 'lays potato chips', brand: 'frito-lay' },
   { name: 'pringles', brand: 'kelloggs' },
-  
+
   // Cereals
   { name: 'cheerios', brand: 'general mills' },
   { name: 'lucky charms', brand: 'general mills' },
   { name: 'frosted flakes', brand: 'kelloggs' },
   { name: 'special k', brand: 'kelloggs' },
-  
+
   // Beverages
   { name: 'coca cola', brand: 'coca-cola' },
   { name: 'pepsi', brand: 'pepsico' },
   { name: 'gatorade', brand: 'pepsico' },
   { name: 'sprite', brand: 'coca-cola' },
   { name: 'mountain dew', brand: 'pepsico' },
-  
+
   // Dairy and Condiments
   { name: 'kraft mac and cheese', brand: 'kraft' },
   { name: 'philadelphia cream cheese', brand: 'kraft' },
   { name: 'heinz ketchup', brand: 'kraft heinz' },
   { name: 'hellmanns mayonnaise', brand: 'unilever' },
-  
+
   // Frozen Foods
   { name: 'ben and jerrys', brand: 'unilever' },
   { name: 'hot pockets', brand: 'nestle' },
@@ -104,7 +104,7 @@ export function getFDCApiKey(): string {
   try {
     // @ts-ignore: Deno Deploy compatibility
     const envApiKey = typeof Deno !== 'undefined' ? Deno.env.get("FOOD_DATA_CENTRAL_API_KEY") : undefined;
-    
+
     if (envApiKey) {
       return envApiKey;
     }
@@ -119,29 +119,29 @@ export function getFDCApiKey(): string {
  * Score a Food Data Central product based on relevance to search query
  */
 export function calculateFDCProductScore(
-  description: string, 
-  brand: string, 
-  searchTerm: string, 
+  description: string,
+  brand: string,
+  searchTerm: string,
   nutrients: any[]
 ): number {
   let score = 0;
-  
+
   const productNameLower = description.toLowerCase();
   const brandLower = (brand || '').toLowerCase();
   const searchWords = searchTerm.toLowerCase().split(/\s+/);
-  
+
   // Basic word matching
   for (const word of searchWords) {
     if (word.length > 2 && productNameLower.includes(word)) {
       score += 30 / searchWords.length;
     }
   }
-  
+
   // Exact match bonus
   if (productNameLower === searchTerm.toLowerCase()) {
     score += 50;
   }
-  
+
   // Brand matching
   if (brand) {
     for (const word of searchWords) {
@@ -153,43 +153,43 @@ export function calculateFDCProductScore(
   } else {
     score -= 10;
   }
-  
+
   // Nutrition data quality
   if (nutrients && nutrients.length > 0) {
     const hasCalories = nutrients.some(n => n.nutrientId === 1008 && n.value > 0);
     const hasProtein = nutrients.some(n => n.nutrientId === 1003 && n.value !== undefined);
     const hasCarbs = nutrients.some(n => n.nutrientId === 1005 && n.value !== undefined);
     const hasFat = nutrients.some(n => n.nutrientId === 1004 && n.value !== undefined);
-    
+
     if (hasCalories) {
       score += 30;
     } else {
       score -= 50;
     }
-    
+
     if (hasProtein) score += 10;
     if (hasCarbs) score += 10;
     if (hasFat) score += 10;
-    
+
     if (nutrients.length < 5) {
       score -= 20;
     }
   } else {
     score -= 50;
   }
-  
+
   // Penalize generic terms
   const genericTerms = ['bar', 'snack', 'drink', 'cereal', 'yogurt'];
   if (searchWords.length > 1 && genericTerms.some(term => productNameLower === term)) {
     score -= 30;
   }
-  
+
   // Boost for major brands
   const majorBrands = ['mondelez', 'nabisco', 'kraft', 'kellogg', 'general mills', 'nestle', 'pepsico'];
   if (brandLower && majorBrands.some(b => brandLower.includes(b))) {
     score += 15;
   }
-  
+
   // Penalize wrong product types
   const unwantedSubstrings = ['ice cream', 'cereal', 'cones', 'cheesecake', 'pudding', 'milkshake', 'cake'];
   if (searchTerm.toLowerCase().includes('cookie') || searchTerm.toLowerCase().includes('oreo')) {
@@ -200,7 +200,7 @@ export function calculateFDCProductScore(
       }
     }
   }
-  
+
   return score;
 }
 
@@ -220,32 +220,46 @@ export function extractNutritionDataFromFDC(food: any): NutritionData {
     cholesterol_mg: null,
     fat_saturated_g: null,
     potassium_mg: null,
+    // Add extra metadata for scaling
+    serving_size: food.servingSize ? `${food.servingSize}${food.servingSizeUnit || 'g'}` : undefined,
+    brand: food.brandOwner || food.brandName || null,
   };
-  
+
+  // If servingSize is missing but we have household serving info, use that as a label
+  if (!data.serving_size && food.householdServingFullText) {
+    data.serving_size = food.householdServingFullText;
+  }
+
+  // Handle Foundation/Legacy foods which are usually per 100g
+  if (!data.serving_size && (food.dataType === 'Foundation' || food.dataType === 'SR Legacy')) {
+    data.serving_size = '100g';
+  }
+
   // Process each nutrient
   if (food.foodNutrients && Array.isArray(food.foodNutrients)) {
     food.foodNutrients.forEach((nutrient: any) => {
-      const nutrientId = nutrient.nutrientId;
-      const value = nutrient.value;
-      
-      if (nutrientIdMap[nutrientId] && value !== undefined) {
+      // Different FDC API versions use different field names for nutrient ID
+      const nutrientId = nutrient.nutrientId || (nutrient.nutrient ? nutrient.nutrient.id : null);
+      const value = nutrient.value !== undefined ? nutrient.value : (nutrient.amount !== undefined ? nutrient.amount : null);
+
+      if (nutrientId && nutrientIdMap[nutrientId] && value !== null) {
         data[nutrientIdMap[nutrientId]] = parseFloat(value);
       }
     });
   }
-  
+
   // Round calories to nearest whole number
   if (data.calories !== null) {
     data.calories = Math.round(data.calories);
   }
-  
+
   // Round other values to 1 decimal place
   for (const key in data) {
     if (typeof data[key] === 'number' && key !== 'calories') {
       data[key] = Math.round(data[key] * 10) / 10;
     }
   }
-  
+
   return data as NutritionData;
 }
 
@@ -260,7 +274,7 @@ export function createFDCAmbiguityResponse(validProducts: any[], searchTerm: str
     score: p.score,
     fdcId: p.food.fdcId
   }));
-  
+
   return {
     status: 'ambiguous',
     options,
@@ -284,7 +298,7 @@ export function isAmbiguousMatch(score1: number, score2: number): boolean {
  */
 function isBasicIngredient(query: string): boolean {
   const lowerQuery = query.toLowerCase();
-  
+
   const basicIngredientTerms = [
     'chicken', 'beef', 'pork', 'fish', 'turkey', 'lamb',
     'apple', 'banana', 'orange', 'grape', 'berry', 'fruit',
@@ -292,7 +306,7 @@ function isBasicIngredient(query: string): boolean {
     'rice', 'pasta', 'bread', 'egg', 'milk', 'cheese',
     'raw', 'fresh', 'boiled', 'steamed', 'grilled', 'baked'
   ];
-  
+
   return basicIngredientTerms.some(term => lowerQuery.includes(term));
 }
 
@@ -301,19 +315,19 @@ function isBasicIngredient(query: string): boolean {
  */
 export function matchPopularBrandedFood(searchTerm: string): PopularBrandedFood | null {
   const lowerSearchTerm = searchTerm.toLowerCase();
-  
+
   const exactMatch = popularBrandedFoods.find(item => lowerSearchTerm === item.name);
   if (exactMatch) return exactMatch;
-  
-  const exactTermMatch = popularBrandedFoods.find(item => 
+
+  const exactTermMatch = popularBrandedFoods.find(item =>
     item.exactTerms && item.exactTerms.some(term => term === lowerSearchTerm)
   );
   if (exactTermMatch) return exactTermMatch;
-  
+
   const containsMatch = popularBrandedFoods.find(item => {
     return lowerSearchTerm.includes(item.name) || item.name.includes(lowerSearchTerm);
   });
-  
+
   return containsMatch || null;
 }
 
@@ -322,21 +336,21 @@ export function matchPopularBrandedFood(searchTerm: string): PopularBrandedFood 
  */
 export async function searchFoodDataCentral(query: string): Promise<any> {
   const apiKey = getFDCApiKey();
-  
+
   const shouldIncludeStandardFoods = isBasicIngredient(query);
-  
+
   let dataTypeParam = 'Branded';
   if (shouldIncludeStandardFoods) {
     dataTypeParam = 'Branded,Foundation,SR%20Legacy';
   }
-  
+
   const url = `https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${apiKey}&query=${encodeURIComponent(query)}&dataType=${dataTypeParam}&pageSize=15`;
-  
+
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Food Data Central API error: ${response.status}`);
   }
-  
+
   return await response.json();
 }
 
@@ -345,7 +359,7 @@ export async function searchFoodDataCentral(query: string): Promise<any> {
  */
 export async function lookupFoodDataCentral(foodName: string): Promise<LookupResult> {
   console.log(`[FDC] Looking up: '${foodName}'`);
-  
+
   const cleanedFoodName = (foodName || '').trim();
   if (!cleanedFoodName) {
     return {
@@ -354,7 +368,7 @@ export async function lookupFoodDataCentral(foodName: string): Promise<LookupRes
       response_type: 'error_missing_food_name'
     };
   }
-  
+
   try {
     // Check for fallback data first
     const fallbackKey = cleanedFoodName.toLowerCase();
@@ -370,24 +384,24 @@ export async function lookupFoodDataCentral(foodName: string): Promise<LookupRes
         source: 'fallback_data'
       };
     }
-    
+
     // Check if this is a popular branded food
     const popularFoodMatch = matchPopularBrandedFood(cleanedFoodName);
     const isPopularFood = !!popularFoodMatch;
-    
+
     // Search Food Data Central
     console.log(`[FDC] Querying API for '${cleanedFoodName}'`);
     const searchResults = await searchFoodDataCentral(cleanedFoodName);
-    
+
     if (!searchResults.foods || searchResults.foods.length === 0) {
       console.log(`[FDC] No results found for '${cleanedFoodName}'`);
-      return { 
+      return {
         status: 'not_found',
         message: `No results found in Food Data Central for '${cleanedFoodName}'`,
         response_type: 'not_found_in_fdc'
       };
     }
-    
+
     // Score products
     const scoredProducts = searchResults.foods.map((food: any) => ({
       food,
@@ -398,19 +412,19 @@ export async function lookupFoodDataCentral(foodName: string): Promise<LookupRes
         food.foodNutrients || []
       )
     }));
-    
+
     // Filter low-scoring products
     const validProducts = scoredProducts.filter((p: any) => p.score > 50);
-    
+
     if ((validProducts.length === 0 || !validProducts.some((p: any) => p.score > 80)) && isPopularFood) {
       console.log(`[FDC] No high confidence match for popular food '${cleanedFoodName}'`);
-      return { 
+      return {
         status: 'not_found',
         message: `No good matches for '${cleanedFoodName}' in Food Data Central`,
         response_type: 'not_found_in_fdc'
       };
     }
-    
+
     if (validProducts.length === 0) {
       return {
         status: 'error',
@@ -418,11 +432,11 @@ export async function lookupFoodDataCentral(foodName: string): Promise<LookupRes
         response_type: 'error_product_not_found'
       };
     }
-    
+
     // Sort by score
     validProducts.sort((a: any, b: any) => b.score - a.score);
     const bestMatch = validProducts[0];
-    
+
     // Check for ambiguous matches
     if (validProducts.length > 1) {
       const secondBest = validProducts[1];
@@ -430,27 +444,27 @@ export async function lookupFoodDataCentral(foodName: string): Promise<LookupRes
         return createFDCAmbiguityResponse(validProducts.slice(0, 3), cleanedFoodName);
       }
     }
-    
+
     // Process best match
     const bestFood = bestMatch.food;
     const nutritionData = extractNutritionDataFromFDC(bestFood);
-    
+
     // Check for missing critical nutrients
-    const hasMissingCriticalNutrients = 
-      nutritionData.calories === null || 
-      nutritionData.protein_g === null || 
-      nutritionData.fat_total_g === null || 
+    const hasMissingCriticalNutrients =
+      nutritionData.calories === null ||
+      nutritionData.protein_g === null ||
+      nutritionData.fat_total_g === null ||
       nutritionData.carbs_g === null;
-    
+
     if (hasMissingCriticalNutrients && isPopularFood) {
       console.log(`[FDC] Found match but missing critical nutrients for '${cleanedFoodName}'`);
-      return { 
+      return {
         status: 'not_found',
         message: `Found match for '${cleanedFoodName}' in FDC but missing critical nutrients`,
         response_type: 'insufficient_data_in_fdc'
       };
     }
-    
+
     return {
       status: 'success',
       product_name: bestFood.description || cleanedFoodName,
@@ -461,7 +475,7 @@ export async function lookupFoodDataCentral(foodName: string): Promise<LookupRes
       response_type: 'product_found',
       source: 'fdc'
     };
-    
+
   } catch (error) {
     console.error(`[FDC] Error looking up food '${cleanedFoodName}':`, error);
     return {
