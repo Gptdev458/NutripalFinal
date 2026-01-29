@@ -109,6 +109,25 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
                 )}
               </div>
 
+              {/* Recipe Saved Success Card - Show for recipe_saved messages */}
+              {msg.message_type === 'recipe_saved' && isBotMessage && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mt-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-emerald-600 text-lg">✓</span>
+                    <span className="font-semibold text-emerald-800">Recipe Saved Successfully</span>
+                  </div>
+                  {msg.metadata?.recipe && (
+                    <div className="mt-2 text-sm text-gray-600">
+                      <p className="font-medium text-gray-800">{msg.metadata.recipe.recipe_name}</p>
+                      <p className="text-xs mt-1">
+                        {msg.metadata.recipe.servings || 1} servings •
+                        {Math.round(msg.metadata.recipe.nutrition_data?.calories || 0)} kcal total
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Structured Metadata Rendering */}
               {msg.metadata && isBotMessage && (
                 <div className="mt-3 pt-2 border-t border-gray-100">

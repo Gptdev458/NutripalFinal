@@ -28,9 +28,41 @@ export interface Agent<TInput, TOutput> {
 export interface AgentResponse {
   status: 'success' | 'error' | 'ambiguous' | 'clarification' | 'proposal'
   message: string
-  response_type: string // 'food_logged' | 'confirmation_food_log' | 'confirmation_recipe_save' | ...
+  response_type: ResponseType
   data?: any
 }
+
+/**
+ * Response types for the chat system.
+ * Recipe flow types: pending_batch_confirm → pending_servings_confirm → confirmation_recipe_save → recipe_saved
+ */
+export type ResponseType =
+  // Food logging
+  | 'food_logged'
+  | 'confirmation_food_log'
+  | 'nutrition_info'
+  | 'nutrition_not_found'
+  // Recipe management
+  | 'pending_batch_confirm'
+  | 'pending_servings_confirm'
+  | 'pending_duplicate_confirm'
+  | 'ready_to_save'
+  | 'confirmation_recipe_save'
+  | 'recipe_saved'
+  | 'recipe_updated'
+  | 'recipe_not_found'
+  | 'recipe_logged'
+  | 'clarification_needed'
+  // Goals
+  | 'goal_updated'
+  | 'goals_updated'
+  | 'confirmation_goal_update'
+  | 'confirmation_multi_goal_update'
+  // General
+  | 'chat_response'
+  | 'action_cancelled'
+  | 'fatal_error'
+  | 'unknown'
 
 export interface FoodLogEntry {
   id?: string

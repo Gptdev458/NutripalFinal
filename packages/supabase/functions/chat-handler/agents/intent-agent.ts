@@ -53,6 +53,9 @@ Examples:
 15. "Forget about the pizza" -> {"intent": "decline"}
 16. "Confirmed, log the salad" -> {"intent": "confirm"}
 17. "What's in an avocado?" -> {"intent": "query_nutrition", "food_items": ["avocado"], "portions": ["1"]}
+18. "log chicken soup" -> {"intent": "log_recipe", "recipe_text": "chicken soup"}
+19. "log my lasagna" -> {"intent": "log_recipe", "recipe_text": "lasagna"}
+20. "log 8oz of the soup" -> {"intent": "log_recipe", "recipe_text": "soup", "recipe_portion": "8oz"}
 18. "I had some almonds too" -> {"intent": "log_food", "food_items": ["almonds"], "portions": ["some"]}
 `;
 

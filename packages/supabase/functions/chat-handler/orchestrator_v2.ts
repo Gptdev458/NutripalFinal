@@ -15,7 +15,7 @@ export async function orchestrate(
   userId: string,
   message: string,
   sessionId?: string,
-  history: { role: string, content: string }[] = [],
+  chatHistory: { role: string, content: string }[] = [],
   timezone = 'UTC'
 ): Promise<AgentResponse> {
   const supabase = createAdminClient()
@@ -37,12 +37,12 @@ export async function orchestrate(
   try {
     // 1. Intent Classification
     const intentAgent = new IntentAgent()
-    const intentResult = await intentAgent.execute({ message, history }, context)
+    const intentResult = await intentAgent.execute({ message, history: chatHistory }, context)
     intent = intentResult.intent
 
     // 2. Intent-based Routing
     console.log('[Orchestrator] Routing intent:', intent)
-    dataForChat = await router.route(intentResult, context, agentsInvolved, response, history)
+    dataForChat = await router.route(intentResult, context, agentsInvolved, response, chatHistory)
     console.log('[Orchestrator] Route data:', JSON.stringify(dataForChat))
 
     // 3. Generate Natural Language Response
@@ -67,7 +67,7 @@ export async function orchestrate(
         userMessage: message,
         intent,
         data: dataForChat,
-        history
+        history: chatHistory
       }, context)
     }
 

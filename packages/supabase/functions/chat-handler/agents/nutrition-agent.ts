@@ -4,6 +4,171 @@ import { createOpenAIClient } from '../../_shared/openai-client.ts'
 import { NutritionData, Agent, AgentContext } from '../../_shared/types.ts'
 import { normalizeFoodName, retry } from '../../_shared/utils.ts'
 
+// Fallback nutrition data for common ingredients (per 100g unless specified)
+const NUTRITION_FALLBACKS: Record<string, Partial<NutritionData>> = {
+  // Oils
+  'safflower oil': { calories: 884, protein_g: 0, carbs_g: 0, fat_total_g: 100, serving_size: '100g', food_name: 'safflower oil' },
+  'vegetable oil': { calories: 884, protein_g: 0, carbs_g: 0, fat_total_g: 100, serving_size: '100g', food_name: 'vegetable oil' },
+  'olive oil': { calories: 884, protein_g: 0, carbs_g: 0, fat_total_g: 100, serving_size: '100g', food_name: 'olive oil' },
+  'coconut oil': { calories: 862, protein_g: 0, carbs_g: 0, fat_total_g: 100, serving_size: '100g', food_name: 'coconut oil' },
+  'canola oil': { calories: 884, protein_g: 0, carbs_g: 0, fat_total_g: 100, serving_size: '100g', food_name: 'canola oil' },
+  'sesame oil': { calories: 884, protein_g: 0, carbs_g: 0, fat_total_g: 100, serving_size: '100g', food_name: 'sesame oil' },
+  'avocado oil': { calories: 884, protein_g: 0, carbs_g: 0, fat_total_g: 100, serving_size: '100g', food_name: 'avocado oil' },
+  'butter': { calories: 717, protein_g: 0.9, carbs_g: 0.1, fat_total_g: 81, serving_size: '100g', food_name: 'butter' },
+
+  // Broths & Stocks
+  'chicken broth': { calories: 15, protein_g: 1, carbs_g: 1, fat_total_g: 0.5, sodium_mg: 800, serving_size: '100g', food_name: 'chicken broth' },
+  'beef broth': { calories: 17, protein_g: 2.7, carbs_g: 0.1, fat_total_g: 0.4, sodium_mg: 800, serving_size: '100g', food_name: 'beef broth' },
+  'vegetable broth': { calories: 12, protein_g: 0.5, carbs_g: 2, fat_total_g: 0.2, sodium_mg: 600, serving_size: '100g', food_name: 'vegetable broth' },
+  'chicken stock': { calories: 15, protein_g: 1, carbs_g: 1, fat_total_g: 0.5, sodium_mg: 800, serving_size: '100g', food_name: 'chicken stock' },
+  'beef stock': { calories: 17, protein_g: 2.7, carbs_g: 0.1, fat_total_g: 0.4, sodium_mg: 800, serving_size: '100g', food_name: 'beef stock' },
+
+  // Vegetables
+  'fennel': { calories: 31, protein_g: 1.2, carbs_g: 7.3, fat_total_g: 0.2, fiber_g: 3.1, serving_size: '100g', food_name: 'fennel' },
+  'fennel bulb': { calories: 31, protein_g: 1.2, carbs_g: 7.3, fat_total_g: 0.2, fiber_g: 3.1, serving_size: '100g', food_name: 'fennel bulb' },
+  'garlic': { calories: 149, protein_g: 6.4, carbs_g: 33, fat_total_g: 0.5, serving_size: '100g', food_name: 'garlic' },
+  'onion': { calories: 40, protein_g: 1.1, carbs_g: 9.3, fat_total_g: 0.1, serving_size: '100g', food_name: 'onion' },
+  'yellow onion': { calories: 40, protein_g: 1.1, carbs_g: 9.3, fat_total_g: 0.1, serving_size: '100g', food_name: 'yellow onion' },
+  'red onion': { calories: 40, protein_g: 1.1, carbs_g: 9.3, fat_total_g: 0.1, serving_size: '100g', food_name: 'red onion' },
+  'carrot': { calories: 41, protein_g: 0.9, carbs_g: 9.6, fat_total_g: 0.2, fiber_g: 2.8, serving_size: '100g', food_name: 'carrot' },
+  'celery': { calories: 16, protein_g: 0.7, carbs_g: 3, fat_total_g: 0.2, fiber_g: 1.6, serving_size: '100g', food_name: 'celery' },
+  'tomato': { calories: 18, protein_g: 0.9, carbs_g: 3.9, fat_total_g: 0.2, fiber_g: 1.2, serving_size: '100g', food_name: 'tomato' },
+  'potato': { calories: 77, protein_g: 2, carbs_g: 17, fat_total_g: 0.1, fiber_g: 2.2, serving_size: '100g', food_name: 'potato' },
+  'sweet potato': { calories: 86, protein_g: 1.6, carbs_g: 20, fat_total_g: 0.1, fiber_g: 3, serving_size: '100g', food_name: 'sweet potato' },
+  'broccoli': { calories: 34, protein_g: 2.8, carbs_g: 7, fat_total_g: 0.4, fiber_g: 2.6, serving_size: '100g', food_name: 'broccoli' },
+  'spinach': { calories: 23, protein_g: 2.9, carbs_g: 3.6, fat_total_g: 0.4, fiber_g: 2.2, serving_size: '100g', food_name: 'spinach' },
+  'lettuce': { calories: 15, protein_g: 1.4, carbs_g: 2.9, fat_total_g: 0.2, fiber_g: 1.3, serving_size: '100g', food_name: 'lettuce' },
+  'bell pepper': { calories: 31, protein_g: 1, carbs_g: 6, fat_total_g: 0.3, fiber_g: 2.1, serving_size: '100g', food_name: 'bell pepper' },
+  'mushroom': { calories: 22, protein_g: 3.1, carbs_g: 3.3, fat_total_g: 0.3, fiber_g: 1, serving_size: '100g', food_name: 'mushroom' },
+  'zucchini': { calories: 17, protein_g: 1.2, carbs_g: 3.1, fat_total_g: 0.3, fiber_g: 1, serving_size: '100g', food_name: 'zucchini' },
+  'cucumber': { calories: 15, protein_g: 0.7, carbs_g: 3.6, fat_total_g: 0.1, fiber_g: 0.5, serving_size: '100g', food_name: 'cucumber' },
+
+  // Proteins
+  'chicken breast': { calories: 165, protein_g: 31, carbs_g: 0, fat_total_g: 3.6, serving_size: '100g', food_name: 'chicken breast' },
+  'chicken thigh': { calories: 209, protein_g: 26, carbs_g: 0, fat_total_g: 11, serving_size: '100g', food_name: 'chicken thigh' },
+  'ground beef': { calories: 250, protein_g: 26, carbs_g: 0, fat_total_g: 15, serving_size: '100g', food_name: 'ground beef' },
+  'salmon': { calories: 208, protein_g: 20, carbs_g: 0, fat_total_g: 13, serving_size: '100g', food_name: 'salmon' },
+  'egg': { calories: 155, protein_g: 13, carbs_g: 1.1, fat_total_g: 11, serving_size: '100g', food_name: 'egg' },
+  'tofu': { calories: 76, protein_g: 8, carbs_g: 1.9, fat_total_g: 4.8, serving_size: '100g', food_name: 'tofu' },
+
+  // Dairy
+  'milk': { calories: 42, protein_g: 3.4, carbs_g: 5, fat_total_g: 1, serving_size: '100g', food_name: 'milk' },
+  'cheese': { calories: 402, protein_g: 25, carbs_g: 1.3, fat_total_g: 33, serving_size: '100g', food_name: 'cheese' },
+  'cheddar cheese': { calories: 402, protein_g: 25, carbs_g: 1.3, fat_total_g: 33, serving_size: '100g', food_name: 'cheddar cheese' },
+  'parmesan': { calories: 431, protein_g: 38, carbs_g: 4.1, fat_total_g: 29, serving_size: '100g', food_name: 'parmesan' },
+  'cream': { calories: 340, protein_g: 2.1, carbs_g: 2.8, fat_total_g: 36, serving_size: '100g', food_name: 'cream' },
+  'greek yogurt': { calories: 97, protein_g: 9, carbs_g: 3.6, fat_total_g: 5, serving_size: '100g', food_name: 'greek yogurt' },
+
+  // Grains & Starches
+  'rice': { calories: 130, protein_g: 2.7, carbs_g: 28, fat_total_g: 0.3, serving_size: '100g', food_name: 'rice' },
+  'white rice': { calories: 130, protein_g: 2.7, carbs_g: 28, fat_total_g: 0.3, serving_size: '100g', food_name: 'white rice' },
+  'brown rice': { calories: 111, protein_g: 2.6, carbs_g: 23, fat_total_g: 0.9, fiber_g: 1.8, serving_size: '100g', food_name: 'brown rice' },
+  'pasta': { calories: 131, protein_g: 5, carbs_g: 25, fat_total_g: 1.1, serving_size: '100g', food_name: 'pasta' },
+  'bread': { calories: 265, protein_g: 9, carbs_g: 49, fat_total_g: 3.2, serving_size: '100g', food_name: 'bread' },
+  'flour': { calories: 364, protein_g: 10, carbs_g: 76, fat_total_g: 1, serving_size: '100g', food_name: 'flour' },
+
+  // Condiments & Seasonings
+  'salt': { calories: 0, protein_g: 0, carbs_g: 0, fat_total_g: 0, sodium_mg: 38758, serving_size: '100g', food_name: 'salt' },
+  'pepper': { calories: 251, protein_g: 10, carbs_g: 64, fat_total_g: 3.3, serving_size: '100g', food_name: 'pepper' },
+  'soy sauce': { calories: 53, protein_g: 8, carbs_g: 5, fat_total_g: 0, sodium_mg: 5493, serving_size: '100g', food_name: 'soy sauce' },
+  'honey': { calories: 304, protein_g: 0.3, carbs_g: 82, fat_total_g: 0, serving_size: '100g', food_name: 'honey' },
+  'sugar': { calories: 387, protein_g: 0, carbs_g: 100, fat_total_g: 0, serving_size: '100g', food_name: 'sugar' },
+}
+
+// Modifiers to remove for loose matching
+const INGREDIENT_MODIFIERS = [
+  'organic', 'fresh', 'frozen', 'canned', 'dried', 'raw', 'cooked',
+  'low sodium', 'low-sodium', 'reduced sodium', 'no salt added',
+  'low fat', 'low-fat', 'reduced fat', 'fat free', 'fat-free',
+  'high oleic', 'extra virgin', 'virgin', 'pure', 'natural',
+  'whole', 'chopped', 'diced', 'sliced', 'minced', 'crushed',
+  'boneless', 'skinless', 'bone-in', 'skin-on',
+  'large', 'medium', 'small', 'mini',
+  'ripe', 'unripe', 'mature',
+  'unsalted', 'salted', 'roasted', 'toasted',
+  'plain', 'flavored', 'sweetened', 'unsweetened',
+]
+
+// Track failed lookups for logging
+const failedLookups: Map<string, number> = new Map()
+
+/**
+ * Find a fallback from NUTRITION_FALLBACKS using loose matching
+ */
+function findFallbackNutrition(searchTerm: string): NutritionData | null {
+  const normalized = searchTerm.toLowerCase().trim()
+
+  // 1. Exact match
+  if (NUTRITION_FALLBACKS[normalized]) {
+    return NUTRITION_FALLBACKS[normalized] as NutritionData
+  }
+
+  // 2. Try after removing modifiers
+  let simplified = normalized
+  for (const modifier of INGREDIENT_MODIFIERS) {
+    simplified = simplified.replace(new RegExp(`\\b${modifier}\\b`, 'gi'), '').trim()
+  }
+  simplified = simplified.replace(/\s+/g, ' ').trim()
+
+  if (simplified !== normalized && NUTRITION_FALLBACKS[simplified]) {
+    console.log(`[NutritionAgent] Fallback match after removing modifiers: "${normalized}" -> "${simplified}"`)
+    return NUTRITION_FALLBACKS[simplified] as NutritionData
+  }
+
+  // 3. Partial match - check if any fallback key is contained in search term or vice versa
+  for (const [key, data] of Object.entries(NUTRITION_FALLBACKS)) {
+    // Check if fallback key is contained in the search term
+    if (normalized.includes(key)) {
+      console.log(`[NutritionAgent] Fallback partial match: "${normalized}" contains "${key}"`)
+      return data as NutritionData
+    }
+    // Check if search term is contained in fallback key
+    if (key.includes(simplified) && simplified.length >= 3) {
+      console.log(`[NutritionAgent] Fallback partial match: "${key}" contains "${simplified}"`)
+      return data as NutritionData
+    }
+  }
+
+  // 4. Try word-level matching for the core ingredient
+  const words = simplified.split(' ')
+  for (let i = words.length - 1; i >= 0; i--) {
+    const candidate = words.slice(i).join(' ')
+    if (NUTRITION_FALLBACKS[candidate]) {
+      console.log(`[NutritionAgent] Fallback word match: "${normalized}" -> "${candidate}"`)
+      return NUTRITION_FALLBACKS[candidate] as NutritionData
+    }
+  }
+
+  return null
+}
+
+/**
+ * Log failed ingredient lookup for analytics
+ */
+function logFailedLookup(ingredient: string, reason: string): void {
+  const count = (failedLookups.get(ingredient) || 0) + 1
+  failedLookups.set(ingredient, count)
+  console.warn(`[NutritionAgent] FAILED LOOKUP: "${ingredient}" - ${reason} (attempt ${count})`)
+}
+
+/**
+ * Check if nutrition data is valid (has non-zero calories for non-zero-calorie foods)
+ */
+function isValidNutrition(data: NutritionData | null, itemName: string): boolean {
+  if (!data) return false
+
+  // Most foods should have calories - only salt/spices have 0
+  const zeroCalorieItems = ['salt', 'water', 'pepper', 'spice', 'herb', 'tea', 'coffee']
+  const isZeroCalorieItem = zeroCalorieItems.some(z => itemName.toLowerCase().includes(z))
+
+  if (data.calories === 0 && !isZeroCalorieItem) {
+    console.warn(`[NutritionAgent] Warning: 0 calories for "${itemName}" - may be incorrect`)
+    return false
+  }
+
+  return true
+}
+
 export async function getScalingMultiplier(userPortion: string, servingSize: string | undefined): Promise<number> {
   if (!servingSize) return 1
 
@@ -161,6 +326,15 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
       if (cached) {
         console.log(`[NutritionAgent] Cache hit for ${itemName} (normalized: ${normalizedSearch})`)
         nutrition = cached.nutrition_data as NutritionData
+
+        // Validate cached data
+        if (!isValidNutrition(nutrition, itemName)) {
+          console.warn(`[NutritionAgent] Cached data for "${itemName}" has 0 calories, trying fallback`)
+          const fallback = findFallbackNutrition(itemName)
+          if (fallback && isValidNutrition(fallback, itemName)) {
+            nutrition = fallback
+          }
+        }
       } else {
         // 2. Lookup from APIs with retry
         console.log(`[NutritionAgent] Cache miss for ${itemName}, calling APIs`)
@@ -170,21 +344,46 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
           if (lookupResult.status === 'success' && lookupResult.nutrition_data) {
             nutrition = lookupResult.nutrition_data as NutritionData
 
+            // Validate API result
+            if (!isValidNutrition(nutrition, itemName)) {
+              console.warn(`[NutritionAgent] API result for "${itemName}" has 0 calories, trying fallback`)
+              const fallback = findFallbackNutrition(itemName)
+              if (fallback && isValidNutrition(fallback, itemName)) {
+                nutrition = fallback
+              }
+            }
+
             // 3. Save to Cache with both original and normalized search term
-            await supabase.from('food_products').insert({
-              product_name: lookupResult.product_name,
-              search_term: normalizedSearch,
-              nutrition_data: nutrition,
-              calories: nutrition.calories,
-              protein_g: nutrition.protein_g,
-              carbs_g: nutrition.carbs_g,
-              fat_total_g: nutrition.fat_total_g,
-              source: lookupResult.source,
-              brand: lookupResult.brand
-            })
+            if (nutrition) {
+              await supabase.from('food_products').insert({
+                product_name: lookupResult.product_name || itemName,
+                search_term: normalizedSearch,
+                nutrition_data: nutrition,
+                calories: nutrition.calories,
+                protein_g: nutrition.protein_g,
+                carbs_g: nutrition.carbs_g,
+                fat_total_g: nutrition.fat_total_g,
+                source: lookupResult.source,
+                brand: lookupResult.brand
+              })
+            }
+          } else {
+            // API returned no data - try fallback
+            console.warn(`[NutritionAgent] API returned no data for "${itemName}"`)
+            nutrition = findFallbackNutrition(itemName)
+
+            if (!nutrition) {
+              logFailedLookup(itemName, 'API returned no data and no fallback found')
+            }
           }
         } catch (e) {
           console.error(`[NutritionAgent] API failure for ${itemName}:`, e)
+          // Try fallback nutrition data
+          nutrition = findFallbackNutrition(itemName)
+
+          if (!nutrition) {
+            logFailedLookup(itemName, `API error: ${e instanceof Error ? e.message : 'Unknown error'}`)
+          }
         }
       }
 
@@ -194,10 +393,74 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
         console.log(`[NutritionAgent] Scaling ${itemName} by ${multiplier} (user: ${userPortion}, official: ${nutrition.serving_size})`)
         const scaledNutrition = scaleNutrition(nutrition, multiplier)
         results.push(scaledNutrition)
+      } else {
+        // 5. Final fallback: LLM Estimation
+        console.log(`[NutritionAgent] No data from API/Cache for "${itemName}", trying LLM estimation`)
+        const estimation = await this.estimateNutritionWithLLM(itemName)
+        if (estimation) {
+          console.log(`[NutritionAgent] LLM Estimation successful for "${itemName}"`)
+          const multiplier = await getScalingMultiplier(userPortion, estimation.serving_size)
+          const scaledNutrition = scaleNutrition(estimation, multiplier)
+          results.push(scaledNutrition)
+        } else {
+          // Log as failed - no nutrition data at all
+          logFailedLookup(itemName, 'No nutrition data available from any source including LLM')
+        }
       }
     }
 
     return results
+  }
+
+  private async estimateNutritionWithLLM(itemName: string): Promise<NutritionData | null> {
+    try {
+      const openai = createOpenAIClient()
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a nutrition expert. Estimate nutrition data for a given food item. 
+            Return ONLY a JSON object matching this interface:
+            {
+              "food_name": string,
+              "calories": number,
+              "protein_g": number,
+              "carbs_g": number,
+              "fat_total_g": number,
+              "serving_size": string (e.g. "100g", "1 cup", "1 scoop")
+            }
+            If you are completely unsure, return null.`
+          },
+          {
+            role: 'user',
+            content: `Estimate nutrition for: "${itemName}"`
+          }
+        ],
+        response_format: { type: 'json_object' }
+      })
+
+      const content = response.choices[0].message.content
+      if (!content) return null
+
+      const parsed = JSON.parse(content)
+      if (!parsed.calories && parsed.calories !== 0) return null
+
+      return {
+        food_name: parsed.food_name || itemName,
+        calories: parsed.calories,
+        protein_g: parsed.protein_g || 0,
+        carbs_g: parsed.carbs_g || 0,
+        fat_total_g: parsed.fat_total_g || 0,
+        serving_size: parsed.serving_size || '100g',
+        fiber_g: parsed.fiber_g || 0,
+        sugar_g: parsed.sugar_g || 0,
+        sodium_mg: parsed.sodium_mg || 0
+      } as NutritionData
+    } catch (e) {
+      console.error('[NutritionAgent] LLM estimation failed:', e)
+      return null
+    }
   }
 }
 

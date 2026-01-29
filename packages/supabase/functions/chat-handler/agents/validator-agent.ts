@@ -40,9 +40,15 @@ export class ValidatorAgent implements Agent<NutritionData[], ValidationResult> 
         result.warnings.push(`${name}: Very high sodium content (${item.sodium_mg}mg).`)
       }
 
-      // 4. Missing critical data
+      // 4. Critical Erroneous Data Checks
       if (item.calories === 0 && (item.protein_g > 0 || item.carbs_g > 0 || item.fat_total_g > 0)) {
-        result.warnings.push(`${name}: Calories are zero but macros are present.`)
+        result.errors.push(`${name}: Erroneous data detected - 0 calories reported with non-zero macros.`)
+      }
+
+      // Check for items that should definitely not be 0 calories (e.g. protien, oil, butter, sugar)
+      const likelyCaloric = /protein|oil|butter|sugar|fat|carb|flour|bread|meat|chicken|beef|egg|milk|cheese/i
+      if (item.calories === 0 && likelyCaloric.test(name)) {
+        result.errors.push(`${name}: Erroneous data detected - "${name}" should not be 0 calories.`)
       }
     })
 
