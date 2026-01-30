@@ -2,7 +2,11 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
 import { handleError } from "../_shared/error-handler.ts"
 import { createSupabaseClient } from "../_shared/supabase-client.ts"
-import { orchestrate } from "./orchestrator_v2.ts"
+// V3: Hybrid Multi-Agent Architecture (IntentAgent → ReasoningAgent → ChatAgent)
+import { orchestrateV3 as orchestrate } from "./orchestrator_v3.ts"
+// Fallback: Import V2 if needed for rollback
+// import { orchestrate } from "./orchestrator_v2.ts"
+
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -10,7 +14,7 @@ serve(async (req) => {
   }
 
   try {
-    console.log('[Chat-Handler] Request received (v1.0.3 Debug)')
+    console.log('[Chat-Handler] Request received (v3.0.0 - Hybrid Multi-Agent)')
     const supabaseClient = createSupabaseClient(req)
 
     const authHeader = req.headers.get('Authorization')
@@ -18,7 +22,11 @@ serve(async (req) => {
 
     if (userError || !user) {
       console.error('[Chat-Handler] Auth Error:', userError)
-      return new Response(JSON.stringify({ error: 'Unauthorized', details: userError?.message }), {
+      return new Response(JSON.stringify({
+        error: 'Unauthorized',
+        message: 'Unauthorized',
+        details: userError?.message
+      }), {
         status: 200, // Return 200 for client visibility
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })

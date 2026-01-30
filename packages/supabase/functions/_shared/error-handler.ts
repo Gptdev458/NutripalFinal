@@ -9,6 +9,7 @@ export const handleError = (error: any) => {
   return new Response(
     JSON.stringify({
       error: message,
+      message: message,
       status: 'error',
       original_status: status
     }),

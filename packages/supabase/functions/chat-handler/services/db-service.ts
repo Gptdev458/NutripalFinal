@@ -163,4 +163,21 @@ export class DbService {
       throw error
     }
   }
+
+  /**
+   * Fetches user profile with safe handling for missing rows
+   */
+  async getUserProfile(userId: string) {
+    const { data, error } = await this.supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle()
+
+    if (error) {
+      console.error('[DbService] Error fetching user profile:', error)
+      throw error
+    }
+    return { data }
+  }
 }

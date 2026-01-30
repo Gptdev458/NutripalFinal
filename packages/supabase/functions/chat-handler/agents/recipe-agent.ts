@@ -92,6 +92,14 @@ export class RecipeAgent implements Agent<RecipeAction, any> {
 
         return this.execute({ type: 'handle_duplicate', flowState, choice }, context)
       }
+
+      // Default fallback for unknown steps
+      console.warn(`[RecipeAgent] Unknown step ${flowState.step} in interactive mode. Defaulting to message.`)
+      return {
+        type: 'error',
+        error: `I'm not sure what step we're on (${flowState.step}). Let's start over?`,
+        flowState
+      }
     }
 
     if (action.type === 'find') {

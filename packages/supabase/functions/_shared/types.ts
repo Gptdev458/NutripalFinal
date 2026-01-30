@@ -1,5 +1,7 @@
 export interface IntentExtraction {
-  intent: 'log_food' | 'log_recipe' | 'save_recipe' | 'query_nutrition' | 'update_goals' | 'suggest_goals' | 'clarify' | 'confirm' | 'decline' | 'modify' | 'off_topic'
+  intent: 'log_food' | 'log_recipe' | 'save_recipe' | 'query_nutrition' | 'update_goals' | 'suggest_goals' | 'clarify' | 'confirm' | 'decline' | 'modify' | 'off_topic' | 'cancel' | 'query_goals' | 'query_progress' | 'dietary_advice'
+  confidence?: number  // 0-1 confidence score from IntentAgent
+  entities?: string[]  // Extracted entities (food names, portions, etc.)
   food_items?: string[]
   portions?: string[]
   recipe_text?: string
@@ -49,6 +51,7 @@ export type ResponseType =
   | 'pending_duplicate_confirm'
   | 'ready_to_save'
   | 'confirmation_recipe_save'
+  | 'confirmation_recipe_log'
   | 'recipe_saved'
   | 'recipe_updated'
   | 'recipe_not_found'
@@ -63,6 +66,8 @@ export type ResponseType =
   // General
   | 'chat_response'
   | 'action_cancelled'
+  | 'action_confirmed'
+  | 'confirmation_failed'
   | 'fatal_error'
   | 'unknown'
 
@@ -70,6 +75,7 @@ export interface FoodLogEntry {
   id?: string
   user_id: string
   food_name: string
+  portion?: string  // User-specified portion
   calories: number
   protein_g: number
   fat_total_g: number
@@ -87,6 +93,7 @@ export interface FoodLogEntry {
   serving_size?: string
   meal_type?: string
   log_time?: string
+  recipe_id?: string  // If logged from a recipe
 }
 
 export interface UserGoal {
@@ -132,9 +139,61 @@ export interface InsightResult {
 
 export interface SessionState {
   user_id: string
-  current_mode: 'idle' | 'flow_log_food' | 'flow_recipe_create' | 'flow_recipe_mod' | 'flow_goal_query' | 'flow_ambiguous'
-  buffer: Record<string, any>
-  missing_fields: string[]
+  current_mode: 'idle' | 'flow_log_food' | 'flow_recipe_create' | 'flow_recipe_mod' | 'flow_goal_update' | 'flow_clarification'
+
+  // Pending Actions (for confirm/decline flows)
+  pending_action?: {
+    type: 'food_log' | 'recipe_save' | 'goal_update'
+    data: any
+    created_at: string
+  }
+
+  // Context Buffer (enhanced for Phase 2 memory system)
+  buffer: SessionBuffer
+
+  // Agent Memory
   last_agent?: string
+  last_intent?: string
+  last_response_type?: string
+
+  // Missing Fields for clarification
+  missing_fields: string[]
   metadata?: Record<string, any>
 }
+
+/**
+ * Enhanced Session Buffer for conversation context preservation.
+ * Added in Phase 2.1 of the devplan.
+ */
+export interface SessionBuffer {
+  // Recipe flow state (existing)
+  flowState?: RecipeFlowState
+
+  // NEW: Recent foods mentioned in conversation (last 5)
+  recentFoods?: string[]
+
+  // NEW: Last topic discussed for context awareness
+  lastTopic?: 'food' | 'recipe' | 'goals' | 'general'
+
+  // NEW: User corrections to remember preferences
+  userCorrections?: Array<{ original: string; corrected: string }>
+
+  // NEW: Active recipe context during recipe flows
+  activeRecipeContext?: { name: string; ingredients: string[] }
+
+  // Generic key-value storage for additional data
+  [key: string]: any
+}
+
+/**
+ * Recipe flow state for multi-step recipe creation
+ */
+export interface RecipeFlowState {
+  step?: 'parsing' | 'batch_confirm' | 'servings_confirm' | 'ready_to_save'
+  recipeName?: string
+  ingredients?: string[]
+  totalNutrition?: NutritionData
+  batchSize?: { amount: number; unit: string }
+  servings?: number
+}
+

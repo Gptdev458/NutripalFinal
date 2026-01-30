@@ -251,6 +251,9 @@ export function extractNutritionDataFromFDC(food: any): NutritionData {
   // Round calories to nearest whole number
   if (data.calories !== null) {
     data.calories = Math.round(data.calories);
+  } else {
+    // If calories are null (missing), log a warning
+    console.warn(`[FDC] Warning: Calories missing for "${data.food_name}" (ID: ${food.fdcId})`);
   }
 
   // Round other values to 1 decimal place

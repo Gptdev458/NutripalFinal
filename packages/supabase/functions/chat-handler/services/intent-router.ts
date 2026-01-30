@@ -453,6 +453,7 @@ export class IntentRouter {
         if (nutritionData.length === 0) {
             response.status = 'error'
             response.response_type = 'nutrition_not_found'
+            response.message = `I couldn't find any nutrition info for "${items.join(', ')}". Could you provide more details?`
             return { error: 'No nutrition data found' }
         }
 

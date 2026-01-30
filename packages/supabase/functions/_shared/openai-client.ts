@@ -5,8 +5,10 @@ export const createOpenAIClient = () => {
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY is not set')
   }
-  
+
   return new OpenAI({
     apiKey,
+    maxRetries: 3,
+    timeout: 15 * 1000, // 15 seconds
   })
 }

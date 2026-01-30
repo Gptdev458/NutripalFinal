@@ -73,6 +73,14 @@ const NUTRITION_FALLBACKS: Record<string, Partial<NutritionData>> = {
   'soy sauce': { calories: 53, protein_g: 8, carbs_g: 5, fat_total_g: 0, sodium_mg: 5493, serving_size: '100g', food_name: 'soy sauce' },
   'honey': { calories: 304, protein_g: 0.3, carbs_g: 82, fat_total_g: 0, serving_size: '100g', food_name: 'honey' },
   'sugar': { calories: 387, protein_g: 0, carbs_g: 100, fat_total_g: 0, serving_size: '100g', food_name: 'sugar' },
+
+  // Fruits (Common Fallbacks)
+  'apple': { calories: 52, protein_g: 0.3, carbs_g: 14, fat_total_g: 0.2, fiber_g: 2.4, sugar_g: 10, serving_size: '100g', food_name: 'apple' },
+  'banana': { calories: 89, protein_g: 1.1, carbs_g: 23, fat_total_g: 0.3, fiber_g: 2.6, sugar_g: 12, serving_size: '100g', food_name: 'banana' },
+  'orange': { calories: 47, protein_g: 0.9, carbs_g: 12, fat_total_g: 0.1, fiber_g: 2.4, sugar_g: 9, serving_size: '100g', food_name: 'orange' },
+  'grapes': { calories: 69, protein_g: 0.7, carbs_g: 18, fat_total_g: 0.2, fiber_g: 0.9, sugar_g: 16, serving_size: '100g', food_name: 'grapes' },
+  'strawberry': { calories: 32, protein_g: 0.7, carbs_g: 7.7, fat_total_g: 0.3, fiber_g: 2, sugar_g: 4.9, serving_size: '100g', food_name: 'strawberry' },
+  'blueberry': { calories: 57, protein_g: 0.7, carbs_g: 14, fat_total_g: 0.3, fiber_g: 2.4, sugar_g: 10, serving_size: '100g', food_name: 'blueberry' },
 }
 
 // Modifiers to remove for loose matching
@@ -280,6 +288,7 @@ Official serving size: "${servingSize}"
 
 Based on the above, calculate the numerical multiplier to convert the nutrition data from the official serving size to the user's portion.
 Return ONLY the numerical multiplier (e.g., 1.5, 0.5, 2). If unsure, return 1.
+Example: "1 apple" (approx 180g) vs "100g" -> 1.8
 `
 
   const response = await openai.chat.completions.create({
@@ -289,7 +298,10 @@ Return ONLY the numerical multiplier (e.g., 1.5, 0.5, 2). If unsure, return 1.
   })
 
   const content = response.choices[0].message.content?.trim()
-  const multiplier = parseFloat(content || '1')
+  // Robustly extract number from content
+  const match = content?.match(/[\d\.]+/)
+  const multiplier = match ? parseFloat(match[0]) : 1
+  console.log(`[NutritionAgent] LLM Scaling result: raw="${content}" parsed=${multiplier}`)
   const finalMultiplier = isNaN(multiplier) ? 1 : multiplier
 
   // 4. Save to cache if successful
@@ -450,15 +462,16 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
           }
         }
       } else {
-        // 2. Lookup from APIs with retry
+        // 2. Lookup from APIs (No retry wrapper to avoid timeouts - internal logic handles fallback)
         console.log(`[NutritionAgent] Cache miss for ${itemName}, calling APIs`)
         try {
-          const lookupResult = await retry(() => lookupNutrition(itemName))
+          const lookupResult = await lookupNutrition(itemName)
 
           if (lookupResult.status === 'success' && lookupResult.nutrition_data) {
             nutrition = lookupResult.nutrition_data as NutritionData
 
             // Validate API result
+            console.log(`[NutritionAgent] API Result for "${itemName}":`, JSON.stringify(nutrition))
             if (!isValidNutrition(nutrition, itemName)) {
               console.warn(`[NutritionAgent] API result for "${itemName}" has 0 calories, trying fallback`)
               const fallback = findFallbackNutrition(itemName)

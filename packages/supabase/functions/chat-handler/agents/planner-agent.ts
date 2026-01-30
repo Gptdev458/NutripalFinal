@@ -1,48 +1,55 @@
 import { createOpenAIClient } from '../../_shared/openai-client.ts'
-import { Agent, AgentContext, SessionState } from '../../_shared/types.ts'
+import { Agent, AgentContext, SessionState, IntentExtraction } from '../../_shared/types.ts'
 
 export interface PlannerInput {
     message: string
+    intent: IntentExtraction
     history: { role: string, content: string }[]
     session: SessionState
 }
 
 export interface PlannerOutput {
-    action: 'continue_flow' | 'switch_flow' | 'clarify' | 'execute_single_turn' | 'unknown'
-    target_agent?: 'recipe' | 'nutrition' | 'insight' | 'chat' | 'validator'
+    action: 'confirm_pending' | 'cancel_pending' | 'continue_flow' | 'switch_flow' | 'execute'
+    target_agent?: 'recipe' | 'nutrition' | 'goals' | 'chat' | 'validator'
     new_mode?: SessionState['current_mode']
     reasoning: string
-    extracted_data?: any
 }
 
 const SYSTEM_PROMPT = `
-You are the Brain of NutriPal. Your job is to MANAGE STATE and ROUTE INTENTS.
-You have a persistent "Session Board" (the user's current context).
+You are the Context Manager for NutriPal. You decide WHAT TO DO given the user's intent and current session state.
 
-Current Session Mode: {{CURRENT_MODE}}
-Current Buffer: {{BUFFER_JSON}}
+USER INTENT: {{INTENT}}
 
-RULES:
-1. **Context Awareness**: 
-   - If the user is in 'flow_recipe_create' and says "add chicken", it means "Add chicken to the recipe", NOT "Log chicken to diary".
-   - If the user says "Wait, what are my goals?", it is a CONTEXT SWITCH. You must 'switch_flow' but KEEP the recipe buffer.
+SESSION STATE:
+- Current Mode: {{CURRENT_MODE}}
+- Pending Action: {{PENDING_ACTION}}
+- Buffer: {{BUFFER_JSON}}
+- Last Response Type: {{LAST_RESPONSE_TYPE}}
 
-2. **Intelligent Routing**:
-   - "I ate an apple" -> agent: nutrition (log_food)
-   - "Create a lasagna recipe" -> agent: recipe (create), new_mode: flow_recipe_create
-   - "Actually, make it 4 servings" -> agent: recipe (update), mode: flow_recipe_create
+YOUR JOB: Given the classified intent AND session context, decide the appropriate action.
 
-3. **Ambiguity Handling**:
-   - IF the input is vague ("soup"), and no active flow -> ask for clarification.
-   - IF the input is "chicken" (generic) -> check if it's an ingredient add (if in recipe flow) or a food log.
+DECISION RULES:
+
+1. **Confirmation Handling**:
+   - If intent is 'confirm' AND pending_action exists → { "action": "confirm_pending" }
+   - If intent is 'decline' AND pending_action exists → { "action": "cancel_pending" }
+
+2. **Flow Management**:
+   - If current_mode is NOT 'idle' AND message relates to current flow → { "action": "continue_flow" }
+   - If current_mode is NOT 'idle' AND message switches topic → { "action": "switch_flow" }
+
+3. **Context Examples**:
+   - User is in 'flow_recipe_create' and says "add chicken" → continue_flow (adding to recipe)
+   - User is in 'flow_recipe_create' and says "what are my goals?" → switch_flow (context switch)
+   - User says "Yes" and pending_action has food_log → confirm_pending
+
+4. **Default**: If no special context → { "action": "execute" }
 
 OUTPUT JSON FORMAT:
 {
-  "action": "continue_flow" | "switch_flow" | "clarify",
-  "target_agent": "recipe" | "nutrition" | "chat",
-  "new_mode": "idle" | "flow_recipe_create" | ...,
-  "reasoning": "User is modifying the current recipe draft.",
-  "extracted_data": { ...any extracted entities... }
+  "action": "confirm_pending" | "cancel_pending" | "continue_flow" | "switch_flow" | "execute",
+  "target_agent": "recipe" | "nutrition" | "goals" | "chat",
+  "reasoning": "Brief explanation of decision"
 }
 `
 
@@ -54,18 +61,21 @@ export class PlannerAgent {
 
         // Inject state into prompt
         const prompt = SYSTEM_PROMPT
+            .replace('{{INTENT}}', JSON.stringify(input.intent))
             .replace('{{CURRENT_MODE}}', input.session.current_mode)
-            .replace('{{BUFFER_JSON}}', JSON.stringify(input.session.buffer))
+            .replace('{{PENDING_ACTION}}', JSON.stringify(input.session.pending_action || 'none'))
+            .replace('{{BUFFER_JSON}}', JSON.stringify(input.session.buffer || {}))
+            .replace('{{LAST_RESPONSE_TYPE}}', input.session.last_response_type || 'none')
 
         const messages = [
             { role: 'system', content: prompt },
-            ...input.history.slice(-3), // Short history for context
+            ...input.history.slice(-3),
             { role: 'user', content: input.message }
         ]
 
         try {
             const completion = await openai.chat.completions.create({
-                model: 'gpt-4o-mini', // Fast, cheap reasoning
+                model: 'gpt-4o-mini',
                 messages: messages as any,
                 temperature: 0,
                 response_format: { type: 'json_object' }
@@ -74,9 +84,9 @@ export class PlannerAgent {
             const content = completion.choices[0].message.content || '{}'
             return JSON.parse(content) as PlannerOutput
         } catch (error) {
-            console.error('[PlannerAgent] Error type:', error)
+            console.error('[PlannerAgent] Error:', error)
             return {
-                action: 'unknown',
+                action: 'execute',
                 target_agent: 'chat',
                 reasoning: 'Fallback due to error'
             }
