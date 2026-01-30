@@ -211,11 +211,11 @@ export const toolDefinitions = [
                     calories: { type: "number", description: "Calories" },
                     protein_g: { type: "number", description: "Protein in grams" },
                     carbs_g: { type: "number", description: "Carbs in grams" },
-                    fat_g: { type: "number", description: "Fat in grams" },
+                    fat_total_g: { type: "number", description: "Fat in grams" },
                     sugar_g: { type: "number", description: "Sugar in grams (optional)" },
                     fiber_g: { type: "number", description: "Fiber in grams (optional)" }
                 },
-                required: ["food_name", "calories", "protein_g", "carbs_g", "fat_g"]
+                required: ["food_name", "calories", "protein_g", "carbs_g", "fat_total_g"]
             }
         }
     },
@@ -233,7 +233,7 @@ export const toolDefinitions = [
                     calories: { type: "number", description: "Calories for this portion" },
                     protein_g: { type: "number" },
                     carbs_g: { type: "number" },
-                    fat_g: { type: "number" }
+                    fat_total_g: { type: "number" }
                 },
                 required: ["recipe_id", "recipe_name", "servings", "calories"]
             }

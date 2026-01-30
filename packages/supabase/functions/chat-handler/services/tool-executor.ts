@@ -125,12 +125,12 @@ export class ToolExecutor {
             return { message: "No profile found. User hasn't set up their profile yet." }
         }
         return {
-            height_cm: data.height,
-            weight_kg: data.weight,
+            height_cm: data.height_cm || data.height,
+            weight_kg: data.weight_kg || data.weight,
             age: data.age,
             gender: data.gender,
             activity_level: data.activity_level,
-            goal: data.goal, // e.g., "lose weight", "maintain", "gain muscle"
+            goal: data.health_goal || data.goal, // e.g., "lose weight", "maintain", "gain muscle"
             dietary_preferences: data.dietary_preferences,
             allergies: data.allergies
         }
@@ -412,11 +412,13 @@ Always provide realistic estimates - never return 0 calories for foods that have
     // =============================================================
 
     private async searchSavedRecipes(query: string) {
+        const words = query.trim().split(/\s+/).filter(w => w.length > 1)
+        const searchPattern = words.length > 0 ? `%${words.join('%')}%` : `%${query.trim()}%`
         const { data, error } = await this.context.supabase
             .from('user_recipes')
-            .select('id, name, nutrition_data, servings, total_batch_calories')
+            .select('id, recipe_name, nutrition_data, servings')
             .eq('user_id', this.context.userId)
-            .ilike('name', `%${query}%`)
+            .ilike('recipe_name', searchPattern)
             .limit(5)
 
         if (error) throw error
@@ -428,9 +430,9 @@ Always provide realistic estimates - never return 0 calories for foods that have
         return {
             recipes: data.map((r: any) => ({
                 id: r.id,
-                name: r.name,
+                name: r.recipe_name,
                 servings: r.servings || 1,
-                calories_per_serving: r.nutrition_data?.calories || Math.round((r.total_batch_calories || 0) / (r.servings || 1))
+                calories_per_serving: r.nutrition_data?.calories ? Math.round(r.nutrition_data.calories / (r.servings || 1)) : 0
             }))
         }
     }
@@ -439,7 +441,7 @@ Always provide realistic estimates - never return 0 calories for foods that have
         const [{ data: recipe }, ingredients] = await Promise.all([
             this.context.supabase
                 .from('user_recipes')
-                .select('*')
+                .select('id, recipe_name, servings, nutrition_data')
                 .eq('id', recipeId)
                 .single(),
             this.db.getRecipeIngredients(recipeId)
@@ -449,16 +451,23 @@ Always provide realistic estimates - never return 0 calories for foods that have
             return { error: true, message: 'Recipe not found' }
         }
 
+        const nutrition = recipe.nutrition_data || {}
+
         return {
             id: recipe.id,
-            name: recipe.name,
+            name: recipe.recipe_name,
             servings: recipe.servings || 1,
-            nutrition_per_serving: recipe.nutrition_data,
+            nutrition_per_serving: {
+                calories: Math.round((nutrition.calories || 0) / (recipe.servings || 1)),
+                protein_g: Math.round(((nutrition.protein_g || 0) / (recipe.servings || 1)) * 10) / 10,
+                carbs_g: Math.round(((nutrition.carbs_g || 0) / (recipe.servings || 1)) * 10) / 10,
+                fat_total_g: Math.round(((nutrition.fat_total_g || 0) / (recipe.servings || 1)) * 10) / 10
+            },
             total_batch: {
-                calories: recipe.total_batch_calories,
-                protein_g: recipe.total_batch_protein,
-                carbs_g: recipe.total_batch_carbs,
-                fat_g: recipe.total_batch_fat
+                calories: nutrition.calories || 0,
+                protein_g: nutrition.protein_g || 0,
+                carbs_g: nutrition.carbs_g || 0,
+                fat_total_g: nutrition.fat_total_g || 0
             },
             ingredients: ingredients
         }
@@ -492,7 +501,7 @@ Always provide realistic estimates - never return 0 calories for foods that have
                 calories: Math.round((details.nutrition_per_serving?.calories || 0) * scale),
                 protein_g: Math.round((details.nutrition_per_serving?.protein_g || 0) * scale * 10) / 10,
                 carbs_g: Math.round((details.nutrition_per_serving?.carbs_g || 0) * scale * 10) / 10,
-                fat_g: Math.round((details.nutrition_per_serving?.fat_g || 0) * scale * 10) / 10
+                fat_total_g: Math.round((details.nutrition_per_serving?.fat_total_g || 0) * scale * 10) / 10
             }
         }
     }
@@ -507,7 +516,7 @@ Always provide realistic estimates - never return 0 calories for foods that have
         calories: number
         protein_g: number
         carbs_g: number
-        fat_g: number
+        fat_total_g: number
         sugar_g?: number
         fiber_g?: number
     }) {
@@ -525,7 +534,7 @@ Always provide realistic estimates - never return 0 calories for foods that have
                 calories: Math.round(data.calories),
                 protein_g: Math.round(data.protein_g * 10) / 10,
                 carbs_g: Math.round(data.carbs_g * 10) / 10,
-                fat_g: Math.round(data.fat_g * 10) / 10,
+                fat_total_g: Math.round(data.fat_total_g * 10) / 10,
                 sugar_g: data.sugar_g ? Math.round(data.sugar_g * 10) / 10 : undefined,
                 fiber_g: data.fiber_g ? Math.round(data.fiber_g * 10) / 10 : undefined
             },
@@ -540,7 +549,7 @@ Always provide realistic estimates - never return 0 calories for foods that have
         calories: number
         protein_g?: number
         carbs_g?: number
-        fat_g?: number
+        fat_total_g?: number
     }) {
         const proposalId = `recipe_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 
@@ -555,7 +564,7 @@ Always provide realistic estimates - never return 0 calories for foods that have
                 calories: Math.round(data.calories),
                 protein_g: data.protein_g ? Math.round(data.protein_g * 10) / 10 : undefined,
                 carbs_g: data.carbs_g ? Math.round(data.carbs_g * 10) / 10 : undefined,
-                fat_g: data.fat_g ? Math.round(data.fat_g * 10) / 10 : undefined
+                fat_total_g: data.fat_total_g ? Math.round(data.fat_total_g * 10) / 10 : undefined
             },
             message: `Ready to log ${data.servings} serving(s) of ${data.recipe_name} (${Math.round(data.calories)} cal). Please confirm.`
         }
@@ -578,19 +587,34 @@ Always provide realistic estimates - never return 0 calories for foods that have
     private async updateUserGoal(nutrient: string, targetValue: number, unit?: string) {
         const proposalId = `goal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 
-        const defaultUnit = nutrient === 'calories' ? 'kcal' :
-            nutrient === 'sodium' ? 'mg' : 'g'
+        // Normalize nutrient name to DB column standard
+        const nutrientMap: Record<string, string> = {
+            'protein': 'protein_g',
+            'carbs': 'carbs_g',
+            'carbohydrates': 'carbs_g',
+            'fat': 'fat_total_g',
+            'fiber': 'fiber_g',
+            'sugar': 'sugar_g',
+            'sodium': 'sodium_mg',
+            'fat_g': 'fat_total_g',
+            'carb': 'carbs_g'
+        }
+
+        const normalizedNutrient = nutrientMap[nutrient.toLowerCase()] || nutrient.toLowerCase()
+
+        const defaultUnit = normalizedNutrient === 'calories' ? 'kcal' :
+            normalizedNutrient === 'sodium_mg' ? 'mg' : 'g'
 
         return {
             proposal_type: 'goal_update',
             proposal_id: proposalId,
             pending: true,
             data: {
-                nutrient,
+                nutrient: normalizedNutrient,
                 target_value: targetValue,
                 unit: unit || defaultUnit
             },
-            message: `Ready to update ${nutrient} goal to ${targetValue}${unit || defaultUnit}. Please confirm.`
+            message: `Ready to update ${normalizedNutrient} goal to ${targetValue}${unit || defaultUnit}. Please confirm.`
         }
     }
 

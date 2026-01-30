@@ -65,7 +65,10 @@ export async function orchestrateV3(
         console.log('[OrchestratorV3] Intent:', JSON.stringify(intentResult))
 
         // Handle confirmation of pending actions (fast path)
-        if (intentResult.intent === 'confirm' && session.pending_action) {
+        const isClarificationResponse = session.last_response_type === 'clarification_needed' ||
+            session.last_response_type?.startsWith('confirmation_');
+
+        if (intentResult.intent === 'confirm' && session.pending_action && !isClarificationResponse) {
             console.log('[OrchestratorV3] Fast path: Confirming pending action')
             return await handlePendingConfirmation(
                 session.pending_action,
@@ -143,11 +146,41 @@ export async function orchestrateV3(
         agentsInvolved.push('chat')
 
         // =========================================================
-        // STEP 4: Finalize Response
+        // STEP 4: Finalize Response & Map to Frontend
         // =========================================================
         response.data = {
             ...reasoningResult.data,
             proposal: reasoningResult.proposal
+        }
+
+        // Map proposal data to specific keys the frontend UI expects for modals
+        if (reasoningResult.proposal) {
+            const p = reasoningResult.proposal;
+            console.log(`[OrchestratorV3] Mapping proposal type ${p.type} for frontend`);
+
+            if (p.type === 'food_log') {
+                // Frontend ChatMessageList expects msg.metadata.nutrition (array)
+                response.data.nutrition = [p.data];
+                response.response_type = 'confirmation_food_log';
+            } else if (p.type === 'recipe_save') {
+                // Frontend ChatMessageList expects msg.metadata.parsed and preview
+                response.data.parsed = {
+                    recipe_name: p.data.recipeName,
+                    servings: p.data.servings,
+                    nutrition_data: p.data.totalNutrition,
+                };
+                response.data.preview = {
+                    ingredients: p.data.ingredients?.map((ing: any) => ({
+                        name: ing.name,
+                        quantity: ing.amount,
+                        unit: ing.unit,
+                        nutrition: { calories: ing.calories }
+                    })) || []
+                };
+                response.response_type = 'confirmation_recipe_save';
+            } else if (p.type === 'goal_update') {
+                response.response_type = 'confirmation_goal_update';
+            }
         }
 
         // Update session context
@@ -247,6 +280,46 @@ async function handlePendingConfirmation(
                     message: `✅ Updated your ${data.nutrient} goal to ${data.target_value}${data.unit}! 🎯`,
                     response_type: 'goal_updated',
                     data: { goal_updated: data }
+                }
+
+            case 'recipe_save':
+                // For recipe save, we insert into user_recipes and then recipe_ingredients
+                const { data: newRecipe, error: recipeError } = await db.supabase
+                    .from('user_recipes')
+                    .insert([{
+                        user_id: userId,
+                        recipe_name: data.recipeName,
+                        servings: data.servings,
+                        total_batch_calories: data.totalNutrition.calories,
+                        total_batch_protein: data.totalNutrition.protein_g,
+                        total_batch_carbs: data.totalNutrition.carbs_g,
+                        total_batch_fat: data.totalNutrition.fat_total_g,
+                        nutrition_data: data.totalNutrition,
+                        per_serving_nutrition: data.perServingNutrition
+                    }])
+                    .select('id')
+                    .single()
+
+                if (recipeError) throw recipeError
+
+                if (data.ingredients && data.ingredients.length > 0) {
+                    await db.supabase
+                        .from('recipe_ingredients')
+                        .insert(data.ingredients.map((ing: any) => ({
+                            recipe_id: newRecipe.id,
+                            ingredient_name: ing.name,
+                            amount: ing.amount,
+                            unit: ing.unit,
+                            calories: ing.calories
+                        })))
+                }
+
+                await sessionService.clearPendingAction(userId)
+                return {
+                    status: 'success',
+                    message: `✅ Saved recipe "${data.recipeName}"! You can now log it any time. 📖`,
+                    response_type: 'recipe_saved',
+                    data: { recipe: newRecipe }
                 }
 
             default:

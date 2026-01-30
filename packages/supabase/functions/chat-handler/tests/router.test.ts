@@ -15,7 +15,7 @@ async function testRouter() {
 
     const context: AgentContext = { userId: 'user1', supabase: {} as any }
     const agentsInvolved: string[] = []
-    const response: AgentResponse = { status: 'success', message: '', response_type: '' }
+    const response: AgentResponse = { status: 'success', message: '', response_type: 'unknown' }
 
     console.log('1. Testing log_food intent...')
     const intentResult: IntentExtraction = {

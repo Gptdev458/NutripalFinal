@@ -37,34 +37,22 @@ export interface ReasoningOutput {
     }
 }
 
-const SYSTEM_PROMPT = `You are NutriPal's ReasoningAgent - the intelligent core that helps users with nutrition tracking and advice.
+const SYSTEM_PROMPT = `You are NutriPal's ReasoningAgent. Your goal is to gather data and help users track nutrition.
 
-**YOUR ROLE:**
-You orchestrate tool calls to gather data, then reason across that data to help the user.
+**CORE RULES:**
+1. **Data First:** Call tools to get facts (lookup_nutrition) before answering.
+2. **Food Logging:** Call lookup_nutrition FIRST. If the user corrects your data (e.g., "too few calories"), call propose_food_log with the CORRECTED values immediately before responding.
+3. **PCC Flow:** Tools like propose_food_log return a 'pending' state. This triggers a confirmation UI.
+4. **Context:** Use get_user_goals and get_today_progress for dietary advice.
+5. **Direct Action:** If the user says "yes" or "ok" to a change you suggested in text during the PREVIOUS turn, use propose_food_log with those agreed values.
 
-**AVAILABLE TOOLS (21 total, 6 categories):**
-
-1. **User Context:** get_user_profile, get_user_goals, get_today_progress, get_weekly_summary, get_food_history
-2. **Nutrition:** lookup_nutrition, estimate_nutrition, validate_nutrition, compare_foods
-3. **Recipes:** search_saved_recipes, get_recipe_details, parse_recipe_text, calculate_recipe_serving
-4. **Logging:** propose_food_log, propose_recipe_log, confirm_pending_log
-5. **Goals:** update_user_goal, calculate_recommended_goals
-6. **Insights:** get_food_recommendations, analyze_eating_patterns, get_progress_report
-
-**KEY BEHAVIORS:**
-
-1. **Food Logging:** Always call lookup_nutrition FIRST, then propose_food_log with the data
-2. **Dietary Advice:** Get user profile + goals + today's progress, then reason about the specific food
-3. **Recipe Logging:** Search recipes first, then propose_recipe_log if found
-4. **Goal Queries:** Use get_user_goals for "what are my goals"
-5. **Progress Queries:** Use get_today_progress and/or get_weekly_summary
-
-**IMPORTANT:**
-- Always gather relevant data before making recommendations
-- For "can I eat X" questions, get goals AND progress AND lookup the food
-- The user's profile contains their goal (lose weight, maintain, gain muscle) - use this!
-- Be data-driven in your reasoning
-- Your final response should be helpful but the ChatAgent will format it nicely`
+**TOOLS OVERVIEW:**
+- Context: profile, goals, today_progress, weekly_summary, history
+- Nutrition: lookup, estimate, validate, compare
+- Recipes: search_saved, details, parse, calculate_serving
+- Logging: propose_food, propose_recipe
+- Goals: update_goal, recommended_goals
+- Insights: food_recs, analyze_patterns, progress_report`
 
 export class ReasoningAgent implements Agent<ReasoningInput, ReasoningOutput> {
     name = 'reasoning'
@@ -112,7 +100,7 @@ export class ReasoningAgent implements Agent<ReasoningInput, ReasoningOutput> {
 
         // Call OpenAI with tools
         let response = await this.openai.chat.completions.create({
-            model: 'gpt-4o',
+            model: 'gpt-4o-mini',
             messages,
             tools: toolDefinitions,
             tool_choice: 'auto',
@@ -164,7 +152,7 @@ export class ReasoningAgent implements Agent<ReasoningInput, ReasoningOutput> {
 
             // Get next response
             response = await this.openai.chat.completions.create({
-                model: 'gpt-4o',
+                model: 'gpt-4o-mini',
                 messages,
                 tools: toolDefinitions,
                 tool_choice: 'auto',

@@ -231,7 +231,9 @@ Important:
             `• **Save new** - Keep both recipes (I'll add a suffix)\n` +
             `• **Log existing** - Don't save, just log the existing recipe`,
           // ADD RESPONSE TYPE FOR BUTTONS
-          response_type: 'pending_duplicate_confirm'
+          response_type: 'pending_duplicate_confirm',
+          proposal_type: 'recipe_save',
+          pending: true
         }
       }
 
@@ -375,7 +377,9 @@ Important:
           data: {
             nutrition: [perServingNutrition],
             validation: { warnings, passed: warnings.length === 0, errors: [] }
-          }
+          },
+          proposal_type: 'recipe_save',
+          pending: true
         }
       }
 
@@ -395,7 +399,9 @@ Important:
         data: {
           nutrition: [perServingNutrition],
           validation: { warnings, passed: warnings.length === 0, errors: [] }
-        }
+        },
+        proposal_type: 'recipe_save',
+        pending: true
       }
     }
 
