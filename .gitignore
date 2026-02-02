@@ -39,11 +39,8 @@ yarn-error.*
 .env
 
 # Dev Docs
+docs/
 CHAT_EVOLUTION_PLAN.md
 IMPROVEMENT_GUIDELINES.md
 dev-todo.md
-Agentic architecture.md
 bugfixing.md
-specs/
-real User chat example.md
-Demo version roadmap.md

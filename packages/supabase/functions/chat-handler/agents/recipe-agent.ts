@@ -18,6 +18,7 @@ export interface ParsedRecipe {
     unit: string
   }[]
   instructions?: string
+  fingerprint?: string
 }
 
 export interface RecipeFlowState {
@@ -104,8 +105,26 @@ export class RecipeAgent implements Agent<RecipeAction, any> {
 
     if (action.type === 'find') {
       const name = action.name.trim()
+      const fingerprint = (action as any).fingerprint
 
-      // 1. Try exact or substring match first (original behavior)
+      // 1. Try fingerprint match first if provided (Fastest)
+      if (fingerprint) {
+        const { data, error } = await supabase
+          .from('user_recipes')
+          .select('*, recipe_ingredients(*)')
+          .eq('user_id', userId)
+          .eq('ingredient_fingerprint', fingerprint)
+          .limit(1)
+          .maybeSingle()
+
+        if (error) {
+          console.error('[RecipeAgent] Error finding recipe by fingerprint:', error)
+        } else if (data) {
+          return { type: 'found', recipe: data }
+        }
+      }
+
+      // 2. Try exact or substring match (Name check)
       const { data, error } = await supabase
         .from('user_recipes')
         .select('*, recipe_ingredients(*)')
@@ -123,17 +142,14 @@ export class RecipeAgent implements Agent<RecipeAction, any> {
         return { type: 'found', recipe: data }
       }
 
-      // 2. If no match, try word-level intersection matching
-      // Split into words, filter out common small words
+      // 3. word-level intersection matching
       const words = name.split(/\s+/).filter(w => w.length > 2)
-
       if (words.length > 0) {
         let query = supabase
           .from('user_recipes')
           .select('*, recipe_ingredients(*)')
           .eq('user_id', userId)
 
-        // Ensure all significant words are present in the recipe name
         for (const word of words) {
           query = query.ilike('recipe_name', `%${word}%`)
         }
@@ -145,7 +161,6 @@ export class RecipeAgent implements Agent<RecipeAction, any> {
         if (fuzzyError) {
           console.error('[RecipeAgent] Error in fuzzy recipe find:', fuzzyError)
         } else if (fuzzyData) {
-          console.log(`[RecipeAgent] Found recipe via fuzzy match: "${fuzzyData.recipe_name}" for search "${name}"`)
           return { type: 'found', recipe: fuzzyData }
         }
       }
@@ -198,19 +213,24 @@ Important:
         }
       }
 
-      // EARLY DUPLICATE CHECK - before any calculations
-      // Use the findRecipe logic which already handles fuzzy/intersection matching
-      const findResult = await this.execute({ type: 'find', name: parsed.recipe_name }, context) as RecipeActionResult
+      // 0. Calculate Fingerprint for fast matching
+      parsed.fingerprint = RecipeAgent.calculateFingerprint(parsed.ingredients)
+
+      // 1. EARLY DUPLICATE CHECK
+      const findResult = await this.execute({
+        type: 'find',
+        name: parsed.recipe_name,
+        fingerprint: parsed.fingerprint
+      } as any, context) as RecipeActionResult
       const existingRecipe = findResult.type === 'found' ? findResult.recipe : null
 
       if (existingRecipe) {
-        console.log(`[RecipeAgent] Found existing recipe: "${existingRecipe.recipe_name}" when parsing "${parsed.recipe_name}"`)
+        const isExactMatch = existingRecipe.ingredient_fingerprint === parsed.fingerprint;
+        console.log(`[RecipeAgent] Found existing recipe: "${existingRecipe.recipe_name}" (Exact match: ${isExactMatch})`)
 
-        // Calculate batch size so we can compare
         const batchResult = calculateBatchSize(parsed.ingredients)
         parsed.total_batch_grams = batchResult.totalGrams
 
-        // Create flow state with existing recipe info
         const flowState: RecipeFlowState = {
           step: 'pending_duplicate_confirm',
           parsed,
@@ -221,16 +241,19 @@ Important:
         }
 
         const existingCalories = existingRecipe.nutrition_data?.calories || 'unknown'
+        const matchMsg = isExactMatch
+          ? `I found an exact match for this recipe: "**${existingRecipe.recipe_name}**".`
+          : `You already have a recipe called "**${existingRecipe.recipe_name}**" with similar ingredients.`;
 
         return {
           type: 'needs_confirmation',
           flowState,
-          prompt: `You already have a recipe called "${existingRecipe.recipe_name}" (${existingCalories} kcal, ${existingRecipe.servings} servings).\n\n` +
+          prompt: `${matchMsg}\n\n` +
             `What would you like to do?\n` +
-            `• **Update** - Replace the existing recipe with this new version\n` +
-            `• **Save new** - Keep both recipes (I'll add a suffix)\n` +
-            `• **Log existing** - Don't save, just log the existing recipe`,
-          // ADD RESPONSE TYPE FOR BUTTONS
+            `• **Log existing** - Use your saved version and log consumption\n` +
+            `• **Update** - Update the saved recipe with these new details\n` +
+            `• **Save new** - Keep both versions\n\n` +
+            `*If logging, how much did you have? (e.g. 1 serving, 2 cups)*`,
           response_type: 'pending_duplicate_confirm',
           proposal_type: 'recipe_save',
           pending: true
@@ -620,7 +643,8 @@ Important:
         serving_size: parsed.serving_size,
         instructions: parsed.instructions,
         nutrition_data: batchNutrition,
-        per_serving_nutrition: scaleNutrition(batchNutrition, 1 / (parsed.servings || 1))
+        per_serving_nutrition: scaleNutrition(batchNutrition, 1 / (parsed.servings || 1)),
+        ingredient_fingerprint: parsed.fingerprint || RecipeAgent.calculateFingerprint(parsed.ingredients)
       })
       .select()
       .single()
@@ -666,7 +690,8 @@ Important:
         serving_size: parsed.serving_size,
         instructions: parsed.instructions,
         nutrition_data: batchNutrition,
-        per_serving_nutrition: scaleNutrition(batchNutrition, 1 / (parsed.servings || 1))
+        per_serving_nutrition: scaleNutrition(batchNutrition, 1 / (parsed.servings || 1)),
+        ingredient_fingerprint: parsed.fingerprint || RecipeAgent.calculateFingerprint(parsed.ingredients)
       })
       .eq('id', recipeId)
       .eq('user_id', userId)  // Safety check
@@ -697,6 +722,16 @@ Important:
 
     console.log(`[RecipeAgent] Updated recipe: ${recipe.recipe_name} (${recipeId})`)
     return recipe
+  }
+
+  /**
+   * Calculate a normalized fingerprint for the recipe based on sorted ingredient names.
+   */
+  static calculateFingerprint(ingredients: { name: string }[]): string {
+    return ingredients
+      .map(ing => ing.name.trim().toLowerCase().replace(/[^a-z0-9 ]/g, ''))
+      .sort()
+      .join(',')
   }
 }
 

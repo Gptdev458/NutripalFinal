@@ -14,6 +14,7 @@
 import { IntentAgent } from './agents/intent-agent.ts'
 import { ChatAgent } from './agents/chat-agent.ts'
 import { ReasoningAgent } from './agents/reasoning-agent.ts'
+import { RecipeAgent } from './agents/recipe-agent.ts'
 import { createAdminClient } from '../_shared/supabase-client.ts'
 import { AgentResponse, AgentContext } from '../_shared/types.ts'
 import { DbService } from './services/db-service.ts'
@@ -148,8 +149,20 @@ export async function orchestrateV3(
         const isClarificationRequest = session.last_response_type === 'clarification_needed';
 
         if ((intentResult.intent as string) === 'confirm' && session.pending_action && (isConfirmationRequest || !isClarificationRequest)) {
-            reportStep('Perfect! Logging that for you...')
-            console.log('[OrchestratorV3] Fast path: Confirming pending action')
+            reportStep('Perfect! Processing that for you...')
+            console.log('[OrchestratorV3] Fast path: Confirming pending action with message:', message)
+
+            // Extract choice and portion if present (e.g. "Confirm log portion:1.5 servings")
+            const choiceMatch = message.match(/Confirm\s+(\w+)/i);
+            const portionMatch = message.match(/portion:([\w\s.]+)/i);
+
+            if (choiceMatch) {
+                session.pending_action.data.choice = choiceMatch[1].toLowerCase();
+            }
+            if (portionMatch) {
+                session.pending_action.data.portion = portionMatch[1].trim();
+            }
+
             const confirmResult = await handlePendingConfirmation(
                 session.pending_action,
                 userId,
@@ -205,11 +218,15 @@ export async function orchestrateV3(
                     data: parseResult
                 });
 
-                // Map to confirmation_recipe_log for frontend if possible, or stay with recipe_save
-                // The frontend RecipeConfirmation component is robust, let's use it.
+                // Check for duplicate/match
+                const isMatch = parseResult.response_type === 'pending_duplicate_confirm';
+
+                // Map to confirmation_recipe_save for frontend 
                 response.response_type = 'confirmation_recipe_save';
                 const fs = parseResult.flowState;
                 response.data = {
+                    isMatch,
+                    existingRecipeName: fs.existingRecipeName,
                     parsed: {
                         recipe_name: fs.parsed.recipe_name,
                         servings: fs.parsed.servings,
@@ -229,7 +246,11 @@ export async function orchestrateV3(
                     {
                         userMessage: message,
                         intent: 'log_recipe',
-                        data: { proposal: parseResult, toolsUsed: ['parse_recipe_text'], reasoning: 'Parsing recipe to log consumption' },
+                        data: {
+                            proposal: parseResult,
+                            toolsUsed: ['parse_recipe_text'],
+                            reasoning: isMatch ? `Found matching recipe: ${fs.existingRecipeName}` : 'Parsing recipe to log consumption'
+                        },
                         history: chatHistory
                     },
                     context
@@ -454,43 +475,57 @@ async function handlePendingConfirmation(
                 }
 
             case 'recipe_save':
-                // For recipe save, we insert into user_recipes and then recipe_ingredients
-                const { data: newRecipe, error: recipeError } = await db.supabase
-                    .from('user_recipes')
-                    .insert([{
-                        user_id: userId,
-                        recipe_name: data.recipeName,
-                        servings: data.servings,
-                        total_batch_calories: data.totalNutrition.calories,
-                        total_batch_protein: data.totalNutrition.protein_g,
-                        total_batch_carbs: data.totalNutrition.carbs_g,
-                        total_batch_fat: data.totalNutrition.fat_total_g,
-                        nutrition_data: data.totalNutrition,
-                        per_serving_nutrition: data.perServingNutrition
-                    }])
-                    .select('id')
-                    .single()
+                // Delegate to RecipeAgent for robust handling
+                const recipeAgent = new RecipeAgent()
+                const action: any = (data as any).choice
+                    ? { type: 'handle_duplicate', flowState: (data as any).flowState, choice: (data as any).choice }
+                    : { type: 'save', parsed: (data as any).flowState?.parsed || data.parsed, mode: 'commit' }
 
-                if (recipeError) throw recipeError
-
-                if (data.ingredients && data.ingredients.length > 0) {
-                    await db.supabase
-                        .from('recipe_ingredients')
-                        .insert(data.ingredients.map((ing: any) => ({
-                            recipe_id: newRecipe.id,
-                            ingredient_name: ing.name,
-                            amount: ing.amount,
-                            unit: ing.unit,
-                            calories: ing.calories
-                        })))
-                }
+                const saveResult = await recipeAgent.execute(action, context)
 
                 await sessionService.clearPendingAction(userId)
+
+                if (saveResult.type === 'updated') {
+                    return {
+                        status: 'success',
+                        message: `✅ Updated recipe "${saveResult.recipe.recipe_name}"! 📖`,
+                        response_type: 'recipe_saved',
+                        data: { recipe: saveResult.recipe }
+                    }
+                } else if (saveResult.type === 'found' && saveResult.skipSave) {
+                    // This is the "Log Existing" choice
+                    // We need to log it now
+                    const recipe = saveResult.recipe
+                    const portion = (data as any).portion || `1 serving`
+
+                    // Simple scaling for logging
+                    const servings = parseFloat(portion) || 1
+                    const scale = servings / (recipe.servings || 1)
+
+                    await db.logFoodItems(userId, [{
+                        food_name: recipe.recipe_name,
+                        portion: portion,
+                        calories: Math.round((recipe.nutrition_data?.calories || 0) * scale),
+                        protein_g: (recipe.nutrition_data?.protein_g || 0) * scale,
+                        carbs_g: (recipe.nutrition_data?.carbs_g || 0) * scale,
+                        fat_total_g: (recipe.nutrition_data?.fat_total_g || 0) * scale,
+                        log_time: new Date().toISOString(),
+                        recipe_id: recipe.id
+                    }])
+
+                    return {
+                        status: 'success',
+                        message: `✅ Logged ${portion} of "${recipe.recipe_name}"! 🍽️`,
+                        response_type: 'recipe_logged',
+                        data: { recipe_logged: recipe }
+                    }
+                }
+
                 return {
                     status: 'success',
-                    message: `✅ Saved recipe "${data.recipeName}"! You can now log it any time. 📖`,
+                    message: `✅ Saved recipe "${saveResult.recipe?.recipe_name || 'your recipe'}"! You can now log it any time. 📖`,
                     response_type: 'recipe_saved',
-                    data: { recipe: newRecipe }
+                    data: { recipe: saveResult.recipe }
                 }
 
             default:

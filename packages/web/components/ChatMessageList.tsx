@@ -149,7 +149,16 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
                     <RecipeConfirmation
                       recipe={msg.metadata.parsed}
                       preview={msg.metadata.preview}
-                      onConfirm={() => onSendMessage ? onSendMessage("Yes, save recipe", false) : null}
+                      isMatch={msg.metadata.isMatch}
+                      existingRecipeName={msg.metadata.existingRecipeName}
+                      onConfirm={(choice, portion) => {
+                        if (onSendMessage) {
+                          const text = choice
+                            ? `Confirm ${choice}${portion ? ` portion:${portion}` : ''}`
+                            : "Yes, save recipe";
+                          onSendMessage(text, false);
+                        }
+                      }}
                       onDecline={() => onSendMessage ? onSendMessage("No, cancel", false) : null}
                     />
                   )}
