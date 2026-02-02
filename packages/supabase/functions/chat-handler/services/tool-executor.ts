@@ -262,14 +262,30 @@ export class ToolExecutor {
     // NUTRITION TOOLS
     // =============================================================
 
-    private async lookupNutrition(food: string, portion?: string) {
-        console.log(`[ToolExecutor] lookupNutrition (AI-First) for: ${food}`)
+    private async lookupNutrition(food: string, portion?: string, calories?: number, macros?: any) {
+        console.log(`[ToolExecutor] lookupNutrition for: ${food}${calories ? ` (${calories} kcal)` : ''}`)
 
-        // 1. Always prioritize AI Estimation for "Demo speed" and intelligence feel
+        // If user provided EVERYTHING, just return it
+        if (calories !== undefined && macros?.protein !== undefined && macros?.carbs !== undefined && macros?.fat !== undefined) {
+            return {
+                food_name: food,
+                portion: portion || 'standard serving',
+                calories,
+                protein_g: macros.protein,
+                carbs_g: macros.carbs,
+                fat_g: macros.fat,
+                source: 'user_provided'
+            }
+        }
+
+        // If user provided calories but missing macros, get an estimate with the calorie hint
+        if (calories !== undefined) {
+            return this.estimateNutrition(food, portion, calories)
+        }
+
+        // Otherwise regular flow
         const estimate = await this.estimateNutrition(food, portion)
 
-        // 2. Background Validation / Cache check (Optional: log it for accuracy tracking)
-        // For the demo, we trust the estimate if it's high confidence
         if (estimate.error) {
             console.warn(`[ToolExecutor] AI Estimate failed, falling back to database`)
             const items = [food]
@@ -295,8 +311,12 @@ export class ToolExecutor {
         return estimate
     }
 
-    private async estimateNutrition(description: string, portion?: string) {
+    private async estimateNutrition(description: string, portion?: string, calories_hint?: number) {
         const openai = createOpenAIClient()
+
+        const hintPrompt = calories_hint
+            ? `\nIMPORTANT: The user has specified that this food has EXACTLY ${calories_hint} kcal. Your goal is to estimate the macros (protein, carbs, fat) that would logically make up these ${calories_hint} calories for this type of food (using 4 kcal/g for protein/carbs and 9 kcal/g for fat). DO NOT deviate from ${calories_hint} kcal unless absolutely necessary for mathematical consistency.`
+            : 'Always provide realistic estimates - never return 0 calories for foods that have calories.';
 
         const response = await openai.chat.completions.create({
             model: 'gpt-4o-mini',
@@ -314,8 +334,7 @@ Return a JSON object with these fields:
 - fiber_g: number (optional)
 - sugar_g: number (optional)
 
-Be reasonable and accurate. Use your knowledge of typical nutrition values.
-Always provide realistic estimates - never return 0 calories for foods that have calories.`
+Be reasonable and accurate. Use your knowledge of typical nutrition values. ${hintPrompt}`
                 },
                 {
                     role: 'user',
@@ -328,6 +347,12 @@ Always provide realistic estimates - never return 0 calories for foods that have
 
         try {
             const estimate = JSON.parse(response.choices[0].message.content || '{}')
+
+            // Force the hint if provided and estimate is significantly off
+            if (calories_hint !== undefined) {
+                estimate.calories = calories_hint;
+            }
+
             return {
                 ...estimate,
                 source: 'estimate',

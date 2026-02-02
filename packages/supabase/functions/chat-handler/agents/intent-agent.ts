@@ -26,6 +26,8 @@ You MUST return a JSON object:
   "intent": "log_food" | "log_recipe" | "save_recipe" | "query_nutrition" | "update_goals" | "suggest_goals" | "clarify" | "confirm" | "decline" | "modify" | "greet" | "off_topic",
   "food_items": string[], 
   "portions": string[], 
+  "calories": number,
+  "macros": { "protein": number, "carbs": number, "fat": number },
   "recipe_text": string,
   "recipe_portion": string,
   "goal_action": "add" | "remove" | "update" | "recommend",
@@ -43,6 +45,9 @@ Examples:
 4. "1 cup" (Asked: "How much rice?") -> {"intent": "clarify", "portions": ["1 cup"]}
 5. "Stop this" -> {"intent": "decline"}
 6. "Change the chicken to salmon" -> {"intent": "modify", "modification_details": "change chicken to salmon", "modified_items": [{"item": "salmon"}]}
+7. "Log a waffle for 110 calories" -> {"intent": "log_food", "food_items": ["waffle"], "calories": 110}
+8. "Had a protein shake: 200 kcal, 30g protein" -> {"intent": "log_food", "food_items": ["protein shake"], "calories": 200, "macros": {"protein": 30}}
+9. "Just 500 kcal" -> {"intent": "log_food", "calories": 500}
 `;
 
 export class IntentAgent implements Agent<{ message: string, history: any[] }, IntentExtraction> {

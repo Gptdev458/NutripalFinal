@@ -4,6 +4,8 @@ export interface IntentExtraction {
   entities?: string[]  // Extracted entities (food names, portions, etc.)
   food_items?: string[]
   portions?: string[]
+  calories?: number
+  macros?: { protein?: number, carbs?: number, fat?: number }
   recipe_text?: string
   recipe_portion?: string
   goal_action?: 'add' | 'remove' | 'update' | 'recommend'

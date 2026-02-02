@@ -75,7 +75,17 @@ export const toolDefinitions = [
                 type: "object",
                 properties: {
                     food: { type: "string", description: "The food to look up (e.g., 'apple', 'chicken breast', 'pizza')" },
-                    portion: { type: "string", description: "Optional portion size (e.g., 'medium', '4oz', '1 cup', '2 slices')" }
+                    portion: { type: "string", description: "Optional portion size (e.g., 'medium', '4oz', '1 cup', '2 slices')" },
+                    calories: { type: "number", description: "Optional user-provided calories to override lookup value" },
+                    macros: {
+                        type: "object",
+                        description: "Optional user-provided macros",
+                        properties: {
+                            protein: { type: "number" },
+                            carbs: { type: "number" },
+                            fat: { type: "number" }
+                        }
+                    }
                 },
                 required: ["food"]
             }
@@ -90,7 +100,8 @@ export const toolDefinitions = [
                 type: "object",
                 properties: {
                     description: { type: "string", description: "Description of the food/meal to estimate (e.g., 'homemade chicken stir fry with rice')" },
-                    portion: { type: "string", description: "Optional portion size" }
+                    portion: { type: "string", description: "Optional portion size" },
+                    calories_hint: { type: "number", description: "User-provided calorie value to help guide the macro estimation" }
                 },
                 required: ["description"]
             }
