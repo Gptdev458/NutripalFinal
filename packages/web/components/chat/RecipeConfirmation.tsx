@@ -68,7 +68,7 @@ export const RecipeConfirmation: React.FC<RecipeConfirmationProps> = ({
                 <div className="space-y-1">
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Ingredients</p>
                     <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
-                        {recipe.ingredients.map((ing, idx) => (
+                        {recipe.ingredients?.map((ing, idx) => (
                             <div key={idx} className="flex justify-between text-xs border-b border-gray-50 pb-1 last:border-0">
                                 <span className="text-gray-700">{ing.name}</span>
                                 <span className="text-gray-500 italic">{ing.amount} {ing.unit}</span>

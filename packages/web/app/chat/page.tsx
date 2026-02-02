@@ -67,6 +67,7 @@ export default function ChatPage() {
   const [loadingDashboardData, setLoadingDashboardData] = useState(true);
   const [refreshingDashboard, setRefreshingDashboard] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [currentStep, setCurrentStep] = useState<string | null>(null);
 
   // Fetch initial messages when activeChatId changes
   useEffect(() => {
@@ -249,29 +250,69 @@ export default function ChatPage() {
     if (!textToSend || sending || authLoading || !activeChatId || !supabase) return;
 
     setSending(true);
+    setCurrentStep('Communicating with NutriPal...');
     const userMessage: ChatMessage = { id: Date.now(), sender: 'user', text: textToSend };
     setChatHistory(prev => [...prev, userMessage]);
     setMessage('');
 
     try {
-      const { data: response, error: funcError } = await supabase.functions.invoke('chat-handler', {
-        body: {
+      // Use standard fetch for streaming
+      const response = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/chat-handler`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
+          'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+        },
+        body: JSON.stringify({
           message: textToSend,
           session_id: activeChatId,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-        }
+        })
       });
 
-      if (funcError) throw funcError;
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      if (!response.body) throw new Error('No response body');
 
-      const botMessage = processBotReply(response);
-      setChatHistory(prev => [...prev, botMessage]);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      if (response.response_type === 'food_logged' ||
-        response.response_type === 'recipe_logged' ||
-        response.response_type === 'goal_updated' ||
-        response.response_type === 'goals_updated') {
-        fetchDashboardData(true);
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+
+        // Process all complete lines except the last one which might be partial
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const json = JSON.parse(line.substring(6));
+
+              if (json.step) {
+                setCurrentStep(json.step);
+              } else if (json.status) {
+                // Final result
+                const botMessage = processBotReply(json);
+                setChatHistory(prev => [...prev, botMessage]);
+                setCurrentStep(null);
+
+                if (json.response_type === 'food_logged' ||
+                  json.response_type === 'recipe_logged' ||
+                  json.response_type === 'goal_updated' ||
+                  json.response_type === 'goals_updated') {
+                  fetchDashboardData(true);
+                }
+              }
+            } catch (e) {
+              console.error('Error parsing stream chunk:', e, line);
+            }
+          }
+        }
       }
     } catch (error: any) {
       console.error('Error sending message:', error);
@@ -280,6 +321,7 @@ export default function ChatPage() {
         sender: 'error',
         text: `Error: ${error.message}`
       }]);
+      setCurrentStep(null);
     } finally {
       setSending(false);
     }
@@ -312,7 +354,16 @@ export default function ChatPage() {
         onFlagMessage={handleFlagMessage}
         onSendMessage={(text) => handleSend(undefined, text)}
       />
-      {sending && <div className="px-4 py-2 flex items-center justify-start"><TypingIndicator /></div>}
+      {sending && (
+        <div className="px-4 py-2 flex flex-col items-start space-y-1">
+          <TypingIndicator />
+          {currentStep && (
+            <span className="text-xs text-gray-500 font-medium animate-pulse ml-1">
+              {currentStep}
+            </span>
+          )}
+        </div>
+      )}
       <div className="p-4 bg-white border-t border-gray-200 flex-shrink-0">
         <form onSubmit={handleSend} className="flex items-center space-x-3">
           <input

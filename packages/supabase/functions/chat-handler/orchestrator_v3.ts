@@ -19,6 +19,7 @@ import { AgentResponse, AgentContext } from '../_shared/types.ts'
 import { DbService } from './services/db-service.ts'
 import { PersistenceService } from './services/persistence-service.ts'
 import { SessionService } from './services/session-service.ts'
+import { ToolExecutor } from './services/tool-executor.ts'
 
 class ThoughtLogger {
     private steps: string[] = []
@@ -41,7 +42,8 @@ export async function orchestrateV3(
     message: string,
     sessionId?: string,
     chatHistory: { role: string, content: string }[] = [],
-    timezone = 'UTC'
+    timezone = 'UTC',
+    onStep?: (step: string) => void
 ): Promise<AgentResponse> {
     const supabase = createAdminClient()
     const db = new DbService(supabase)
@@ -52,7 +54,12 @@ export async function orchestrateV3(
     const session = await sessionService.getSession(userId, sessionId)
     const context: AgentContext = { userId, sessionId, supabase, timezone, session }
     const startTime = Date.now()
+
     const thoughts = new ThoughtLogger()
+    const reportStep = (step: string) => {
+        thoughts.log(step)
+        if (onStep) onStep(step)
+    }
 
     const agentsInvolved: string[] = []
     let response: AgentResponse = {
@@ -64,24 +71,84 @@ export async function orchestrateV3(
 
     try {
         // =========================================================
-        // STEP 1: IntentAgent - Fast Classification
+        // STEP 0: Recipe Fast-Path (Before IntentAgent for speed)
         // =========================================================
-        thoughts.log('Analyzing your request...')
+        const seemsLikeRecipe = message.length > 200 ||
+            (message.includes('\n') && message.split('\n').length > 3) ||
+            (message.toLowerCase().includes('recipe') && message.length > 50);
+
+        if (seemsLikeRecipe) {
+            const consumptionKeywords = ['ate', 'had', 'log', 'consumption', 'portion', 'serving', 'having'];
+            const hasConsumption = consumptionKeywords.some(k => message.toLowerCase().includes(k));
+
+            if (!hasConsumption) {
+                console.log('[OrchestratorV3] Recipe shortcut triggered (Pre-intent)');
+                reportStep('This looks like a recipe! Fast-tracking...');
+                const toolExecutor = new ToolExecutor({ userId, supabase, timezone, sessionId });
+                const parseResult = await toolExecutor.execute('parse_recipe_text', { recipe_text: message });
+
+                if (parseResult.proposal_type === 'recipe_save' && parseResult.flowState) {
+                    await sessionService.savePendingAction(userId, {
+                        type: parseResult.proposal_type as any,
+                        data: parseResult
+                    });
+
+                    // Map to confirmation_recipe_save for frontend
+                    response.response_type = 'confirmation_recipe_save';
+                    const fs = parseResult.flowState;
+                    response.data = {
+                        parsed: {
+                            recipe_name: fs.parsed.recipe_name,
+                            servings: fs.parsed.servings,
+                            nutrition_data: fs.batchNutrition,
+                            ingredients: fs.ingredientsWithNutrition?.map((ing: any) => ({
+                                name: ing.name,
+                                amount: ing.amount || ing.quantity || '',
+                                unit: ing.unit || '',
+                                calories: ing.calories
+                            })) || []
+                        },
+                        preview: message.substring(0, 100) + '...'
+                    };
+
+                    const chatAgent = new ChatAgent();
+                    response.message = await chatAgent.execute(
+                        {
+                            userMessage: message,
+                            intent: 'save_recipe',
+                            data: { proposal: parseResult, toolsUsed: ['parse_recipe_text'] },
+                            history: chatHistory
+                        },
+                        context
+                    );
+
+                    response.steps = thoughts.getSteps();
+                    return response;
+                }
+            }
+        }
+
+        // =========================================================
+        // STEP 1: IntentAgent - Classification (Truncated)
+        // =========================================================
+        reportStep('Analyzing your request...')
         const intentAgent = new IntentAgent()
         const intentResult = await intentAgent.execute(
-            { message, history: chatHistory },
+            {
+                message: message.length > 2000 ? message.substring(0, 2000) + "... [Truncated for speed]" : message,
+                history: chatHistory
+            },
             context
         )
         agentsInvolved.push('intent')
         console.log('[OrchestratorV3] Intent:', JSON.stringify(intentResult))
 
         // Handle confirmation of pending actions (fast path)
-        // FIX: The fast path should handle confirmation_ types
         const isConfirmationRequest = session.last_response_type?.startsWith('confirmation_');
         const isClarificationRequest = session.last_response_type === 'clarification_needed';
 
-        if (intentResult.intent === 'confirm' && session.pending_action && (isConfirmationRequest || !isClarificationRequest)) {
-            thoughts.log('Perfect! Logging that for you...')
+        if ((intentResult.intent as string) === 'confirm' && session.pending_action && (isConfirmationRequest || !isClarificationRequest)) {
+            reportStep('Perfect! Logging that for you...')
             console.log('[OrchestratorV3] Fast path: Confirming pending action')
             const confirmResult = await handlePendingConfirmation(
                 session.pending_action,
@@ -95,7 +162,7 @@ export async function orchestrateV3(
         }
 
         if (intentResult.intent === 'cancel' || intentResult.intent === 'decline') {
-            thoughts.log('No problem, cancelling that.')
+            reportStep('No problem, cancelling that.')
             console.log('[OrchestratorV3] Fast path: Cancelling pending action')
             await sessionService.clearPendingAction(userId)
             return {
@@ -109,7 +176,7 @@ export async function orchestrateV3(
         // Fast Path for greetings
         if (intentResult.intent === 'greet' && chatHistory.length < 2) {
             console.log('[OrchestratorV3] Fast path: Greeting detected')
-            thoughts.log('Saying hello!')
+            reportStep('Saying hello!')
             const chatAgent = new ChatAgent()
             response.message = await chatAgent.execute(
                 { userMessage: message, intent: 'greet', data: { reasoning: 'Greeting user' }, history: chatHistory },
@@ -121,13 +188,66 @@ export async function orchestrateV3(
         }
 
         // =========================================================
+        // RECIPE LOG SHORTCUT (Post-Intent): If intent is log_recipe and message is large
+        // =========================================================
+        if (intentResult.intent === 'log_recipe' && (message.length > 500 || intentResult.recipe_text)) {
+            const recipeText = intentResult.recipe_text || message;
+            console.log('[OrchestratorV3] log_recipe shortcut triggered');
+            reportStep('Parsing that recipe for logging...');
+
+            const toolExecutor = new ToolExecutor({ userId, supabase, timezone, sessionId });
+            const parseResult = await toolExecutor.execute('parse_recipe_text', { recipe_text: recipeText });
+
+            if (parseResult.proposal_type === 'recipe_save' && parseResult.flowState) {
+                // For log_recipe, we still create a recipe_save proposal but with logging context
+                await sessionService.savePendingAction(userId, {
+                    type: parseResult.proposal_type as any,
+                    data: parseResult
+                });
+
+                // Map to confirmation_recipe_log for frontend if possible, or stay with recipe_save
+                // The frontend RecipeConfirmation component is robust, let's use it.
+                response.response_type = 'confirmation_recipe_save';
+                const fs = parseResult.flowState;
+                response.data = {
+                    parsed: {
+                        recipe_name: fs.parsed.recipe_name,
+                        servings: fs.parsed.servings,
+                        nutrition_data: fs.batchNutrition,
+                        ingredients: fs.ingredientsWithNutrition?.map((ing: any) => ({
+                            name: ing.name,
+                            amount: ing.amount || ing.quantity || '',
+                            unit: ing.unit || '',
+                            calories: ing.calories
+                        })) || []
+                    },
+                    preview: message.substring(0, 100) + '...'
+                };
+
+                const chatAgent = new ChatAgent();
+                response.message = await chatAgent.execute(
+                    {
+                        userMessage: message,
+                        intent: 'log_recipe',
+                        data: { proposal: parseResult, toolsUsed: ['parse_recipe_text'], reasoning: 'Parsing recipe to log consumption' },
+                        history: chatHistory
+                    },
+                    context
+                );
+
+                response.steps = thoughts.getSteps();
+                return response;
+            }
+        }
+
+        // =========================================================
         // STEP 2: ReasoningAgent - Tool Orchestration & Reasoning
         // =========================================================
-        thoughts.log('Thinking about how to help...')
+        reportStep('Thinking about how to help...')
         const reasoningAgent = new ReasoningAgent()
         const reasoningResult = await reasoningAgent.execute(
             {
-                message,
+                message: message.length > 2000 ? message.substring(0, 2000) + "... [Truncated for speed]" : message,
                 intent: {
                     type: intentResult.intent,
                     confidence: intentResult.confidence,
@@ -141,11 +261,11 @@ export async function orchestrateV3(
         agentsInvolved.push(...reasoningResult.toolsUsed)
 
         // Log specific tool actions as thoughts
-        if (reasoningResult.toolsUsed.includes('lookup_nutrition')) thoughts.log('Looking up nutrition info...')
-        if (reasoningResult.toolsUsed.includes('estimate_nutrition')) thoughts.log('Estimating nutritional values...')
-        if (reasoningResult.toolsUsed.includes('parse_recipe_text')) thoughts.log('Parsing recipe details...')
-        if (reasoningResult.toolsUsed.includes('get_user_goals')) thoughts.log('Checking your nutrition goals...')
-        if (reasoningResult.toolsUsed.includes('propose_food_log')) thoughts.log('Preparing a log entry for you...')
+        if (reasoningResult.toolsUsed.includes('lookup_nutrition')) reportStep('Looking up nutrition info...')
+        if (reasoningResult.toolsUsed.includes('estimate_nutrition')) reportStep('Estimating nutritional values...')
+        if (reasoningResult.toolsUsed.includes('parse_recipe_text')) reportStep('Parsing recipe details...')
+        if (reasoningResult.toolsUsed.includes('get_user_goals')) reportStep('Checking your nutrition goals...')
+        if (reasoningResult.toolsUsed.includes('propose_food_log')) reportStep('Preparing a log entry for you...')
 
         // Handle proposals (PCC pattern)
         if (reasoningResult.proposal) {
@@ -160,7 +280,7 @@ export async function orchestrateV3(
         // =========================================================
         // STEP 3: ChatAgent - Response Formatting
         // =========================================================
-        thoughts.log('Formatting response...')
+        reportStep('Formatting response...')
         const chatAgent = new ChatAgent()
 
         // Build data for ChatAgent
@@ -211,21 +331,21 @@ export async function orchestrateV3(
                     serving_size: `${p.data.servings} serving(s)`
                 }];
                 response.response_type = 'confirmation_food_log';
-            } else if (p.type === 'recipe_save') {
+            } else if (p.type === 'recipe_save' && p.data?.flowState) {
                 // Frontend ChatMessageList expects msg.metadata.parsed and preview
+                const fs = p.data.flowState;
                 response.data.parsed = {
-                    recipe_name: p.data.recipeName,
-                    servings: p.data.servings,
-                    nutrition_data: p.data.totalNutrition,
-                };
-                response.data.preview = {
-                    ingredients: p.data.ingredients?.map((ing: any) => ({
+                    recipe_name: fs.parsed.recipe_name,
+                    servings: fs.parsed.servings,
+                    nutrition_data: fs.batchNutrition,
+                    ingredients: fs.ingredientsWithNutrition?.map((ing: any) => ({
                         name: ing.name,
-                        quantity: ing.amount,
-                        unit: ing.unit,
-                        nutrition: { calories: ing.calories }
+                        amount: ing.amount || ing.quantity || '',
+                        unit: ing.unit || '',
+                        calories: ing.calories
                     })) || []
                 };
+                response.data.preview = ""; // Optional preview text if needed
                 response.response_type = 'confirmation_recipe_save';
             } else if (p.type === 'goal_update') {
                 response.response_type = 'confirmation_goal_update';

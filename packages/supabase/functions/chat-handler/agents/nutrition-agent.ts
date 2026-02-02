@@ -431,11 +431,8 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
 
   async execute(input: { items: string[], portions: string[] }, context: AgentContext): Promise<NutritionData[]> {
     const { items, portions } = input
-    const results: NutritionData[] = []
     const supabase = context.supabase || createAdminClient()
-
-    for (let i = 0; i < items.length; i++) {
-      const itemName = items[i]
+    const results: NutritionData[] = await Promise.all(items.map(async (itemName, i) => {
       const userPortion = portions[i] || '1 serving'
       const normalizedSearch = normalizeFoodName(itemName)
 
@@ -462,7 +459,7 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
           }
         }
       } else {
-        // 2. Lookup from APIs (No retry wrapper to avoid timeouts - internal logic handles fallback)
+        // 2. Lookup from APIs
         console.log(`[NutritionAgent] Cache miss for ${itemName}, calling APIs`)
         try {
           const lookupResult = await lookupNutrition(itemName)
@@ -471,7 +468,6 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
             nutrition = lookupResult.nutrition_data as NutritionData
 
             // Validate API result
-            console.log(`[NutritionAgent] API Result for "${itemName}":`, JSON.stringify(nutrition))
             if (!isValidNutrition(nutrition, itemName)) {
               console.warn(`[NutritionAgent] API result for "${itemName}" has 0 calories, trying fallback`)
               const fallback = findFallbackNutrition(itemName)
@@ -480,7 +476,7 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
               }
             }
 
-            // 3. Save to Cache with both original and normalized search term
+            // 3. Save to Cache
             if (nutrition) {
               await supabase.from('food_products').insert({
                 product_name: lookupResult.product_name || itemName,
@@ -496,7 +492,6 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
             }
           } else {
             // API returned no data - try fallback
-            console.warn(`[NutritionAgent] API returned no data for "${itemName}"`)
             nutrition = findFallbackNutrition(itemName)
 
             if (!nutrition) {
@@ -505,7 +500,6 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
           }
         } catch (e) {
           console.error(`[NutritionAgent] API failure for ${itemName}:`, e)
-          // Try fallback nutrition data
           nutrition = findFallbackNutrition(itemName)
 
           if (!nutrition) {
@@ -518,25 +512,22 @@ export class NutritionAgent implements Agent<{ items: string[], portions: string
         // 4. Portion scaling
         const multiplier = await getScalingMultiplier(userPortion, nutrition.serving_size, itemName, supabase)
         console.log(`[NutritionAgent] Scaling ${itemName} by ${multiplier} (user: ${userPortion}, official: ${nutrition.serving_size})`)
-        const scaledNutrition = scaleNutrition(nutrition, multiplier)
-        results.push(scaledNutrition)
+        return scaleNutrition(nutrition, multiplier)
       } else {
         // 5. Final fallback: LLM Estimation
         console.log(`[NutritionAgent] No data from API/Cache for "${itemName}", trying LLM estimation`)
         const estimation = await this.estimateNutritionWithLLM(itemName)
         if (estimation) {
-          console.log(`[NutritionAgent] LLM Estimation successful for "${itemName}"`)
           const multiplier = await getScalingMultiplier(userPortion, estimation.serving_size, itemName, supabase)
-          const scaledNutrition = scaleNutrition(estimation, multiplier)
-          results.push(scaledNutrition)
+          return scaleNutrition(estimation, multiplier)
         } else {
-          // Log as failed - no nutrition data at all
           await logFailedLookup(itemName, 'No nutrition data available from any source including LLM', { supabase, userId: context.userId, portion: userPortion })
+          return null as any // Return something that will be filtered out or handled
         }
       }
-    }
+    }))
 
-    return results
+    return results.filter(r => r !== null)
   }
 
   private async estimateNutritionWithLLM(itemName: string): Promise<NutritionData | null> {

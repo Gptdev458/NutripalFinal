@@ -21,14 +21,35 @@ Deno.test("Phase 1: Greeting Fast-Path", async () => {
     assertEquals(result.steps.includes('Saying hello!'), true)
 })
 
-Deno.test("Phase 1: ThoughtLogger handles steps", async () => {
+Deno.test("Phase 1: onStep callback is called", async () => {
     const userId = "test-user-id"
     const message = "How many calories in an apple?"
+    const steps: string[] = []
 
-    const result = await orchestrateV3(userId, message, "test-session", [], "UTC")
+    const onStep = (step: string) => {
+        steps.push(step)
+    }
 
-    assertExists(result.steps)
-    // Should have steps for thinking and looking up/estimating
-    assertEquals(result.steps.length > 1, true)
-    console.log("Steps taken:", result.steps)
+    await orchestrateV3(userId, message, "test-session", [], "UTC", onStep)
+
+    console.log("Captured steps during test:", steps)
+    assertEquals(steps.length > 0, true)
+    assertEquals(steps.includes('Analyzing your request...'), true)
+})
+
+Deno.test("Phase 1: Recipe Shortcut Detection", async () => {
+    const userId = "test-user-id"
+    // Multiple ingredients and lines should trigger shortcut
+    const message = "Lemon-Dill Mediterranean Chicken Soup\n- 2 chicken breasts\n- 1 cup dill\n- 1 lemon\nInstructions: boil it all."
+
+    const steps: string[] = []
+    const onStep = (step: string) => {
+        steps.push(step)
+    }
+
+    const result = await orchestrateV3(userId, message, "test-session", [], "UTC", onStep)
+
+    console.log("Recipe steps:", steps)
+    assertEquals(steps.includes('This looks like a recipe! Parsing details...'), true)
+    assertEquals(result.response_type, 'confirmation_recipe_save')
 })

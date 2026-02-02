@@ -58,32 +58,57 @@ serve(async (req) => {
       }
     }
 
-    const result = await orchestrate(user.id, message, session_id, history, timezone)
+    // Stream thinking steps + final response
+    const encoder = new TextEncoder()
+    const stream = new ReadableStream({
+      async start(controller) {
+        // Callback to send steps to client
+        const onStep = (step: string) => {
+          console.log(`[Chat-Handler] Streaming step: ${step}`)
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ step })}\n\n`))
+        }
 
-    // Save message to history - wrapped in safety
-    try {
-      if (session_id) {
-        await supabaseClient.from('chat_messages').insert([
-          { session_id, user_id: user.id, role: 'user', content: message },
-          {
-            session_id,
-            user_id: user.id,
-            role: 'assistant',
-            content: result.message || 'Success!',
-            metadata: result.data || {},
-            message_type: result.response_type || 'standard'
+        try {
+          const result = await orchestrate(user.id, message, session_id, history, timezone, onStep)
+
+          // Save message to history - wrapped in safety
+          try {
+            if (session_id) {
+              await supabaseClient.from('chat_messages').insert([
+                { session_id, user_id: user.id, role: 'user', content: message },
+                {
+                  session_id,
+                  user_id: user.id,
+                  role: 'assistant',
+                  content: result.message || 'Success!',
+                  metadata: result.data || {},
+                  message_type: result.response_type || 'standard'
+                }
+              ])
+            }
+          } catch (insertError) {
+            console.error('[Chat-Handler] History Insert Error:', insertError)
           }
-        ])
-      } else {
-        console.warn('[Chat-Handler] Skipping history insert: No session_id')
-      }
-    } catch (insertError) {
-      console.error('[Chat-Handler] History Insert Error:', insertError)
-    }
 
-    return new Response(JSON.stringify(result), {
+          // Send final result
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(result)}\n\n`))
+          controller.close()
+        } catch (error: any) {
+          console.error('[Chat-Handler] Stream Error:', error)
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ status: 'error', message: error.message })}\n\n`))
+          controller.close()
+        }
+      }
+    })
+
+    return new Response(stream, {
       status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      headers: {
+        ...corsHeaders,
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      }
     })
 
   } catch (error) {
