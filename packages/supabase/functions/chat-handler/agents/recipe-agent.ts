@@ -237,39 +237,51 @@ Important:
         }
       }
 
-      // Step 2: Calculate batch size and detect if single-serving
+      // Step 2: Calculate everything upfront (Batch, Servings, Nutrition)
       const batchResult = calculateBatchSize(parsed.ingredients)
       const servingResult = detectServingType(parsed.ingredients, parsed.recipe_name, action.text)
 
-      // Add calculated batch size to parsed recipe
       parsed.total_batch_grams = batchResult.totalGrams
+      parsed.servings = servingResult.suggestedServings
 
-      // Step 3: Create flow state and return prompt for batch confirmation
+      // Step 3: Calculate Nutrition immediately for a "One-Shot" experience
+      const { batchNutrition, ingredientsWithNutrition, warnings } = await this.calculateNutrition(
+        parsed,
+        context
+      )
+
+      // Step 4: Build Flow State
       const flowState: RecipeFlowState = {
-        step: 'pending_batch_confirm',
+        step: 'ready_to_save',
         parsed,
         batchSizeGrams: batchResult.totalGrams,
         suggestedServings: servingResult.suggestedServings,
+        batchNutrition,
+        ingredientsWithNutrition
       }
 
-      // If high confidence single serving, skip batch confirmation
-      if (servingResult.isSingleServing && servingResult.confidence === 'high') {
-        flowState.step = 'pending_servings_confirm'
-        flowState.confirmedBatchSize = formatGrams(batchResult.totalGrams)
-        return {
-          type: 'needs_confirmation',
-          flowState,
-          prompt: `I've parsed your recipe "${parsed.recipe_name}" with ${parsed.ingredients.length} ingredients.\n\n` +
-            `This looks like a **single-serving** recipe (about ${formatGrams(batchResult.totalGrams)}). Is that correct?`
-        }
-      }
+      // Calculate per-serving nutrition for response
+      const servings = parsed.servings || 1
+      const perServingNutrition = scaleNutrition(batchNutrition, 1 / servings)
+      perServingNutrition.food_name = parsed.recipe_name
+      const perServingCalories = Math.round(perServingNutrition.calories)
 
-      // Ask for batch size confirmation
-      const batchPrompt = generateBatchConfirmationPrompt(batchResult)
+      const warningText = warnings.length > 0 ? `\n\n⚠️ **Validation Notes:**\n• ${warnings.join('\n• ')}` : ''
+
+      // Step 5: Return final proposal immediately
       return {
         type: 'needs_confirmation',
         flowState,
-        prompt: `I've parsed your recipe "${parsed.recipe_name}" with ${parsed.ingredients.length} ingredients.\n\n${batchPrompt}`
+        prompt: `I've calculated the nutrition for "${parsed.recipe_name}" (${parsed.ingredients.length} ingredients).\n\n` +
+          `It makes about **${servings} serving(s)** (total ${formatGrams(batchResult.totalGrams)}).\n` +
+          `Each serving is **${perServingCalories} kcal**.${warningText}\n\nReady to save?`,
+        response_type: 'ready_to_save',
+        data: {
+          nutrition: [perServingNutrition],
+          validation: { warnings, passed: warnings.length === 0, errors: [] }
+        },
+        proposal_type: 'recipe_save',
+        pending: true
       }
     }
 

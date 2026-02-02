@@ -20,6 +20,15 @@ import { DbService } from './services/db-service.ts'
 import { PersistenceService } from './services/persistence-service.ts'
 import { SessionService } from './services/session-service.ts'
 
+class ThoughtLogger {
+    private steps: string[] = []
+    log(step: string) {
+        console.log(`[ThoughtLogger] ${step}`)
+        this.steps.push(step)
+    }
+    getSteps() { return this.steps }
+}
+
 /**
  * Main Orchestrator V3 for the Chat Handler.
  * Uses hybrid multi-agent architecture:
@@ -43,19 +52,21 @@ export async function orchestrateV3(
     const session = await sessionService.getSession(userId, sessionId)
     const context: AgentContext = { userId, sessionId, supabase, timezone, session }
     const startTime = Date.now()
+    const thoughts = new ThoughtLogger()
 
     const agentsInvolved: string[] = []
     let response: AgentResponse = {
         status: 'success',
         message: '',
-        response_type: 'unknown'
+        response_type: 'unknown',
+        steps: []
     }
 
     try {
         // =========================================================
         // STEP 1: IntentAgent - Fast Classification
         // =========================================================
-        console.log('[OrchestratorV3] Step 1: Intent Classification')
+        thoughts.log('Analyzing your request...')
         const intentAgent = new IntentAgent()
         const intentResult = await intentAgent.execute(
             { message, history: chatHistory },
@@ -65,34 +76,54 @@ export async function orchestrateV3(
         console.log('[OrchestratorV3] Intent:', JSON.stringify(intentResult))
 
         // Handle confirmation of pending actions (fast path)
-        const isClarificationResponse = session.last_response_type === 'clarification_needed' ||
-            session.last_response_type?.startsWith('confirmation_');
+        // FIX: The fast path should handle confirmation_ types
+        const isConfirmationRequest = session.last_response_type?.startsWith('confirmation_');
+        const isClarificationRequest = session.last_response_type === 'clarification_needed';
 
-        if (intentResult.intent === 'confirm' && session.pending_action && !isClarificationResponse) {
+        if (intentResult.intent === 'confirm' && session.pending_action && (isConfirmationRequest || !isClarificationRequest)) {
+            thoughts.log('Perfect! Logging that for you...')
             console.log('[OrchestratorV3] Fast path: Confirming pending action')
-            return await handlePendingConfirmation(
+            const confirmResult = await handlePendingConfirmation(
                 session.pending_action,
                 userId,
                 sessionService,
                 db,
                 context
             )
+            confirmResult.steps = thoughts.getSteps()
+            return confirmResult
         }
 
         if (intentResult.intent === 'cancel' || intentResult.intent === 'decline') {
+            thoughts.log('No problem, cancelling that.')
             console.log('[OrchestratorV3] Fast path: Cancelling pending action')
             await sessionService.clearPendingAction(userId)
             return {
                 status: 'success',
                 message: 'No problem! Let me know what else I can help with.',
-                response_type: 'action_cancelled'
+                response_type: 'action_cancelled',
+                steps: thoughts.getSteps()
             }
+        }
+
+        // Fast Path for greetings
+        if (intentResult.intent === 'greet' && chatHistory.length < 2) {
+            console.log('[OrchestratorV3] Fast path: Greeting detected')
+            thoughts.log('Saying hello!')
+            const chatAgent = new ChatAgent()
+            response.message = await chatAgent.execute(
+                { userMessage: message, intent: 'greet', data: { reasoning: 'Greeting user' }, history: chatHistory },
+                context
+            )
+            response.response_type = 'chat_response'
+            response.steps = thoughts.getSteps()
+            return response
         }
 
         // =========================================================
         // STEP 2: ReasoningAgent - Tool Orchestration & Reasoning
         // =========================================================
-        console.log('[OrchestratorV3] Step 2: ReasoningAgent with Tools')
+        thoughts.log('Thinking about how to help...')
         const reasoningAgent = new ReasoningAgent()
         const reasoningResult = await reasoningAgent.execute(
             {
@@ -108,7 +139,13 @@ export async function orchestrateV3(
         )
         agentsInvolved.push('reasoning')
         agentsInvolved.push(...reasoningResult.toolsUsed)
-        console.log('[OrchestratorV3] Tools used:', reasoningResult.toolsUsed)
+
+        // Log specific tool actions as thoughts
+        if (reasoningResult.toolsUsed.includes('lookup_nutrition')) thoughts.log('Looking up nutrition info...')
+        if (reasoningResult.toolsUsed.includes('estimate_nutrition')) thoughts.log('Estimating nutritional values...')
+        if (reasoningResult.toolsUsed.includes('parse_recipe_text')) thoughts.log('Parsing recipe details...')
+        if (reasoningResult.toolsUsed.includes('get_user_goals')) thoughts.log('Checking your nutrition goals...')
+        if (reasoningResult.toolsUsed.includes('propose_food_log')) thoughts.log('Preparing a log entry for you...')
 
         // Handle proposals (PCC pattern)
         if (reasoningResult.proposal) {
@@ -123,7 +160,7 @@ export async function orchestrateV3(
         // =========================================================
         // STEP 3: ChatAgent - Response Formatting
         // =========================================================
-        console.log('[OrchestratorV3] Step 3: ChatAgent Response Formatting')
+        thoughts.log('Formatting response...')
         const chatAgent = new ChatAgent()
 
         // Build data for ChatAgent
@@ -162,6 +199,18 @@ export async function orchestrateV3(
                 // Frontend ChatMessageList expects msg.metadata.nutrition (array)
                 response.data.nutrition = [p.data];
                 response.response_type = 'confirmation_food_log';
+            } else if (p.type === 'recipe_log') {
+                // Map recipe_log to confirmation_food_log but with recipe context
+                // This allows us to reuse the FoodLogConfirmation component which is perfect for displaying kcal/macros
+                response.data.nutrition = [{
+                    food_name: p.data.recipe_name,
+                    calories: p.data.calories,
+                    protein_g: p.data.protein_g,
+                    carbs_g: p.data.carbs_g,
+                    fat_total_g: p.data.fat_total_g,
+                    serving_size: `${p.data.servings} serving(s)`
+                }];
+                response.response_type = 'confirmation_food_log';
             } else if (p.type === 'recipe_save') {
                 // Frontend ChatMessageList expects msg.metadata.parsed and preview
                 response.data.parsed = {
@@ -190,6 +239,8 @@ export async function orchestrateV3(
             responseType: response.response_type
         })
 
+        response.steps = thoughts.getSteps()
+        console.log('[OrchestratorV3] Response ready:', response.message?.slice(0, 100))
         // =========================================================
         // STEP 5: Context Preservation (Phase 2.2)
         // Extract entities and update buffer for future context

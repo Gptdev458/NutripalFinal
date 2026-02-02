@@ -138,6 +138,8 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
                   {msg.message_type === 'confirmation_food_log' && msg.metadata.nutrition && (
                     <FoodLogConfirmation
                       nutrition={msg.metadata.nutrition}
+                      title={msg.metadata.nutrition[0]?.serving_size?.includes('serving') ? 'Confirm Recipe Log' : 'Verify Log'}
+                      confirmLabel={msg.metadata.nutrition[0]?.serving_size?.includes('serving') ? 'Log Recipe' : 'Log Food'}
                       onConfirm={() => onSendMessage ? onSendMessage("Yes, looks good", false) : null}
                       onDecline={() => onSendMessage ? onSendMessage("No, cancel", false) : null}
                     />

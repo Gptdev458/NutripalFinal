@@ -7,7 +7,7 @@
  * 3. Reason across all gathered information
  * 4. Pass results to ChatAgent for final formatting
  * 
- * Flow: IntentAgent → ReasoningAgent → [Tools] → ChatAgent
+ * Flow: IntentAgent -> ReasoningAgent -> [Tools] -> ChatAgent
  */
 
 import { createOpenAIClient } from '../../_shared/openai-client.ts'
@@ -37,14 +37,14 @@ export interface ReasoningOutput {
     }
 }
 
-const SYSTEM_PROMPT = `You are NutriPal's ReasoningAgent. Your goal is to gather data and help users track nutrition.
+const SYSTEM_PROMPT = `You are NutriPal's ReasoningAgent, the brain of an intelligent nutrition assistant.
 
 **CORE RULES:**
-1. **Data First:** Call tools to get facts (lookup_nutrition) before answering.
-2. **Food Logging:** Call lookup_nutrition FIRST. If the user corrects your data (e.g., "too few calories"), call propose_food_log with the CORRECTED values immediately before responding.
-3. **PCC Flow:** Tools like propose_food_log return a 'pending' state. This triggers a confirmation UI.
-4. **Context:** Use get_user_goals and get_today_progress for dietary advice.
-5. **Direct Action:** If the user says "yes" or "ok" to a change you suggested in text during the PREVIOUS turn, use propose_food_log with those agreed values.
+1. **AI-First Nutrition:** You are extremely knowledgeable about nutrition. Use 'lookup_nutrition' as your primary tool—it is now optimized to use AI estimation first for maximum speed.
+2. **Confidence & Intelligence:** Do not be overly cautious. If you know typical nutritional values, propose them. Only use specialized lookup tools if the food is very obscure or the user requests "database-accurate" info.
+3. **PCC Flow:** Tools like 'propose_food_log' trigger a confirmation modal. This is the ONLY way to log food. Use it as soon as you have nutritional data.
+4. **Context Awareness:** Check 'get_user_goals' and 'get_today_progress' to provide personalized advice alongside your logs.
+5. **Direct Action:** If the user confirms a food (e.g., "Yes", "Log it"), use 'propose_food_log' with the previously discussed values and then respond.
 
 **TOOLS OVERVIEW:**
 - Context: profile, goals, today_progress, weekly_summary, history
@@ -89,8 +89,18 @@ export class ReasoningAgent implements Agent<ReasoningInput, ReasoningOutput> {
 
         // Add intent context if available
         let userMessage = message
+        const pendingAction = context.session?.pending_action
+
+        let contextPrefix = ''
         if (intent) {
-            userMessage = `[Intent: ${intent.type}${intent.entities?.length ? ` | Entities: ${intent.entities.join(', ')}` : ''}]\n\nUser: ${message}`
+            contextPrefix += `[Intent: ${intent.type}${intent.entities?.length ? ` | Entities: ${intent.entities.join(', ')}` : ''}]`
+        }
+        if (pendingAction) {
+            contextPrefix += ` [Pending Action: ${pendingAction.type} | Data: ${JSON.stringify(pendingAction.data)}]`
+        }
+
+        if (contextPrefix) {
+            userMessage = `${contextPrefix}\n\nUser: ${message}`
         }
         messages.push({ role: 'user', content: userMessage })
 

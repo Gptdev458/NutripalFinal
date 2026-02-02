@@ -1,114 +1,99 @@
 import React from 'react';
 
-interface RecipeLogConfirmationProps {
-    recipe: {
-        recipe_name: string;
-        servings: number;
-        nutrition_data?: {
-            calories?: number;
-            protein_g?: number;
-            carbs_g?: number;
-            fat_total_g?: number;
-        };
-        instructions?: string;
+interface Ingredient {
+    name: string;
+    amount: string;
+    unit: string;
+    calories?: number;
+}
+
+interface RecipeData {
+    recipe_name: string;
+    servings: number;
+    ingredients: Ingredient[];
+    nutrition_data?: {
+        calories: number;
+        protein_g: number;
+        carbs_g: number;
+        fat_total_g: number;
     };
-    preview?: {
-        ingredients: {
-            name: string;
-            quantity: number;
-            unit: string;
-            nutrition?: {
-                calories?: number;
-            };
-        }[];
-    }
+}
+
+interface RecipeConfirmationProps {
+    recipe: RecipeData;
+    preview?: string;
     onConfirm: () => void;
     onDecline: () => void;
 }
 
-export const RecipeConfirmation: React.FC<RecipeLogConfirmationProps> = ({
+export const RecipeConfirmation: React.FC<RecipeConfirmationProps> = ({
     recipe,
     preview,
     onConfirm,
     onDecline
 }) => {
-    const batchCalories = recipe.nutrition_data?.calories || 0;
-    const servings = recipe.servings || 1;
-    const perServingCalories = Math.round(batchCalories / servings);
-
-    // Calculate per-serving macros
-    const perServingProtein = Math.round((recipe.nutrition_data?.protein_g || 0) / servings);
-    const perServingCarbs = Math.round((recipe.nutrition_data?.carbs_g || 0) / servings);
-    const perServingFat = Math.round((recipe.nutrition_data?.fat_total_g || 0) / servings);
+    const nutrition = recipe.nutrition_data;
 
     return (
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden mt-2">
             <div className="bg-emerald-50 px-4 py-2 border-b border-emerald-100 flex justify-between items-center">
                 <span className="font-semibold text-emerald-900 text-sm">Save Recipe</span>
-                <span className="text-xs text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">New</span>
+                <span className="text-xs text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">New Recipe</span>
             </div>
 
             <div className="p-4 space-y-4">
                 {/* Header */}
                 <div>
-                    <h3 className="font-bold text-gray-900">{recipe.recipe_name}</h3>
-                    <div className="flex gap-2 text-xs text-gray-500 mt-1">
-                        <span>{servings} Serving{servings !== 1 ? 's' : ''}</span>
-                        <span>•</span>
-                        <span>~{batchCalories} kcal total</span>
-                    </div>
+                    <h3 className="text-lg font-bold text-gray-900">{recipe.recipe_name}</h3>
+                    <p className="text-xs text-gray-500">{recipe.servings} Servings total</p>
                 </div>
 
-                {/* Per-Serving Nutrition Highlight */}
-                <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-100">
-                    <div className="text-xs text-emerald-700 mb-2 font-medium">Per Serving</div>
-                    <div className="grid grid-cols-4 gap-2 text-center">
-                        <div>
-                            <div className="text-lg font-bold text-emerald-900">{perServingCalories}</div>
-                            <div className="text-xs text-emerald-600">kcal</div>
+                {/* Nutrition Summary (Per Batch or Per Serving?) -> Backend usually returns total batch for save_recipe */}
+                {nutrition && (
+                    <div className="bg-gray-50 rounded p-3">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Estimated Nutrition (Total Batch)</p>
+                        <div className="flex justify-between items-baseline">
+                            <div className="text-xl font-bold text-gray-900">{Math.round(nutrition.calories)} <span className="text-xs font-normal text-gray-500">kcal</span></div>
+                            <div className="flex gap-2 text-[10px] text-gray-600">
+                                <span><span className="font-medium text-gray-900">{Math.round(nutrition.protein_g)}g</span> P</span>
+                                <span><span className="font-medium text-gray-900">{Math.round(nutrition.carbs_g)}g</span> C</span>
+                                <span><span className="font-medium text-gray-900">{Math.round(nutrition.fat_total_g)}g</span> F</span>
+                            </div>
                         </div>
-                        <div>
-                            <div className="text-lg font-bold text-gray-700">{perServingProtein}g</div>
-                            <div className="text-xs text-gray-500">protein</div>
-                        </div>
-                        <div>
-                            <div className="text-lg font-bold text-gray-700">{perServingCarbs}g</div>
-                            <div className="text-xs text-gray-500">carbs</div>
-                        </div>
-                        <div>
-                            <div className="text-lg font-bold text-gray-700">{perServingFat}g</div>
-                            <div className="text-xs text-gray-500">fat</div>
-                        </div>
+                        <p className="text-[10px] text-gray-400 mt-1 italic">~{Math.round(nutrition.calories / recipe.servings)} kcal per serving</p>
                     </div>
-                </div>
+                )}
 
-                {/* Ingredients Preview */}
-                {preview && preview.ingredients && preview.ingredients.length > 0 && (
-                    <div className="bg-gray-50 rounded p-3 text-xs space-y-1 max-h-32 overflow-y-auto">
-                        {preview.ingredients.map((ing, i) => (
-                            <div key={i} className="flex justify-between">
-                                <span className="text-gray-700">
-                                    <span className="font-medium text-gray-900">{ing.quantity} {ing.unit}</span> {ing.name}
-                                </span>
-                                {ing.nutrition?.calories != null && (
-                                    <span className="text-gray-400">{Math.round(ing.nutrition.calories)} kcal</span>
-                                )}
+                {/* Ingredient Preview */}
+                <div className="space-y-1">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Ingredients</p>
+                    <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
+                        {recipe.ingredients.map((ing, idx) => (
+                            <div key={idx} className="flex justify-between text-xs border-b border-gray-50 pb-1 last:border-0">
+                                <span className="text-gray-700">{ing.name}</span>
+                                <span className="text-gray-500 italic">{ing.amount} {ing.unit}</span>
                             </div>
                         ))}
                     </div>
+                </div>
+
+                {preview && (
+                    <p className="text-xs text-gray-600 italic border-l-2 border-emerald-200 pl-2 py-1 bg-emerald-50/30">
+                        {preview}
+                    </p>
                 )}
 
                 {/* Actions */}
                 <div className="flex gap-2 pt-2">
                     <button
                         onClick={onDecline}
-                        className="flex-1 py-2 px-3 bg-white border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-gray-200 transition-colors"
+                        className="flex-1 py-2 px-3 bg-white border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors"
                     >
                         Cancel
                     </button>
                     <button
                         onClick={onConfirm}
-                        className="flex-1 py-2 px-3 bg-emerald-600 border border-transparent text-white rounded-md text-sm font-medium hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-emerald-500 shadow-sm transition-colors"
+                        className="flex-1 py-2 px-3 bg-emerald-600 border border-transparent text-white rounded-md text-sm font-medium hover:bg-emerald-700 shadow-sm transition-colors"
                     >
                         Save Recipe
                     </button>

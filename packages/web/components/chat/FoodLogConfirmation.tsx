@@ -14,13 +14,17 @@ interface FoodLogConfirmationProps {
     onConfirm: () => void;
     onDecline: () => void;
     onEdit?: (items: FoodItem[]) => void; // Placeholder for future explicit edit UI
+    title?: string;
+    confirmLabel?: string;
 }
 
 export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
     nutrition,
     onConfirm,
     onDecline,
-    onEdit
+    onEdit,
+    title = 'Verify Log',
+    confirmLabel = 'Log Food'
 }) => {
     const [isEditing, setIsEditing] = useState(false);
     const totalCalories = nutrition.reduce((sum, item) => sum + item.calories, 0);
@@ -31,7 +35,7 @@ export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
     return (
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden mt-2">
             <div className="bg-blue-50 px-4 py-2 border-b border-blue-100 flex justify-between items-center">
-                <span className="font-semibold text-blue-900 text-sm">Verify Log</span>
+                <span className="font-semibold text-blue-900 text-sm">{title}</span>
                 <span className="text-xs text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">Propose</span>
             </div>
 
@@ -73,7 +77,7 @@ export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
                         onClick={onConfirm}
                         className="flex-1 py-2 px-3 bg-blue-600 border border-transparent text-white rounded-md text-sm font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500 shadow-sm transition-colors"
                     >
-                        Log Food
+                        {confirmLabel}
                     </button>
                 </div>
 

@@ -1,5 +1,5 @@
 export interface IntentExtraction {
-  intent: 'log_food' | 'log_recipe' | 'save_recipe' | 'query_nutrition' | 'update_goals' | 'suggest_goals' | 'clarify' | 'confirm' | 'decline' | 'modify' | 'off_topic' | 'cancel' | 'query_goals' | 'query_progress' | 'dietary_advice'
+  intent: 'log_food' | 'log_recipe' | 'save_recipe' | 'query_nutrition' | 'update_goals' | 'suggest_goals' | 'clarify' | 'confirm' | 'decline' | 'modify' | 'off_topic' | 'cancel' | 'query_goals' | 'query_progress' | 'dietary_advice' | 'greet'
   confidence?: number  // 0-1 confidence score from IntentAgent
   entities?: string[]  // Extracted entities (food names, portions, etc.)
   food_items?: string[]
@@ -33,6 +33,7 @@ export interface AgentResponse {
   message: string
   response_type: ResponseType
   data?: any
+  steps?: string[] // "Thinking" steps for UX
 }
 
 /**

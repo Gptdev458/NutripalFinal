@@ -13,6 +13,7 @@ You are a nutrition assistant's intent classifier. Your job is to analyze user m
 - modify: User is CHANGING or CORRECTING information that has already been proposed or identified (e.g., "Actually make that 2 eggs", "No, it was 300g", "I meant the small one").
 - decline: User is rejecting a proposed action or wanting to stop the current flow entirely.
 - confirm: User is agreeing to a proposed action (e.g., "Yes", "Log it", "Save it").
+- greet: User is just saying hello or starting a conversation (e.g., "Hi", "Hello", "Hey NutriPal").
 - off_topic: User is talking about something unrelated to nutrition, food logging, or health goals.
 
 INTENT PRIORITIZATION & FLOW BREAKING:
@@ -22,7 +23,7 @@ INTENT PRIORITIZATION & FLOW BREAKING:
 
 You MUST return a JSON object:
 {
-  "intent": "log_food" | "log_recipe" | "save_recipe" | "query_nutrition" | "update_goals" | "suggest_goals" | "clarify" | "confirm" | "decline" | "modify" | "off_topic",
+  "intent": "log_food" | "log_recipe" | "save_recipe" | "query_nutrition" | "update_goals" | "suggest_goals" | "clarify" | "confirm" | "decline" | "modify" | "greet" | "off_topic",
   "food_items": string[], 
   "portions": string[], 
   "recipe_text": string,
@@ -58,7 +59,7 @@ export class IntentAgent implements Agent<{ message: string, history: any[] }, I
     ]
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4o-mini",
       messages: messages as any,
       response_format: { type: "json_object" }
     })

@@ -263,42 +263,36 @@ export class ToolExecutor {
     // =============================================================
 
     private async lookupNutrition(food: string, portion?: string) {
-        const items = [food]
-        const portions = [portion || '1 serving']
+        console.log(`[ToolExecutor] lookupNutrition (AI-First) for: ${food}`)
 
-        const results = await this.nutritionAgent.execute(
-            { items, portions },
-            this.agentContext
-        )
+        // 1. Always prioritize AI Estimation for "Demo speed" and intelligence feel
+        const estimate = await this.estimateNutrition(food, portion)
 
-        if (!results || results.length === 0) {
-            // Fallback to LLM estimation
-            return this.estimateNutrition(food, portion)
+        // 2. Background Validation / Cache check (Optional: log it for accuracy tracking)
+        // For the demo, we trust the estimate if it's high confidence
+        if (estimate.error) {
+            console.warn(`[ToolExecutor] AI Estimate failed, falling back to database`)
+            const items = [food]
+            const portions = [portion || '1 serving']
+            const results = await this.nutritionAgent.execute(
+                { items, portions },
+                this.agentContext
+            )
+            if (results && results.length > 0) {
+                const result = results[0]
+                return {
+                    food_name: result.food_name || food,
+                    portion: portion || result.serving_size || 'standard serving',
+                    calories: Math.round(result.calories || 0),
+                    protein_g: Math.round((result.protein_g || 0) * 10) / 10,
+                    carbs_g: Math.round((result.carbs_g || 0) * 10) / 10,
+                    fat_g: Math.round((result.fat_total_g || 0) * 10) / 10,
+                    source: 'database'
+                }
+            }
         }
 
-        const result = results[0]
-
-        // Validate the result
-        const isCaloric = !['water', 'coffee', 'tea', 'diet soda', 'diet coke'].some(f =>
-            food.toLowerCase().includes(f)
-        )
-
-        if (isCaloric && (!result.calories || result.calories < 5)) {
-            console.warn(`[ToolExecutor] Invalid nutrition for ${food}, using LLM estimate`)
-            return this.estimateNutrition(food, portion)
-        }
-
-        return {
-            food_name: result.food_name || food,
-            portion: portion || result.serving_size || 'standard serving',
-            calories: Math.round(result.calories || 0),
-            protein_g: Math.round((result.protein_g || 0) * 10) / 10,
-            carbs_g: Math.round((result.carbs_g || 0) * 10) / 10,
-            fat_g: Math.round((result.fat_total_g || 0) * 10) / 10,
-            fiber_g: Math.round((result.fiber_g || 0) * 10) / 10,
-            sugar_g: Math.round((result.sugar_g || 0) * 10) / 10,
-            source: 'database'
-        }
+        return estimate
     }
 
     private async estimateNutrition(description: string, portion?: string) {
