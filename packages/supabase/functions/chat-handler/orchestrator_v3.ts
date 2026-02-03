@@ -95,7 +95,10 @@ export async function orchestrateV3(
             lowerMessage === 'log it' ||
             lowerMessage === 'save it' ||
             lowerMessage === 'yes' ||
-            lowerMessage === 'confirm';
+            lowerMessage === 'confirm' ||
+            lowerMessage === 'yes, save' ||
+            lowerMessage === 'yes, log' ||
+            lowerMessage === 'confirm save';
 
         if (isButtonConfirm && session.pending_action) {
             console.log('[OrchestratorV3] Static fast-path: button confirm');
@@ -104,6 +107,7 @@ export async function orchestrateV3(
             // Extract choice and portion if present (e.g. "Confirm log portion:1.5 servings")
             const portionMatch = message.match(/portion:([\w\s.]+)/i);
             const choiceMatch = message.match(/Confirm\s+(\w+)/i);
+            const nameMatch = message.match(/name:([\w\s.!@#$%^&*()-]+)/i);
 
             if (choiceMatch) {
                 session.pending_action.data.choice = choiceMatch[1].toLowerCase();
@@ -111,13 +115,18 @@ export async function orchestrateV3(
             if (portionMatch) {
                 session.pending_action.data.portion = portionMatch[1].trim();
             }
+            if (nameMatch) {
+                session.pending_action.data.customName = nameMatch[1].trim();
+                console.log(`[OrchestratorV3] Extracted custom name: "${session.pending_action.data.customName}"`);
+            }
 
             const confirmResult = await handlePendingConfirmation(
                 session.pending_action,
                 userId,
                 sessionService,
                 db,
-                context
+                context,
+                message
             );
             confirmResult.steps = thoughts.getSteps();
             return confirmResult;
@@ -135,8 +144,8 @@ export async function orchestrateV3(
             const hasConsumption = consumptionKeywords.some(k => lowerMessage.includes(k));
 
             if (!hasConsumption) {
-                console.log('[OrchestratorV3] Recipe heuristic triggered');
-                reportStep('This looks like a recipe! Analyzing...');
+                console.log('[OrchestratorV3] Recipe heuristic triggered (Direct Route)');
+                reportStep('Analyzing recipe...');
                 const toolExecutor = new ToolExecutor({ userId, supabase, timezone, sessionId });
                 const parseResult = await toolExecutor.execute('parse_recipe_text', { recipe_text: message });
 
@@ -149,6 +158,8 @@ export async function orchestrateV3(
                     response.response_type = 'confirmation_recipe_save';
                     const fs = parseResult.flowState;
                     response.data = {
+                        isMatch: parseResult.response_type === 'pending_duplicate_confirm',
+                        existingRecipeName: fs.existingRecipeName,
                         parsed: {
                             recipe_name: fs.parsed.recipe_name,
                             servings: fs.parsed.servings,
@@ -157,7 +168,7 @@ export async function orchestrateV3(
                                 name: ing.name,
                                 amount: ing.amount || ing.quantity || '',
                                 unit: ing.unit || '',
-                                calories: ing.calories
+                                calories: ing.nutrition?.calories || 0
                             })) || []
                         },
                         preview: message.substring(0, 100) + '...'
@@ -215,10 +226,11 @@ export async function orchestrateV3(
 
             case 'confirm':
                 if (session.pending_action) {
-                    console.log('[OrchestratorV3] Branch: confirm');
+                    console.log('[OrchestratorV3] Branch: confirm (Direct Route)');
                     reportStep('Confirmed! Processing...');
-                    const confirmResult = await handlePendingConfirmation(session.pending_action, userId, sessionService, db, context);
-                    return { ...confirmResult, steps: thoughts.getSteps() };
+                    const confirmResult = await handlePendingConfirmation(session.pending_action, userId, sessionService, db, context, message);
+                    confirmResult.steps = thoughts.getSteps();
+                    return confirmResult;
                 }
                 break; // Fallback to reasoning if no pending action
 
@@ -240,10 +252,61 @@ export async function orchestrateV3(
                 // But for now, we'll let reasoning handle it to maintain the tool orchestration
                 // UNLESS it's a very simple one-item log.
                 if (intentResult.food_items?.length === 1 && !message.includes(' recipes') && !message.includes(' yesterday')) {
-                    console.log('[OrchestratorV3] Branch: simple_log_food');
-                    reportStep('Looking up nutrition...');
                     const food = intentResult.food_items[0];
                     const portion = intentResult.portions?.[0] || '1 serving';
+
+                    // PRIORITIZE SAVED RECIPES (Fulfills request to clarify logging source)
+                    console.log(`[OrchestratorV3] Checking for saved recipes matching "${food}"...`);
+                    const recipeAgentForLog = new RecipeAgent();
+                    const findResultForLog = await recipeAgentForLog.execute({ type: 'find', name: food }, context);
+
+                    if (findResultForLog.type === 'found') {
+                        console.log(`[OrchestratorV3] Found saved recipe match for "${food}" during log_food intent`);
+                        const recipe = findResultForLog.recipe;
+                        const fs: any = {
+                            step: 'pending_duplicate_confirm',
+                            parsed: {
+                                recipe_name: recipe.recipe_name,
+                                servings: recipe.servings,
+                                ingredients: recipe.recipe_ingredients?.map((ing: any) => ({
+                                    name: ing.ingredient_name,
+                                    quantity: ing.quantity,
+                                    unit: ing.unit
+                                })) || []
+                            },
+                            batchNutrition: recipe.nutrition_data,
+                            existingRecipeId: recipe.id,
+                            existingRecipeName: recipe.recipe_name
+                        };
+
+                        await sessionService.savePendingAction(userId, {
+                            type: 'recipe_save',
+                            data: { flowState: fs, response_type: 'pending_duplicate_confirm', pending: true, portion }
+                        });
+
+                        response.response_type = 'confirmation_recipe_save';
+                        response.data = {
+                            isMatch: true,
+                            existingRecipeName: recipe.recipe_name,
+                            parsed: {
+                                ...fs.parsed,
+                                nutrition_data: fs.batchNutrition,
+                                ingredients: recipe.recipe_ingredients?.map((ing: any) => ({
+                                    name: ing.ingredient_name,
+                                    amount: ing.quantity,
+                                    unit: ing.unit,
+                                    calories: ing.nutrition_data?.calories || 0
+                                })) || []
+                            }
+                        };
+
+                        const chatAgentLogMatch = new ChatAgent();
+                        response.message = `I found your saved recipe for "**${recipe.recipe_name}**"! Would you like to use it for this log?`;
+                        return { ...response, steps: thoughts.getSteps() };
+                    }
+
+                    console.log('[OrchestratorV3] Branch: simple_log_food');
+                    reportStep('Looking up nutrition...');
 
                     const nutritionData = await toolExecutor.execute('lookup_nutrition', {
                         food,
@@ -271,12 +334,10 @@ export async function orchestrateV3(
                     response.data = { nutrition: [proposal.data], proposal };
                     return { ...response, steps: thoughts.getSteps() };
                 }
-                break;
-
             case 'log_recipe':
-                // Post-Intent Shortcut: If intent is log_recipe and message is large or context exists
+                // Shortcut: If intent is log_recipe and message is large or context exists
                 if (message.length > 500 || intentResult.recipe_text) {
-                    console.log('[OrchestratorV3] Branch: log_recipe_shortcut');
+                    console.log('[OrchestratorV3] Branch: log_recipe_shortcut (parse)');
                     reportStep('Parsing recipe...');
                     const recipeText = intentResult.recipe_text || message;
                     const parseResult = await toolExecutor.execute('parse_recipe_text', { recipe_text: recipeText });
@@ -297,7 +358,7 @@ export async function orchestrateV3(
                                     name: ing.name,
                                     amount: ing.amount || ing.quantity || '',
                                     unit: ing.unit || '',
-                                    calories: ing.calories
+                                    calories: ing.nutrition?.calories || 0
                                 })) || []
                             }
                         };
@@ -309,6 +370,101 @@ export async function orchestrateV3(
                         );
                         return { ...response, steps: thoughts.getSteps() };
                     }
+                } else {
+                    // Simple search by name
+                    const recipeName = intentResult.food_items?.[0] || message;
+                    console.log('[OrchestratorV3] Branch: log_recipe_shortcut (search)');
+                    reportStep(`Searching for "${recipeName}" in your recipes...`);
+
+                    const recipeAgent = new RecipeAgent();
+                    const findResult = await recipeAgent.execute({ type: 'find', name: recipeName }, context);
+
+                    if (findResult.type === 'found') {
+                        // We found it! Trigger the same "Duplicate Found" modal so user can choose log/update/new
+                        // This fulfills: "If we have the recipe saved we need to ask user what he wants, showing the modal to log, update, or do the edited log"
+
+                        // Convert saved recipe back to a pseudo-parsed format for the flowState
+                        const recipe = findResult.recipe;
+                        const fs: any = {
+                            step: 'pending_duplicate_confirm',
+                            parsed: {
+                                recipe_name: recipe.recipe_name,
+                                servings: recipe.servings,
+                                ingredients: recipe.recipe_ingredients?.map((ing: any) => ({
+                                    name: ing.ingredient_name,
+                                    quantity: ing.quantity,
+                                    unit: ing.unit
+                                })) || []
+                            },
+                            batchNutrition: recipe.nutrition_data,
+                            existingRecipeId: recipe.id,
+                            existingRecipeName: recipe.recipe_name
+                        };
+
+                        await sessionService.savePendingAction(userId, {
+                            type: 'recipe_save',
+                            data: { flowState: fs, response_type: 'pending_duplicate_confirm', pending: true }
+                        });
+
+                        response.response_type = 'confirmation_recipe_save';
+                        response.data = {
+                            isMatch: true,
+                            existingRecipeName: recipe.recipe_name,
+                            parsed: {
+                                ...fs.parsed,
+                                nutrition_data: fs.batchNutrition,
+                                ingredients: recipe.recipe_ingredients?.map((ing: any) => ({
+                                    name: ing.ingredient_name,
+                                    amount: ing.quantity,
+                                    unit: ing.unit,
+                                    calories: ing.nutrition_data?.calories || 0
+                                })) || []
+                            }
+                        };
+
+                        const chatAgentFound = new ChatAgent();
+                        response.message = `I found your recipe for "**${recipe.recipe_name}**"! What would you like to do?`;
+                        // Ensure we tell the UI what recipe this is
+                        return { ...response, steps: thoughts.getSteps() };
+                    } else {
+                        // Not found? fallback to reasoning for nutrition estimate or new parse
+                        console.log('[OrchestratorV3] Recipe not found by name, falling back to Reasoning');
+                    }
+                }
+                break;
+            case 'save_recipe':
+                console.log('[OrchestratorV3] Branch: save_recipe');
+                reportStep('Parsing recipe...');
+                const saveRecipeText = intentResult.recipe_text || message;
+                const saveParseResult = await toolExecutor.execute('parse_recipe_text', { recipe_text: saveRecipeText });
+
+                if (saveParseResult.proposal_type === 'recipe_save' && saveParseResult.flowState) {
+                    await sessionService.savePendingAction(userId, { type: 'recipe_save', data: saveParseResult });
+                    const isMatch = saveParseResult.response_type === 'pending_duplicate_confirm';
+                    response.response_type = 'confirmation_recipe_save';
+                    const fs = saveParseResult.flowState;
+                    response.data = {
+                        isMatch,
+                        existingRecipeName: fs.existingRecipeName,
+                        parsed: {
+                            recipe_name: fs.parsed.recipe_name,
+                            servings: fs.parsed.servings,
+                            nutrition_data: fs.batchNutrition,
+                            ingredients: fs.ingredientsWithNutrition?.map((ing: any) => ({
+                                name: ing.name,
+                                amount: ing.amount || ing.quantity || '',
+                                unit: ing.unit || '',
+                                calories: ing.nutrition?.calories || 0
+                            })) || []
+                        }
+                    };
+
+                    const chatAgentSaveRecipe = new ChatAgent();
+                    response.message = await chatAgentSaveRecipe.execute(
+                        { userMessage: message, intent: 'save_recipe', data: { proposal: saveParseResult, toolsUsed: ['parse_recipe_text'] }, history: chatHistory },
+                        context
+                    );
+                    return { ...response, steps: thoughts.getSteps() };
                 }
                 break;
         }
@@ -400,10 +556,15 @@ export async function orchestrateV3(
                     servings: fs.parsed.servings,
                     nutrition_data: fs.batchNutrition,
                     ingredients: fs.ingredientsWithNutrition?.map((ing: any) => ({
-                        name: ing.name,
+                        name: ing.name || ing.ingredient_name,
                         amount: ing.amount || ing.quantity || '',
                         unit: ing.unit || '',
-                        calories: ing.calories
+                        calories: ing.nutrition?.calories || ing.nutrition_data?.calories || 0
+                    })) || fs.parsed.ingredients?.map((ing: any) => ({
+                        name: ing.name,
+                        amount: ing.quantity || '',
+                        unit: ing.unit || '',
+                        calories: 0 // Placeholder if nutrition calculation failed but ingredients are there
                     })) || []
                 };
                 response.response_type = 'confirmation_recipe_save';
@@ -450,9 +611,11 @@ async function handlePendingConfirmation(
     userId: string,
     sessionService: SessionService,
     db: DbService,
-    context: AgentContext
+    context: AgentContext,
+    message: string
 ): Promise<AgentResponse> {
     const { type, data } = pendingAction
+    const lowerMessage = message.trim().toLowerCase();
 
     try {
         switch (type) {
@@ -508,15 +671,67 @@ async function handlePendingConfirmation(
             case 'recipe_save':
                 // Delegate to RecipeAgent for robust handling
                 const recipeAgent = new RecipeAgent()
-                const action: any = (data as any).choice
-                    ? { type: 'handle_duplicate', flowState: (data as any).flowState, choice: (data as any).choice }
-                    : { type: 'save', parsed: (data as any).flowState?.parsed || data.parsed, mode: 'commit' }
+                const dataAny = data as any
+                const fs = dataAny.flowState
+
+                if (dataAny.customName) {
+                    if (fs?.parsed) fs.parsed.recipe_name = dataAny.customName;
+                    else if (dataAny.parsed) dataAny.parsed.recipe_name = dataAny.customName;
+                }
+
+                const choice = dataAny.choice || (lowerMessage.includes('log') ? 'log' : lowerMessage.includes('update') ? 'update' : lowerMessage.includes('new') ? 'new' : undefined);
+
+                const optimizationData = fs ? {
+                    batchNutrition: fs.batchNutrition,
+                    ingredientsWithNutrition: fs.ingredientsWithNutrition
+                } : {}
+
+                const action: any = choice
+                    ? {
+                        type: 'handle_duplicate',
+                        flowState: fs,
+                        choice: choice,
+                        ...optimizationData
+                    }
+                    : {
+                        type: 'save',
+                        parsed: fs?.parsed || data.parsed,
+                        mode: 'commit',
+                        ...optimizationData
+                    }
 
                 const saveResult = await recipeAgent.execute(action, context)
 
                 await sessionService.clearPendingAction(userId)
 
-                if (saveResult.type === 'updated') {
+                if (saveResult.type === 'error') {
+                    throw new Error(saveResult.error || 'Unknown error saving recipe')
+                } else if (saveResult.type === 'updated') {
+                    const portion = (data as any).portion
+                    if (portion) {
+                        const recipe = saveResult.recipe
+                        const servings = parseFloat(portion) || 1
+                        const scale = servings / (recipe.servings || 1)
+
+                        await db.logFoodItems(userId, [{
+                            food_name: recipe.recipe_name,
+                            portion: portion,
+                            calories: Math.round((recipe.nutrition_data?.calories || 0) * scale),
+                            protein_g: (recipe.nutrition_data?.protein_g || 0) * scale,
+                            carbs_g: (recipe.nutrition_data?.carbs_g || 0) * scale,
+                            fat_total_g: (recipe.nutrition_data?.fat_total_g || 0) * scale,
+                            log_time: new Date().toISOString(),
+                            recipe_id: recipe.id
+                        }])
+
+                        return {
+                            status: 'success',
+                            message: `✅ Updated and logged ${portion} of "${recipe.recipe_name}"! 🍽️`,
+                            response_type: 'recipe_logged',
+                            data: { recipe_logged: recipe }
+                        }
+                    }
+
                     return {
                         status: 'success',
                         message: `✅ Updated recipe "${saveResult.recipe.recipe_name}"! 📖`,

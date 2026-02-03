@@ -48,6 +48,10 @@ Examples:
 7. "Log a waffle for 110 calories" -> {"intent": "log_food", "food_items": ["waffle"], "calories": 110}
 8. "Had a protein shake: 200 kcal, 30g protein" -> {"intent": "log_food", "food_items": ["protein shake"], "calories": 200, "macros": {"protein": 30}}
 9. "Just 500 kcal" -> {"intent": "log_food", "calories": 500}
+10. "Save this recipe: [recipe text]" -> {"intent": "save_recipe", "recipe_text": "[recipe text]"}
+11. "I want to save this recipe" -> {"intent": "save_recipe"}
+12. "Log my banana bread recipe" -> {"intent": "log_recipe", "food_items": ["banana bread"]}
+13. "I had 1 serving of the pasta i saved yesterday" -> {"intent": "log_recipe", "food_items": ["pasta"], "portions": ["1 serving"]}
 `;
 
 export class IntentAgent implements Agent<{ message: string, history: any[] }, IntentExtraction> {

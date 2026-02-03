@@ -244,15 +244,18 @@ export default function ChatPage() {
     }
   };
 
-  const handleSend = async (e?: React.FormEvent<HTMLFormElement>, actionPayload?: string) => {
+  const handleSend = async (e?: React.FormEvent<HTMLFormElement>, actionPayload?: string, isHidden = false) => {
     if (e) e.preventDefault();
     const textToSend = actionPayload || message.trim();
     if (!textToSend || sending || authLoading || !activeChatId || !supabase) return;
 
     setSending(true);
     setCurrentStep('Communicating with NutriPal...');
-    const userMessage: ChatMessage = { id: Date.now(), sender: 'user', text: textToSend };
-    setChatHistory(prev => [...prev, userMessage]);
+
+    if (!isHidden) {
+      const userMessage: ChatMessage = { id: Date.now(), sender: 'user', text: textToSend };
+      setChatHistory(prev => [...prev, userMessage]);
+    }
     setMessage('');
 
     try {
@@ -349,10 +352,10 @@ export default function ChatPage() {
   const chatPanelContent = (
     <div className="flex-1 flex flex-col h-full bg-gray-100 overflow-hidden">
       <ChatMessageList
-        activeChatId={activeChatId || undefined}
+        activeChatId={activeChatId}
         messages={chatHistory}
         onFlagMessage={handleFlagMessage}
-        onSendMessage={(text) => handleSend(undefined, text)}
+        onSendMessage={(text, isHidden) => handleSend(undefined, text, isHidden)}
       />
       {sending && (
         <div className="px-4 py-2 flex flex-col items-start space-y-1">

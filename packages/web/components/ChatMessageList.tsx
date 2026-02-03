@@ -19,7 +19,7 @@ interface ChatMessageListProps {
   activeChatId: string | null;
   messages: ChatMessage[];
   onFlagMessage?: (messageId: number) => void;
-  onSendMessage?: (text: string, isHidden?: boolean) => void; // Add this prop to handle actions
+  onSendMessage?: (text: string, isHidden?: boolean) => void;
 }
 
 const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, messages, onFlagMessage, onSendMessage }) => {
@@ -151,12 +151,12 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
                       preview={msg.metadata.preview}
                       isMatch={msg.metadata.isMatch}
                       existingRecipeName={msg.metadata.existingRecipeName}
-                      onConfirm={(choice, portion) => {
+                      onConfirm={(choice, portion, name) => {
                         if (onSendMessage) {
                           const text = choice
-                            ? `Confirm ${choice}${portion ? ` portion:${portion}` : ''}`
-                            : "Yes, save recipe";
-                          onSendMessage(text, false);
+                            ? `Confirm ${choice}${portion ? ` portion:${portion}` : ''}${name ? ` name:${name}` : ''}`
+                            : `Confirm save${name ? ` name:${name}` : ''}`;
+                          onSendMessage(text, true);
                         }
                       }}
                       onDecline={() => onSendMessage ? onSendMessage("No, cancel", false) : null}

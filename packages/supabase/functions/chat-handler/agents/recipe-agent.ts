@@ -108,25 +108,42 @@ export class RecipeAgent implements Agent<RecipeAction, any> {
         const name = action.name.trim()
         const fingerprint = (action as any).fingerprint
 
-        // 1. Try fingerprint match first if provided (Fastest)
+        console.log(`[RecipeAgent] Searching for recipe: "${name}" (Fingerprint provided: ${!!fingerprint})`)
+
+        // 1. Try fingerprint match first if provided (Exact identical ingredients)
         if (fingerprint) {
           const { data, error } = await supabase
             .from('user_recipes')
             .select('*, recipe_ingredients(*)')
             .eq('user_id', userId)
             .eq('ingredient_fingerprint', fingerprint)
+            .order('updated_at', { ascending: false })
             .limit(1)
             .maybeSingle()
 
           if (error) {
             console.error('[RecipeAgent] Error finding recipe by fingerprint:', error)
           } else if (data) {
+            console.log(`[RecipeAgent] Found exact fingerprint match: "${data.recipe_name}"`)
             return { type: 'found', recipe: data }
           }
         }
 
-        // 2. Try exact or substring match (Name check)
-        const { data, error } = await supabase
+        // 2. Try exact name match (Case-insensitive)
+        const { data: exactName, error: exactError } = await supabase
+          .from('user_recipes')
+          .select('*, recipe_ingredients(*)')
+          .eq('user_id', userId)
+          .ilike('recipe_name', name)
+          .maybeSingle()
+
+        if (exactName) {
+          console.log(`[RecipeAgent] Found exact name match: "${exactName.recipe_name}"`)
+          return { type: 'found', recipe: exactName }
+        }
+
+        // 3. Try substring match (Name check)
+        const { data: substringMatch, error } = await supabase
           .from('user_recipes')
           .select('*, recipe_ingredients(*)')
           .eq('user_id', userId)
@@ -134,23 +151,21 @@ export class RecipeAgent implements Agent<RecipeAction, any> {
           .limit(1)
           .maybeSingle()
 
-        if (error) {
-          console.error('[RecipeAgent] Error finding recipe:', error)
-          return { type: 'error', error: error.message }
+        if (substringMatch) {
+          console.log(`[RecipeAgent] Found substring name match: "${substringMatch.recipe_name}"`)
+          return { type: 'found', recipe: substringMatch }
         }
 
-        if (data) {
-          return { type: 'found', recipe: data }
-        }
-
-        // 3. word-level intersection matching
-        const words = name.split(/\s+/).filter(w => w.length > 2)
+        // 4. word-level intersection matching
+        const words = name.split(/\s+/).filter(w => w.length > 2 && !['with', 'and', 'the', 'for', 'from'].includes(w.toLowerCase()))
         if (words.length > 0) {
           let query = supabase
             .from('user_recipes')
             .select('*, recipe_ingredients(*)')
             .eq('user_id', userId)
 
+          // Build a query where at least most words match or use word intersection
+          // Simple implementation: all significant words must be present
           for (const word of words) {
             query = query.ilike('recipe_name', `%${word}%`)
           }
@@ -162,6 +177,7 @@ export class RecipeAgent implements Agent<RecipeAction, any> {
           if (fuzzyError) {
             console.error('[RecipeAgent] Error in fuzzy recipe find:', fuzzyError)
           } else if (fuzzyData) {
+            console.log(`[RecipeAgent] Found fuzzy name match (multi-word): "${fuzzyData.recipe_name}"`)
             return { type: 'found', recipe: fuzzyData }
           }
         }
@@ -257,7 +273,12 @@ Important:
               `*If logging, how much did you have? (e.g. 1 serving, 2 cups)*`,
             response_type: 'pending_duplicate_confirm',
             proposal_type: 'recipe_save',
-            pending: true
+            pending: true,
+            data: {
+              flowState,
+              recipe_name: parsed.recipe_name,
+              ingredients: parsed.ingredients
+            }
           }
         }
 
@@ -295,12 +316,12 @@ Important:
         // Step 5: Return final proposal immediately
         return {
           type: 'needs_confirmation',
-          flowState,
           prompt: `I've calculated the nutrition for "${parsed.recipe_name}" (${parsed.ingredients.length} ingredients).\n\n` +
             `It makes about **${servings} serving(s)** (total ${formatGrams(batchResult.totalGrams)}).\n` +
             `Each serving is **${perServingCalories} kcal**.${warningText}\n\nReady to save?`,
           response_type: 'ready_to_save',
           data: {
+            flowState,
             nutrition: [perServingNutrition],
             validation: { warnings, passed: warnings.length === 0, errors: [] }
           },
@@ -724,8 +745,17 @@ Important:
    * Calculate a normalized fingerprint for the recipe based on sorted ingredient names.
    */
   static calculateFingerprint(ingredients: { name: string }[]): string {
+    const stopWords = ['of', 'a', 'an', 'the', 'large', 'small', 'medium', 'fresh', 'dried', 'ground', 'chopped', 'sliced', 'diced', 'clove', 'cloves', 'and', 'with', 'optional'];
+
     return ingredients
-      .map(ing => ing.name.trim().toLowerCase().replace(/[^a-z0-9 ]/g, ''))
+      .map(ing => {
+        // Normalize name: lowercase, remove special chars, remove stop words
+        let n = ing.name.trim().toLowerCase().replace(/[^a-z0-9 ]/g, '');
+        // Remove stop words from the name itself
+        const parts = n.split(/\s+/).filter(p => !stopWords.includes(p));
+        return parts.join(' ');
+      })
+      .filter(n => n.length > 0)
       .sort()
       .join(',')
   }

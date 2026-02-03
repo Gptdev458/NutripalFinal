@@ -4,8 +4,6 @@ import { handleError } from "../_shared/error-handler.ts"
 import { createSupabaseClient } from "../_shared/supabase-client.ts"
 // V3: Hybrid Multi-Agent Architecture (IntentAgent → ReasoningAgent → ChatAgent)
 import { orchestrateV3 as orchestrate } from "./orchestrator_v3.ts"
-// Fallback: Import V2 if needed for rollback
-// import { orchestrate } from "./orchestrator_v2.ts"
 
 
 serve(async (req) => {

@@ -367,34 +367,23 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. ${hi
     }
 
     private async validateNutrition(data: { food_name: string, calories: number, protein_g?: number, carbs_g?: number, fat_g?: number }) {
-        // Use ValidatorAgent logic
-        const isCaloric = !['water', 'coffee', 'tea', 'diet soda'].some(f =>
-            data.food_name.toLowerCase().includes(f)
-        )
-
-        const issues: string[] = []
-
-        if (isCaloric && data.calories < 5) {
-            issues.push('Calories seem too low for this food')
+        // Delegate to the robust ValidatorAgent
+        // Map the input data to the array format expected by ValidatorAgent
+        const item: any = {
+            food_name: data.food_name,
+            calories: data.calories,
+            protein_g: data.protein_g || 0,
+            carbs_g: data.carbs_g || 0,
+            fat_total_g: data.fat_g || 0,
+            serving_size: '1 serving' // Default if not provided, used for volume sanity checks
         }
 
-        const macroCalories =
-            (data.protein_g || 0) * 4 +
-            (data.carbs_g || 0) * 4 +
-            (data.fat_g || 0) * 9
-
-        if (macroCalories > 0 && data.calories < macroCalories * 0.8) {
-            issues.push('Calories seem low compared to macro totals')
-        }
-
-        if (data.calories > macroCalories * 1.5 && macroCalories > 0) {
-            issues.push('Calories seem high compared to macro totals')
-        }
+        const result = await this.validatorAgent.execute([item], this.agentContext)
 
         return {
-            valid: issues.length === 0,
-            issues,
-            suggestion: issues.length > 0 ? 'Consider using estimate_nutrition for a better estimate' : null
+            valid: result.passed,
+            issues: [...result.errors, ...result.warnings],
+            suggestion: result.passed ? null : 'Consider using estimate_nutrition for a better estimate or checking the values.'
         }
     }
 

@@ -180,12 +180,18 @@ export class ReasoningAgent implements Agent<ReasoningInput, ReasoningOutput> {
 
         // Check for any proposals in gathered data
         let proposal: ReasoningOutput['proposal'] = undefined
-        for (const [toolName, result] of Object.entries(gatheredData)) {
+        for (const [_toolName, result] of Object.entries(gatheredData)) {
             if (result?.proposal_type && result?.pending) {
+                // Preserve flowState if present at root or in data
+                const proposalData = result.data || {}
+                if (result.flowState && !proposalData.flowState) {
+                    proposalData.flowState = result.flowState
+                }
+
                 proposal = {
                     type: result.proposal_type,
-                    id: result.proposal_id,
-                    data: result.data
+                    id: result.proposal_id || result.id || `prop_${Date.now()}`,
+                    data: proposalData
                 }
                 break
             }
