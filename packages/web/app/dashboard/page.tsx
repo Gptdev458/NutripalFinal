@@ -18,7 +18,7 @@ export const dynamic = 'force-dynamic';
 const LoadingSpinner = () => {
   return (
     <div className="flex justify-center items-center py-2">
-      <div className="relative w-8 h-8"> {/* Using slightly larger spinner for page load/refresh */} 
+      <div className="relative w-8 h-8"> {/* Using slightly larger spinner for page load/refresh */}
         <div className="absolute top-0 left-0 right-0 bottom-0 border-4 border-blue-100 rounded-full"></div>
         <div className="absolute top-0 left-0 right-0 bottom-0 border-4 border-transparent border-t-blue-600 rounded-full animate-spin"></div>
       </div>
@@ -27,28 +27,28 @@ const LoadingSpinner = () => {
 };
 
 interface UserGoal {
-    nutrient: string;
-    target_value: number;
-    unit: string;
-    goal_type?: string;
+  nutrient: string;
+  target_value: number;
+  unit: string;
+  goal_type?: string;
 }
 
 interface FoodLog {
-    id: string; // Changed to string for UUID
-    log_time: string; // Changed from timestamp
-    food_name: string;
-    calories?: number | null;
-    protein_g?: number | null;
-    carbs_g?: number | null;
-    fat_total_g?: number | null;
-    fiber_g?: number | null;
-    sugar_g?: number | null;
-    sodium_mg?: number | null;
-    [key: string]: unknown; 
+  id: string; // Changed to string for UUID
+  log_time: string; // Changed from timestamp
+  food_name: string;
+  calories?: number | null;
+  protein_g?: number | null;
+  carbs_g?: number | null;
+  fat_total_g?: number | null;
+  fiber_g?: number | null;
+  sugar_g?: number | null;
+  sodium_mg?: number | null;
+  [key: string]: unknown;
 }
 
 interface DailyTotals {
-    [nutrientKey: string]: number | undefined;
+  [nutrientKey: string]: number | undefined;
 }
 
 // Helper function
@@ -58,11 +58,11 @@ const formatDate = (date: Date): string => {
 
 // Helper function to format nutrient names (can be moved to utils)
 const formatNutrientName = (key: string): string => {
-   return key.replace(/_/g, ' ')
-             .replace(/\b\w/g, l => l.toUpperCase())
-             .replace(/ G$/, ' (g)') // Adjust if needed
-             .replace(/ Mg$/, ' (mg)')
-             .replace(/ Mcg$/, ' (mcg)'); 
+  return key.replace(/_/g, ' ')
+    .replace(/\b\w/g, l => l.toUpperCase())
+    .replace(/ G$/, ' (g)') // Adjust if needed
+    .replace(/ Mg$/, ' (mg)')
+    .replace(/ Mcg$/, ' (mcg)');
 };
 
 export default function DashboardPage() {
@@ -114,7 +114,7 @@ export default function DashboardPage() {
   // --- Delete Handler ---
   const handleDeleteLogItem = async (logId: string) => {
     if (!supabase || !user) {
-      alert("Delete failed: Authentication error."); 
+      alert("Delete failed: Authentication error.");
       return;
     }
 
@@ -131,10 +131,10 @@ export default function DashboardPage() {
       refreshDashboardData(true);
 
     } catch (err) {
-       console.error("Error deleting log item:", err);
-       alert("Failed to delete log item.");
+      console.error("Error deleting log item:", err);
+      alert("Failed to delete log item.");
     } finally {
-        setIsDeletingLog(false);
+      setIsDeletingLog(false);
     }
   };
   // --- End Delete Handler ---
@@ -147,31 +147,31 @@ export default function DashboardPage() {
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseAnonKey) {
-        console.error("[TestButton] Missing ENV vars!");
-        setTestResult('Test Failed: Missing ENV Vars');
-        return;
+      console.error("[TestButton] Missing ENV vars!");
+      setTestResult('Test Failed: Missing ENV Vars');
+      return;
     }
 
     try {
-        const testClient = createBrowserClient(
-            supabaseUrl,
-            supabaseAnonKey,
-        );
-        console.log("[TestButton] Temporary client created:", testClient);
-        console.log("[TestButton] Calling getSession() on temporary client...");
-        const { data, error } = await testClient.auth.getSession();
-        console.log("[TestButton] getSession() completed.", { data, error });
+      const testClient = createBrowserClient(
+        supabaseUrl,
+        supabaseAnonKey,
+      );
+      console.log("[TestButton] Temporary client created:", testClient);
+      console.log("[TestButton] Calling getSession() on temporary client...");
+      const { data, error } = await testClient.auth.getSession();
+      console.log("[TestButton] getSession() completed.", { data, error });
 
-        if (error) {
-            setTestResult(`Test Failed: ${error.message}`);
-        } else if (data?.session) {
-            setTestResult(`Test Success! Session User ID: ${data.session.user.id}`);
-        } else {
-            setTestResult('Test Success! No active session found.');
-        }
+      if (error) {
+        setTestResult(`Test Failed: ${error.message}`);
+      } else if (data?.session) {
+        setTestResult(`Test Success! Session User ID: ${data.session.user.id}`);
+      } else {
+        setTestResult('Test Success! No active session found.');
+      }
     } catch (err: any) {
-        console.error("[TestButton] Error during test:", err);
-        setTestResult(`Test Exception: ${err.message}`);
+      console.error("[TestButton] Error during test:", err);
+      setTestResult(`Test Exception: ${err.message}`);
     }
   };
   // -------------------------
@@ -180,20 +180,20 @@ export default function DashboardPage() {
   if (authLoading) {
     // Show loading indicator while auth is loading
     return (
-        <div className="flex h-screen items-center justify-center">
-            <LoadingSpinner /> 
-            <p className="ml-2">Loading user data...</p>
-        </div>
+      <div className="flex h-screen items-center justify-center">
+        <LoadingSpinner />
+        <p className="ml-2">Loading user data...</p>
+      </div>
     );
   }
 
   if (!user) {
-     // This case should ideally be handled by middleware, but good as a fallback
-     return (
-        <div className="flex h-screen items-center justify-center">
-            <p>Please log in to view the dashboard.</p>
-        </div>
-     ); 
+    // This case should ideally be handled by middleware, but good as a fallback
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <p>Please log in to view the dashboard.</p>
+      </div>
+    );
   }
 
   return (
@@ -223,49 +223,60 @@ export default function DashboardPage() {
             refreshing={refreshing}
             onRefresh={handleRefresh}
           />
-          
+
           <div className="mt-8">
             <h2 className="text-lg font-semibold text-blue-600 mb-4 px-1">Today's Log</h2>
             {recentLogs.length > 0 ? (
               <div className="bg-white border border-gray-200 rounded-lg shadow-sm divide-y divide-gray-200">
                 {recentLogs.slice(0, 5).map(log => (
-                  <button 
+                  <button
                     key={log.id}
                     onClick={() => handleLogItemClick(log)}
                     className="block w-full text-left p-4 hover:bg-gray-50 focus:outline-none focus:bg-gray-50 transition-colors duration-150"
                   >
                     <div className="flex justify-between items-center">
-                      <span className="text-sm font-medium text-gray-800 truncate"> 
-                        {log.food_name || 'Logged Item'} 
+                      <span className="text-sm font-medium text-gray-800 truncate">
+                        {log.food_name || 'Logged Item'}
                       </span>
                       <span className="text-xs text-gray-500">
                         {formatDateFn(new Date(log.log_time), 'h:mm a')}
                       </span>
                     </div>
-                    {log.calories !== null && log.calories !== undefined && (
-                       <p className="text-xs text-gray-500 mt-0.5">{Math.round(log.calories)} kcal</p>
-                    )}
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
+                      {typeof log.calories === 'number' && (
+                        <p className="text-[11px] font-bold text-blue-600">{Math.round(log.calories)} kcal</p>
+                      )}
+                      {typeof log.protein_g === 'number' && (
+                        <p className="text-[11px] text-gray-500"><span className="font-semibold text-gray-700">P:</span> {Math.round(log.protein_g)}g</p>
+                      )}
+                      {typeof log.carbs_g === 'number' && (
+                        <p className="text-[11px] text-gray-500"><span className="font-semibold text-gray-700">C:</span> {Math.round(log.carbs_g)}g</p>
+                      )}
+                      {typeof log.fat_total_g === 'number' && (
+                        <p className="text-[11px] text-gray-500"><span className="font-semibold text-gray-700">F:</span> {Math.round(log.fat_total_g)}g</p>
+                      )}
+                    </div>
                   </button>
                 ))}
                 {recentLogs.length > 5 && (
-                   <Link href="/history" className="block text-center p-3 text-sm text-blue-600 hover:bg-gray-50">
-                       View Full History ({recentLogs.length} items)
-                   </Link>
+                  <Link href="/history" className="block text-center p-3 text-sm text-blue-600 hover:bg-gray-50">
+                    View Full History ({recentLogs.length} items)
+                  </Link>
                 )}
               </div>
             ) : (
               <div className="text-center p-6 border border-gray-200 rounded-lg bg-white">
                 <p className="text-sm text-gray-500">No food logged yet today.</p>
                 <Link href="/chat" className="mt-2 inline-block px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200">
-                   Go to Chat to Log
+                  Go to Chat to Log
                 </Link>
               </div>
             )}
           </div>
-          
+
           <div className="mb-8">
-            <Link 
-              href="/analytics" 
+            <Link
+              href="/analytics"
               className="block bg-gray-100 hover:bg-gray-200 rounded-lg p-4 text-center transition-colors"
             >
               <div className="flex items-center justify-center">
@@ -274,9 +285,9 @@ export default function DashboardPage() {
               </div>
             </Link>
           </div>
-          
+
           <div className="flex justify-center mb-8">
-            <button 
+            <button
               onClick={handleRefresh}
               disabled={refreshing || loadingData}
               className={`px-4 py-2 border border-gray-300 rounded-md text-sm font-medium ${refreshing || loadingData ? 'opacity-50 cursor-not-allowed bg-gray-50' : 'text-gray-700 bg-white hover:bg-gray-50'}`}
@@ -287,7 +298,7 @@ export default function DashboardPage() {
         </div>
       )}
       {isLogDetailModalVisible && (
-        <FoodLogDetailModal 
+        <FoodLogDetailModal
           logData={selectedLogData}
           onClose={handleCloseLogDetailModal}
           userGoals={userGoals}

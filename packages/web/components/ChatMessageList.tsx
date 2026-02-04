@@ -15,14 +15,103 @@ interface ChatMessage {
   flagged?: boolean;
 }
 
+interface UserGoal {
+  nutrient: string;
+  target_value: number;
+  unit: string;
+  goal_type?: string;
+}
+
 interface ChatMessageListProps {
   activeChatId: string | null;
   messages: ChatMessage[];
+  userGoals?: UserGoal[];
   onFlagMessage?: (messageId: number) => void;
   onSendMessage?: (text: string, isHidden?: boolean) => void;
 }
 
-const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, messages, onFlagMessage, onSendMessage }) => {
+const NUTRIENT_MAP: Record<string, { name: string; unit: string }> = {
+  protein_g: { name: "Prot", unit: "g" },
+  fat_total_g: { name: "Fat", unit: "g" },
+  carbs_g: { name: "Carbs", unit: "g" },
+  fat_saturated_g: { name: "Sat Fat", unit: "g" },
+  fiber_g: { name: "Fiber", unit: "g" },
+  sugar_g: { name: "Sugar", unit: "g" },
+  cholesterol_mg: { name: "Chol", unit: "mg" },
+  sodium_mg: { name: "Sodium", unit: "mg" },
+  potassium_mg: { name: "Potassium", unit: "mg" },
+};
+
+const NutrientDisplay: React.FC<{ nutrition: any, userGoals?: UserGoal[] }> = ({ nutrition, userGoals = [] }) => {
+  const [showAll, setShowAll] = React.useState(false);
+
+  return (
+    <div className="space-y-2">
+      {nutrition.map((item: any, i: number) => {
+        const coreKeys = ['protein_g', 'carbs_g', 'fat_total_g'];
+        const trackedKeys = userGoals.map(g => g.nutrient).filter(k => !coreKeys.includes(k) && k !== 'calories');
+
+        const allKeys = Object.keys(item);
+        const otherKeys = allKeys.filter(k =>
+          NUTRIENT_MAP[k] &&
+          !coreKeys.includes(k) &&
+          !trackedKeys.includes(k) &&
+          k !== 'calories' &&
+          typeof item[k] === 'number' &&
+          item[k] > 0
+        );
+
+        return (
+          <div key={i} className="col-span-2 pb-2 mb-2 border-b border-gray-100 last:border-0 last:pb-0 last:mb-0">
+            <div className="flex justify-between text-sm mb-1">
+              <span className="font-bold text-gray-800">{item.food_name}</span>
+              <span className="text-blue-600 font-black">{Math.round(item.calories)} kcal</span>
+            </div>
+
+            {/* Essential Macros + Tracked */}
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+              <span className="text-gray-700"><span className="font-bold text-blue-700">P:</span> {Math.round(item.protein_g * 10) / 10}g</span>
+              <span className="text-gray-700"><span className="font-bold text-blue-700">C:</span> {Math.round(item.carbs_g * 10) / 10}g</span>
+              <span className="text-gray-700"><span className="font-bold text-blue-700">F:</span> {Math.round(item.fat_total_g * 10) / 10}g</span>
+              {trackedKeys.map(k => (
+                <span key={k} className="text-gray-700">
+                  <span className="font-bold text-emerald-700">{NUTRIENT_MAP[k]?.name || k}:</span> {Math.round(item[k] * 10) / 10}{NUTRIENT_MAP[k]?.unit || ''}
+                </span>
+              ))}
+            </div>
+
+            {/* Expandable Menu for others */}
+            {otherKeys.length > 0 && (
+              <div className="mt-1">
+                <button
+                  onClick={() => setShowAll(!showAll)}
+                  className="text-[10px] font-bold text-gray-400 hover:text-blue-500 flex items-center transition-colors"
+                >
+                  {showAll ? 'Collapse' : `+ ${otherKeys.length} more nutrients`}
+                  <svg className={`ml-0.5 h-2.5 w-2.5 transform ${showAll ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {showAll && (
+                  <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 mt-1 bg-gray-50 p-1.5 rounded border border-gray-100">
+                    {otherKeys.map(k => (
+                      <div key={k} className="text-[10px] flex justify-between">
+                        <span className="text-gray-500 uppercase">{NUTRIENT_MAP[k]?.name || k}:</span>
+                        <span className="font-medium text-gray-700">{Math.round(item[k] * 10) / 10}{NUTRIENT_MAP[k]?.unit || ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, messages, userGoals, onFlagMessage, onSendMessage }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Scroll to bottom of messages when new ones are added
@@ -140,8 +229,8 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
                       nutrition={msg.metadata.nutrition}
                       title={msg.metadata.nutrition[0]?.serving_size?.includes('serving') ? 'Confirm Recipe Log' : 'Verify Log'}
                       confirmLabel={msg.metadata.nutrition[0]?.serving_size?.includes('serving') ? 'Log Recipe' : 'Log Food'}
-                      onConfirm={() => onSendMessage ? onSendMessage("Yes, looks good", false) : null}
-                      onDecline={() => onSendMessage ? onSendMessage("No, cancel", false) : null}
+                      onConfirm={() => onSendMessage ? onSendMessage("Confirm", true) : null}
+                      onDecline={() => onSendMessage ? onSendMessage("Cancel", true) : null}
                     />
                   )}
 
@@ -163,46 +252,18 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
                     />
                   )}
 
-                  {/* Legacy Logged Views */}
+                  {/* Logged Views */}
                   {msg.message_type === 'food_logged' && msg.metadata.nutrition && (
                     <div className="space-y-2">
-                      <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Nutrients Logged</p>
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                        {msg.metadata.nutrition.map((item: any, i: number) => (
-                          <div key={i} className="col-span-2 pb-1 mb-1 border-b border-gray-50 last:border-0">
-                            <div className="flex justify-between text-sm">
-                              <span className="font-semibold">{item.food_name}</span>
-                              <span className="text-blue-600">{item.calories} kcal</span>
-                            </div>
-                            <div className="flex gap-3 text-xs text-gray-500">
-                              <span>P: {item.protein_g}g</span>
-                              <span>C: {item.carbs_g}g</span>
-                              <span>F: {item.fat_total_g}g</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-1">Logged to Dashboard</p>
+                      <NutrientDisplay nutrition={msg.metadata.nutrition} userGoals={userGoals} />
                     </div>
                   )}
 
                   {msg.message_type === 'nutrition_info' && msg.metadata.nutrition && (
                     <div className="space-y-2">
-                      {/* Same visualization as logged, but maybe different header */}
-                      <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Nutritional Info</p>
-                      {/* Reuse visualization code or extract to component */}
-                      {msg.metadata.nutrition.map((item: any, i: number) => (
-                        <div key={i} className="text-sm bg-blue-50 p-2 rounded">
-                          <div className="flex justify-between font-bold">
-                            <span>{item.food_name}</span>
-                            <span>{item.calories} kcal</span>
-                          </div>
-                          <div className="grid grid-cols-3 gap-1 text-xs mt-1">
-                            <div>Protein: {item.protein_g}g</div>
-                            <div>Carbs: {item.carbs_g}g</div>
-                            <div>Fat: {item.fat_total_g}g</div>
-                          </div>
-                        </div>
-                      ))}
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-1">Nutritional Analysis</p>
+                      <NutrientDisplay nutrition={msg.metadata.nutrition} userGoals={userGoals} />
                     </div>
                   )}
 

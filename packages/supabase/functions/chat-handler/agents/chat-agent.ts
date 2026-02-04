@@ -1,6 +1,4 @@
-import { createOpenAIClient } from '../../_shared/openai-client.ts'
-import { Agent, AgentContext } from '../../_shared/types.ts'
-
+import { createOpenAIClient } from '../../_shared/openai-client.ts';
 const SYSTEM_PROMPT = `
 You are NutriPal, a friendly and professional AI nutrition assistant. 
 Your goal is to help users track their nutrition and reach their health goals.
@@ -14,49 +12,42 @@ Core Behavioral Guidelines:
 5. **Coaching & Nudges**: If you see 'today_progress' or 'goals' in the context, give a quick "coach tip" (e.g., "You're 20g short on protein today, maybe add an egg?").
 6. **Confirmation Success**: Confirm actions with a snappy "Logged!" or "Saved!".
 7. **Conciseness**: Never use bullet points for nutrition data. The UI handles that.
-`
-
-export interface ChatInput {
-  userMessage: string
-  intent: string
-  data: any
-  history: { role: string, content: string }[]
-}
-
-export class ChatAgent implements Agent<ChatInput, string> {
-  name = 'chat'
-
-  async execute(input: ChatInput, _context: AgentContext): Promise<string> {
-    const { userMessage, intent, data, history } = input
-    const openai = createOpenAIClient()
-
+`;
+export class ChatAgent {
+  name = 'chat';
+  async execute(input, _context) {
+    const { userMessage, intent, data, history } = input;
+    const openai = createOpenAIClient();
     const messages = [
-      { role: "system", content: SYSTEM_PROMPT },
-      ...history.slice(-5), // Last 5 messages for context
+      {
+        role: "system",
+        content: SYSTEM_PROMPT
+      },
+      ...history.slice(-5),
       {
         role: "system",
         content: `Current Intent: ${intent}. Data involved: ${JSON.stringify(data)}`
       },
-      { role: "user", content: userMessage }
-    ]
-
+      {
+        role: "user",
+        content: userMessage
+      }
+    ];
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: messages as any,
-      max_tokens: 500,
-    })
-
-    return response.choices[0].message.content || "I'm here to help with your nutrition!"
+      messages: messages,
+      max_tokens: 500
+    });
+    return response.choices[0].message.content || "I'm here to help with your nutrition!";
   }
 }
-
 // Keep legacy export for now
-export async function generateChatResponse(
-  userMessage: string,
-  intent: string,
-  data: any,
-  history: { role: string, content: string }[] = []
-): Promise<string> {
-  const agent = new ChatAgent()
-  return agent.execute({ userMessage, intent, data, history }, {} as any)
+export async function generateChatResponse(userMessage, intent, data, history = []) {
+  const agent = new ChatAgent();
+  return agent.execute({
+    userMessage,
+    intent,
+    data,
+    history
+  }, {});
 }

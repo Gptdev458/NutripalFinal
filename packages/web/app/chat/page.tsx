@@ -354,6 +354,7 @@ export default function ChatPage() {
       <ChatMessageList
         activeChatId={activeChatId}
         messages={chatHistory}
+        userGoals={userGoals}
         onFlagMessage={handleFlagMessage}
         onSendMessage={(text, isHidden) => handleSend(undefined, text, isHidden)}
       />
