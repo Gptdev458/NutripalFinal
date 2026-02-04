@@ -570,12 +570,28 @@ class ThoughtLogger {
     if (reasoningResult.toolsUsed.includes('get_user_goals')) reportStep('Checking your nutrition goals...');
     if (reasoningResult.toolsUsed.includes('propose_food_log')) reportStep('Preparing a log entry for you...');
     // Handle proposals (PCC pattern)
-    if (reasoningResult.proposal) {
-      await sessionService.savePendingAction(userId, {
-        type: reasoningResult.proposal.type,
-        data: reasoningResult.proposal.data
-      });
-      response.response_type = `confirmation_${reasoningResult.proposal.type}`;
+    let activeProposal = reasoningResult.proposal;
+
+    // Persist pending modal: If ReasoningAgent didn't make a new proposal, but we have one in session,
+    // re-attach it so the modal persists during follow-up questions.
+    if (!activeProposal && session.pending_action) {
+      console.log('[OrchestratorV3] Re-attaching pending action from session for persistence');
+      activeProposal = {
+        type: session.pending_action.type,
+        id: session.pending_action.data.proposal_id || session.pending_action.data.id || `prop_persist_${Date.now()}`,
+        data: session.pending_action.data
+      };
+    }
+
+    if (activeProposal) {
+      if (reasoningResult.proposal) {
+        // Only save to DB if it's a NEW proposal from this turn
+        await sessionService.savePendingAction(userId, {
+          type: activeProposal.type,
+          data: activeProposal.data
+        });
+      }
+      response.response_type = `confirmation_${activeProposal.type}`;
     }
     // =========================================================
     // STEP 5: ChatAgent - Final Formatting
@@ -597,11 +613,12 @@ class ThoughtLogger {
     // Finalize Response data
     response.data = {
       ...reasoningResult.data,
-      proposal: reasoningResult.proposal
+      proposal: activeProposal
     };
+
     // Map proposal data to specific keys for frontend
-    if (reasoningResult.proposal) {
-      const p = reasoningResult.proposal;
+    if (activeProposal) {
+      const p = activeProposal;
       if (p.type === 'food_log') {
         response.data.nutrition = [
           p.data

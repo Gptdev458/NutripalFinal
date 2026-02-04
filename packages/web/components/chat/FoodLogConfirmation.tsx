@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { NutrientDisplay, UserGoal } from './NutrientDisplay';
 
 interface FoodItem {
     food_name: string;
@@ -7,10 +8,12 @@ interface FoodItem {
     carbs_g: number;
     fat_total_g: number;
     serving_size?: string;
+    [key: string]: any;
 }
 
 interface FoodLogConfirmationProps {
     nutrition: FoodItem[];
+    userGoals?: UserGoal[];
     onConfirm: () => void;
     onDecline: () => void;
     onEdit?: (items: FoodItem[]) => void; // Placeholder for future explicit edit UI
@@ -20,6 +23,7 @@ interface FoodLogConfirmationProps {
 
 export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
     nutrition,
+    userGoals,
     onConfirm,
     onDecline,
     onEdit,
@@ -27,10 +31,17 @@ export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
     confirmLabel = 'Log Food'
 }) => {
     const [isEditing, setIsEditing] = useState(false);
-    const totalCalories = nutrition.reduce((sum, item) => sum + item.calories, 0);
-    const totalProtein = nutrition.reduce((sum, item) => sum + item.protein_g, 0);
-    const totalCarbs = nutrition.reduce((sum, item) => sum + item.carbs_g, 0);
-    const totalFat = nutrition.reduce((sum, item) => sum + item.fat_total_g, 0);
+    const totalCalories = nutrition.reduce((sum, item) => sum + (item.calories || 0), 0);
+
+    // Calculate totals for all nutrients present in any item
+    const aggregatedNutrition = nutrition.reduce((acc, item) => {
+        Object.keys(item).forEach(key => {
+            if (typeof item[key] === 'number') {
+                acc[key] = (acc[key] || 0) + item[key];
+            }
+        });
+        return acc;
+    }, { food_name: 'Total' } as any);
 
     return (
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden mt-2">
@@ -40,14 +51,13 @@ export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
             </div>
 
             <div className="p-4 space-y-4">
-                {/* Summary */}
-                <div className="flex justify-between items-baseline mb-2">
-                    <div className="text-2xl font-bold text-gray-900">{Math.round(totalCalories)} <span className="text-sm font-normal text-gray-500">kcal</span></div>
-                    <div className="flex gap-3 text-xs text-gray-600">
-                        <span><span className="font-medium text-gray-900">{Math.round(totalProtein)}g</span> Prot</span>
-                        <span><span className="font-medium text-gray-900">{Math.round(totalCarbs)}g</span> Carb</span>
-                        <span><span className="font-medium text-gray-900">{Math.round(totalFat)}g</span> Fat</span>
-                    </div>
+                {/* Dynamic Summary using NutrientDisplay */}
+                <div className="border-b border-gray-50 pb-3">
+                    <NutrientDisplay
+                        nutrition={[aggregatedNutrition]}
+                        userGoals={userGoals}
+                        variant="chat"
+                    />
                 </div>
 
                 {/* Item List */}

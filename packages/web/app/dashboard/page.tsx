@@ -10,6 +10,7 @@ import DashboardSummaryTable from '@/components/DashboardSummaryTable';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createBrowserClient } from '@supabase/ssr';
 import { useDashboardData } from '@/hooks/useDashboardData';
+import { NutrientDisplay } from '@/components/chat/NutrientDisplay';
 
 // Force dynamic rendering to bypass cache
 export const dynamic = 'force-dynamic';
@@ -242,19 +243,12 @@ export default function DashboardPage() {
                         {formatDateFn(new Date(log.log_time), 'h:mm a')}
                       </span>
                     </div>
-                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
-                      {typeof log.calories === 'number' && (
-                        <p className="text-[11px] font-bold text-blue-600">{Math.round(log.calories)} kcal</p>
-                      )}
-                      {typeof log.protein_g === 'number' && (
-                        <p className="text-[11px] text-gray-500"><span className="font-semibold text-gray-700">P:</span> {Math.round(log.protein_g)}g</p>
-                      )}
-                      {typeof log.carbs_g === 'number' && (
-                        <p className="text-[11px] text-gray-500"><span className="font-semibold text-gray-700">C:</span> {Math.round(log.carbs_g)}g</p>
-                      )}
-                      {typeof log.fat_total_g === 'number' && (
-                        <p className="text-[11px] text-gray-500"><span className="font-semibold text-gray-700">F:</span> {Math.round(log.fat_total_g)}g</p>
-                      )}
+                    <div className="mt-1">
+                      <NutrientDisplay
+                        nutrition={[log]}
+                        userGoals={userGoals}
+                        variant="dashboard"
+                      />
                     </div>
                   </button>
                 ))}
