@@ -50,7 +50,7 @@ class ThoughtLogger {
   };
   const startTime = Date.now();
   const thoughts = new ThoughtLogger();
-  const reportStep = (step)=>{
+  const reportStep = (step) => {
     thoughts.log(step);
     if (onStep) onStep(step);
   };
@@ -155,7 +155,7 @@ class ThoughtLogger {
         'serving',
         'having'
       ];
-      const hasConsumption = consumptionKeywords.some((k)=>lowerMessage.includes(k));
+      const hasConsumption = consumptionKeywords.some((k) => lowerMessage.includes(k));
       if (!hasConsumption) {
         console.log('[OrchestratorV3] Recipe heuristic triggered (Direct Route)');
         reportStep('Analyzing recipe...');
@@ -182,12 +182,12 @@ class ThoughtLogger {
               recipe_name: fs.parsed.recipe_name,
               servings: fs.parsed.servings,
               nutrition_data: fs.batchNutrition,
-              ingredients: fs.ingredientsWithNutrition?.map((ing)=>({
-                  name: ing.name,
-                  amount: ing.amount || ing.quantity || '',
-                  unit: ing.unit || '',
-                  calories: ing.nutrition?.calories || 0
-                })) || []
+              ingredients: fs.ingredientsWithNutrition?.map((ing) => ({
+                name: ing.name,
+                amount: ing.amount || ing.quantity || '',
+                unit: ing.unit || '',
+                calories: ing.nutrition?.calories || 0
+              })) || []
             },
             preview: message.substring(0, 100) + '...'
           };
@@ -229,7 +229,7 @@ class ThoughtLogger {
       sessionId
     });
     const intent = intentResult.intent;
-    switch(intent){
+    switch (intent) {
       case 'greet':
         console.log('[OrchestratorV3] Branch: greet');
         reportStep('Saying hello!');
@@ -290,11 +290,11 @@ class ThoughtLogger {
               parsed: {
                 recipe_name: recipe.recipe_name,
                 servings: recipe.servings,
-                ingredients: recipe.recipe_ingredients?.map((ing)=>({
-                    name: ing.ingredient_name,
-                    quantity: ing.quantity,
-                    unit: ing.unit
-                  })) || []
+                ingredients: recipe.recipe_ingredients?.map((ing) => ({
+                  name: ing.ingredient_name,
+                  quantity: ing.quantity,
+                  unit: ing.unit
+                })) || []
               },
               batchNutrition: recipe.nutrition_data,
               existingRecipeId: recipe.id,
@@ -316,12 +316,12 @@ class ThoughtLogger {
               parsed: {
                 ...fs.parsed,
                 nutrition_data: fs.batchNutrition,
-                ingredients: recipe.recipe_ingredients?.map((ing)=>({
-                    name: ing.ingredient_name,
-                    amount: ing.quantity,
-                    unit: ing.unit,
-                    calories: ing.nutrition_data?.calories || 0
-                  })) || []
+                ingredients: recipe.recipe_ingredients?.map((ing) => ({
+                  name: ing.ingredient_name,
+                  amount: ing.quantity,
+                  unit: ing.unit,
+                  calories: ing.nutrition_data?.calories || 0
+                })) || []
               }
             };
             const chatAgentLogMatch = new ChatAgent();
@@ -399,12 +399,12 @@ class ThoughtLogger {
                 recipe_name: fs.parsed.recipe_name,
                 servings: fs.parsed.servings,
                 nutrition_data: fs.batchNutrition,
-                ingredients: fs.ingredientsWithNutrition?.map((ing)=>({
-                    name: ing.name,
-                    amount: ing.amount || ing.quantity || '',
-                    unit: ing.unit || '',
-                    calories: ing.nutrition?.calories || 0
-                  })) || []
+                ingredients: fs.ingredientsWithNutrition?.map((ing) => ({
+                  name: ing.name,
+                  amount: ing.amount || ing.quantity || '',
+                  unit: ing.unit || '',
+                  calories: ing.nutrition?.calories || 0
+                })) || []
               }
             };
             const chatAgentRecipe = new ChatAgent();
@@ -428,11 +428,18 @@ class ThoughtLogger {
           // Simple search by name
           const recipeName = intentResult.food_items?.[0] || message;
           console.log('[OrchestratorV3] Branch: log_recipe_shortcut (search)');
-          reportStep(`Searching for "${recipeName}" in your recipes...`);
+
+          // Clean the query to remove "log", "my", "track" prefix if falling back to message
+          let query = recipeName;
+          if (query === message) {
+            query = query.replace(/^(log|track|have|had|ate|record)\s+(my\s+)?/i, '').trim();
+          }
+
+          reportStep(`Searching for "${query}" in your recipes...`);
           const recipeAgent = new RecipeAgent();
           const findResult = await recipeAgent.execute({
             type: 'find',
-            name: recipeName
+            name: query
           }, context);
           if (findResult.type === 'found') {
             // We found it! Trigger the same "Duplicate Found" modal so user can choose log/update/new
@@ -444,11 +451,11 @@ class ThoughtLogger {
               parsed: {
                 recipe_name: recipe.recipe_name,
                 servings: recipe.servings,
-                ingredients: recipe.recipe_ingredients?.map((ing)=>({
-                    name: ing.ingredient_name,
-                    quantity: ing.quantity,
-                    unit: ing.unit
-                  })) || []
+                ingredients: recipe.recipe_ingredients?.map((ing) => ({
+                  name: ing.ingredient_name,
+                  quantity: ing.quantity,
+                  unit: ing.unit
+                })) || []
               },
               batchNutrition: recipe.nutrition_data,
               existingRecipeId: recipe.id,
@@ -469,12 +476,12 @@ class ThoughtLogger {
               parsed: {
                 ...fs.parsed,
                 nutrition_data: fs.batchNutrition,
-                ingredients: recipe.recipe_ingredients?.map((ing)=>({
-                    name: ing.ingredient_name,
-                    amount: ing.quantity,
-                    unit: ing.unit,
-                    calories: ing.nutrition_data?.calories || 0
-                  })) || []
+                ingredients: recipe.recipe_ingredients?.map((ing) => ({
+                  name: ing.ingredient_name,
+                  amount: ing.quantity,
+                  unit: ing.unit,
+                  calories: ing.nutrition_data?.calories || 0
+                })) || []
               }
             };
             const chatAgentFound = new ChatAgent();
@@ -512,12 +519,12 @@ class ThoughtLogger {
               recipe_name: fs.parsed.recipe_name,
               servings: fs.parsed.servings,
               nutrition_data: fs.batchNutrition,
-              ingredients: fs.ingredientsWithNutrition?.map((ing)=>({
-                  name: ing.name,
-                  amount: ing.amount || ing.quantity || '',
-                  unit: ing.unit || '',
-                  calories: ing.nutrition?.calories || 0
-                })) || []
+              ingredients: fs.ingredientsWithNutrition?.map((ing) => ({
+                name: ing.name,
+                amount: ing.amount || ing.quantity || '',
+                unit: ing.unit || '',
+                calories: ing.nutrition?.calories || 0
+              })) || []
             }
           };
           const chatAgentSaveRecipe = new ChatAgent();
@@ -618,17 +625,17 @@ class ThoughtLogger {
           recipe_name: fs.parsed.recipe_name,
           servings: fs.parsed.servings,
           nutrition_data: fs.batchNutrition,
-          ingredients: fs.ingredientsWithNutrition?.map((ing)=>({
-              name: ing.name || ing.ingredient_name,
-              amount: ing.amount || ing.quantity || '',
-              unit: ing.unit || '',
-              calories: ing.nutrition?.calories || ing.nutrition_data?.calories || 0
-            })) || fs.parsed.ingredients?.map((ing)=>({
-              name: ing.name,
-              amount: ing.quantity || '',
-              unit: ing.unit || '',
-              calories: 0 // Placeholder if nutrition calculation failed but ingredients are there
-            })) || []
+          ingredients: fs.ingredientsWithNutrition?.map((ing) => ({
+            name: ing.name || ing.ingredient_name,
+            amount: ing.amount || ing.quantity || '',
+            unit: ing.unit || '',
+            calories: ing.nutrition?.calories || ing.nutrition_data?.calories || 0
+          })) || fs.parsed.ingredients?.map((ing) => ({
+            name: ing.name,
+            amount: ing.quantity || '',
+            unit: ing.unit || '',
+            calories: 0 // Placeholder if nutrition calculation failed but ingredients are there
+          })) || []
         };
         response.response_type = 'confirmation_recipe_save';
       } else if (p.type === 'goal_update') {
@@ -668,7 +675,7 @@ class ThoughtLogger {
   const { type, data } = pendingAction;
   const lowerMessage = message.trim().toLowerCase();
   try {
-    switch(type){
+    switch (type) {
       case 'food_log':
         await db.logFoodItems(userId, [
           {
@@ -867,16 +874,16 @@ class ThoughtLogger {
   }
   if (intentResult.entities && Array.isArray(intentResult.entities)) {
     // Entities might contain food names
-    foods.push(...intentResult.entities.filter((e)=>![
-        'today',
-        'yesterday',
-        'tomorrow',
-        'morning',
-        'evening',
-        'lunch',
-        'dinner',
-        'breakfast'
-      ].includes(e.toLowerCase())));
+    foods.push(...intentResult.entities.filter((e) => ![
+      'today',
+      'yesterday',
+      'tomorrow',
+      'morning',
+      'evening',
+      'lunch',
+      'dinner',
+      'breakfast'
+    ].includes(e.toLowerCase())));
   }
   // Extract from nutrition lookup results
   if (gatheredData?.lookup_nutrition?.food_name) {
@@ -887,7 +894,7 @@ class ThoughtLogger {
   }
   // Deduplicate and clean
   return [
-    ...new Set(foods.filter((f)=>f && f.length > 0))
+    ...new Set(foods.filter((f) => f && f.length > 0))
   ];
 }
 /**

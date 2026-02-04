@@ -43,7 +43,7 @@ export class RecipeAgent {
           // For now simple keyword matching
           const text = action.message.toLowerCase();
           let choice = 'log' // default safety
-          ;
+            ;
           if (text.includes('update')) choice = 'update';
           else if (text.includes('save') || text.includes('new')) choice = 'new';
           else if (text.includes('log')) choice = 'log';
@@ -99,18 +99,18 @@ export class RecipeAgent {
           };
         }
         // 4. word-level intersection matching
-        const words = name.split(/\s+/).filter((w)=>w.length > 2 && ![
-            'with',
-            'and',
-            'the',
-            'for',
-            'from'
-          ].includes(w.toLowerCase()));
+        const words = name.split(/\s+/).filter((w) => w.length > 2 && ![
+          'with',
+          'and',
+          'the',
+          'for',
+          'from'
+        ].includes(w.toLowerCase()));
         if (words.length > 0) {
           let query = supabase.from('user_recipes').select('*, recipe_ingredients(*)').eq('user_id', userId);
           // Build a query where at least most words match or use word intersection
           // Simple implementation: all significant words must be present
-          for (const word of words){
+          for (const word of words) {
             query = query.ilike('recipe_name', `%${word}%`);
           }
           const { data: fuzzyData, error: fuzzyError } = await query.limit(1).maybeSingle();
@@ -424,7 +424,7 @@ export class RecipeAgent {
           const { data: existing } = await supabase.from('user_recipes').select('id, recipe_name').eq('user_id', userId).ilike('recipe_name', parsed.recipe_name).maybeSingle();
           if (existing) {
             console.log(`[RecipeAgent] Found existing recipe with similar name: "${existing.recipe_name}"`);
-          // For now, we'll allow saving with a note. In future, we can add an update flow.
+            // For now, we'll allow saving with a note. In future, we can add an update flow.
           }
         }
         let { batchNutrition, ingredientsWithNutrition } = action;
@@ -450,8 +450,8 @@ export class RecipeAgent {
   /**
    * Calculate nutrition for all ingredients in a recipe
    */ async calculateNutrition(parsed, context) {
-    const ingredientNames = parsed.ingredients.map((ing)=>ing.name);
-    const ingredientPortions = parsed.ingredients.map((ing)=>`${ing.quantity} ${ing.unit}`);
+    const ingredientNames = parsed.ingredients.map((ing) => ing.name);
+    const ingredientPortions = parsed.ingredients.map((ing) => `${ing.quantity} ${ing.unit}`);
     let batchNutrition = {};
     let ingredientsWithNutrition = [];
     let warnings = [];
@@ -463,7 +463,7 @@ export class RecipeAgent {
       }, context);
       // 4. Validate ingredients (Early Warning)
       const likelyCaloric = /protein|oil|butter|fat|carb|flour|bread|meat|chicken|beef|egg|milk|cheese|rice|pasta|sugar|honey|syrup|avocado|nut|almond|peanut|snack|cookie|cake|chip|potato|corn|bean|lentil|salmon|tuna|steak|pork|bacon|yogurt/i;
-      parsed.ingredients.forEach((ing, i)=>{
+      parsed.ingredients.forEach((ing, i) => {
         const nut = nutritionResults[i];
         if (nut) {
           ingredientsWithNutrition.push({
@@ -474,7 +474,7 @@ export class RecipeAgent {
           if (nut.calories === 0 && likelyCaloric.test(ing.name)) {
             warnings.push(`Ingredient \"${ing.name}\" returned 0 calories, which seems incorrect.`);
           }
-          Object.keys(nut).forEach((key)=>{
+          Object.keys(nut).forEach((key) => {
             if (typeof nut[key] === 'number') {
               batchNutrition[key] = (batchNutrition[key] || 0) + nut[key];
             }
@@ -488,7 +488,7 @@ export class RecipeAgent {
         }
       });
       // Round totals
-      Object.keys(batchNutrition).forEach((key)=>{
+      Object.keys(batchNutrition).forEach((key) => {
         if (typeof batchNutrition[key] === 'number') {
           batchNutrition[key] = Math.round(batchNutrition[key] * 10) / 10;
         }
@@ -520,13 +520,13 @@ export class RecipeAgent {
       ingredient_fingerprint: parsed.fingerprint || RecipeAgent.calculateFingerprint(parsed.ingredients)
     }).select().single();
     if (recipeError) throw recipeError;
-    const ingredients = ingredientsWithNutrition.map((ing)=>({
-        recipe_id: recipe.id,
-        ingredient_name: ing.name,
-        quantity: ing.quantity,
-        unit: ing.unit,
-        nutrition_data: ing.nutrition
-      }));
+    const ingredients = ingredientsWithNutrition.map((ing) => ({
+      recipe_id: recipe.id,
+      ingredient_name: ing.name,
+      quantity: ing.quantity,
+      unit: ing.unit,
+      nutrition_data: ing.nutrition
+    }));
     const { error: ingError } = await supabase.from('recipe_ingredients').insert(ingredients);
     if (ingError) throw ingError;
     return recipe;
@@ -546,17 +546,17 @@ export class RecipeAgent {
       per_serving_nutrition: scaleNutrition(batchNutrition, 1 / (parsed.servings || 1)),
       ingredient_fingerprint: parsed.fingerprint || RecipeAgent.calculateFingerprint(parsed.ingredients)
     }).eq('id', recipeId).eq('user_id', userId) // Safety check
-    .select().single();
+      .select().single();
     if (recipeError) throw recipeError;
     // Delete old ingredients and insert new ones
     await supabase.from('recipe_ingredients').delete().eq('recipe_id', recipeId);
-    const ingredients = ingredientsWithNutrition.map((ing)=>({
-        recipe_id: recipeId,
-        ingredient_name: ing.name,
-        quantity: ing.quantity,
-        unit: ing.unit,
-        nutrition_data: ing.nutrition
-      }));
+    const ingredients = ingredientsWithNutrition.map((ing) => ({
+      recipe_id: recipeId,
+      ingredient_name: ing.name,
+      quantity: ing.quantity,
+      unit: ing.unit,
+      nutrition_data: ing.nutrition
+    }));
     const { error: ingError } = await supabase.from('recipe_ingredients').insert(ingredients);
     if (ingError) throw ingError;
     console.log(`[RecipeAgent] Updated recipe: ${recipe.recipe_name} (${recipeId})`);
@@ -583,15 +583,56 @@ export class RecipeAgent {
       'cloves',
       'and',
       'with',
-      'optional'
+      'optional',
+      'raw',
+      'cooked',
+      'cup',
+      'cups',
+      'tbsp',
+      'tsp',
+      'gram',
+      'grams',
+      'oz',
+      'ounce',
+      'scoop',
+      'scoops',
+      'whole',
+      'piece',
+      'pieces',
+      'ml',
+      'l',
+      'liter',
+      'liters',
+      'bottle',
+      'bottles',
+      'can',
+      'cans',
+      'rolled',
+      'steel',
+      'cut',
+      'instant',
+      'baby',
+      'leaves',
+      'powder',
+      'protein', // Often "Whey Protein" -> "Whey", "Pea Protein" -> "Pea" which is better for matching
+      'isolate',
+      'shake',
+      'mix'
     ];
-    return ingredients.map((ing)=>{
-      // Normalize name: lowercase, remove special chars, remove stop words
-      let n = ing.name.trim().toLowerCase().replace(/[^a-z0-9 ]/g, '');
+    // Helper for stemming (simple plural stripper)
+    const singularize = (word) => {
+      if (word.endsWith('es') && word.length > 3) return word.slice(0, -2); // box->box (approx), tomatoes->tomato (approx)
+      if (word.endsWith('s') && !word.endsWith('ss') && word.length > 3) return word.slice(0, -1);
+      return word;
+    };
+    return ingredients.map((ing) => {
+      // Normalize name: lowercase, remove special chars AND NUMBERS, remove stop words
+      // Replace numbers with space to split effectively
+      let n = ing.name.trim().toLowerCase().replace(/[^a-z ]/g, ' ');
       // Remove stop words from the name itself
-      const parts = n.split(/\s+/).filter((p)=>!stopWords.includes(p));
+      const parts = n.split(/\s+/).filter((p) => !stopWords.includes(p) && p.length > 1).map((p) => singularize(p));
       return parts.join(' ');
-    }).filter((n)=>n.length > 0).sort().join(',');
+    }).filter((n) => n.length > 0).sort().join(',');
   }
 }
 // Legacy exports

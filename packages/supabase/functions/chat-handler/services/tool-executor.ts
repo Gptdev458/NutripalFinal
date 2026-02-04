@@ -18,7 +18,7 @@ export class ToolExecutor {
   insightAgent;
   validatorAgent;
   agentContext;
-  constructor(context){
+  constructor(context) {
     this.context = context;
     this.db = new DbService(context.supabase);
     this.nutritionAgent = new NutritionAgent();
@@ -37,7 +37,7 @@ export class ToolExecutor {
      */ async execute(toolName, args = {}) {
     console.log(`[ToolExecutor] Executing tool: ${toolName}`, args);
     try {
-      switch(toolName){
+      switch (toolName) {
         // User Context Tools
         case 'get_user_profile':
           return this.getUserProfile();
@@ -127,7 +127,7 @@ export class ToolExecutor {
     }
     // Convert array to object for easier reading
     const goalsMap = {};
-    for (const goal of goals){
+    for (const goal of goals) {
       goalsMap[goal.nutrient] = {
         target: goal.target_value,
         unit: goal.unit || (goal.nutrient === 'calories' ? 'kcal' : 'g')
@@ -150,7 +150,7 @@ export class ToolExecutor {
       items_logged: 0
     };
     if (logs) {
-      for (const log of logs){
+      for (const log of logs) {
         totals.calories += log.calories || 0;
         totals.protein_g += log.protein_g || 0;
         totals.carbs_g += log.carbs_g || 0;
@@ -162,7 +162,7 @@ export class ToolExecutor {
       }
     }
     // Round values
-    Object.keys(totals).forEach((key)=>{
+    Object.keys(totals).forEach((key) => {
       if (typeof totals[key] === 'number') {
         totals[key] = Math.round(totals[key]);
       }
@@ -186,7 +186,7 @@ export class ToolExecutor {
   parseWeeklyAverages(patterns) {
     // Parse patterns like "Weekly avg calories: 1800kcal"
     const averages = {};
-    for (const pattern of patterns){
+    for (const pattern of patterns) {
       const match = pattern.match(/Weekly avg (\w+): (\d+)/);
       if (match) {
         averages[match[1]] = parseInt(match[2]);
@@ -197,7 +197,7 @@ export class ToolExecutor {
   calculateCompliance(progress) {
     const values = Object.values(progress);
     if (values.length === 0) return 'No goals to track';
-    const avgProgress = values.reduce((a, b)=>a + b, 0) / values.length;
+    const avgProgress = values.reduce((a, b) => a + b, 0) / values.length;
     if (avgProgress >= 90 && avgProgress <= 110) return 'On track! 🎯';
     if (avgProgress < 90) return 'Under targets';
     return 'Above targets';
@@ -208,7 +208,7 @@ export class ToolExecutor {
     const logs = await this.db.getFoodLogs(this.context.userId, start, end);
     // Group by date
     const byDate = {};
-    for (const log of logs || []){
+    for (const log of logs || []) {
       const date = new Date(log.log_time).toISOString().split('T')[0];
       if (!byDate[date]) byDate[date] = [];
       byDate[date].push({
@@ -268,7 +268,14 @@ export class ToolExecutor {
           protein_g: Math.round((result.protein_g || 0) * 10) / 10,
           carbs_g: Math.round((result.carbs_g || 0) * 10) / 10,
           fat_g: Math.round((result.fat_total_g || 0) * 10) / 10,
-          source: 'database'
+          source: 'database',
+          // Pass through micros so they are available for logging
+          fiber_g: result.fiber_g ? Math.round(result.fiber_g * 10) / 10 : 0,
+          sugar_g: result.sugar_g ? Math.round(result.sugar_g * 10) / 10 : 0,
+          sodium_mg: result.sodium_mg ? Math.round(result.sodium_mg) : 0,
+          fat_saturated_g: result.fat_saturated_g ? Math.round(result.fat_saturated_g * 10) / 10 : 0,
+          cholesterol_mg: result.cholesterol_mg ? Math.round(result.cholesterol_mg) : 0,
+          potassium_mg: result.potassium_mg ? Math.round(result.potassium_mg) : 0
         };
       }
     }
@@ -347,7 +354,7 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. ${hi
     };
   }
   async compareFoods(foods) {
-    const comparisons = await Promise.all(foods.slice(0, 5).map((food)=>this.lookupNutrition(food)));
+    const comparisons = await Promise.all(foods.slice(0, 5).map((food) => this.lookupNutrition(food)));
     return {
       foods: comparisons,
       best_protein: this.findBest(comparisons, 'protein_g'),
@@ -356,22 +363,22 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. ${hi
     };
   }
   findBest(items, field) {
-    const best = items.reduce((a, b)=>(a[field] || 0) > (b[field] || 0) ? a : b);
+    const best = items.reduce((a, b) => (a[field] || 0) > (b[field] || 0) ? a : b);
     return best.food_name;
   }
   findLowest(items, field) {
-    const lowest = items.reduce((a, b)=>(a[field] || 9999) < (b[field] || 9999) ? a : b);
+    const lowest = items.reduce((a, b) => (a[field] || 9999) < (b[field] || 9999) ? a : b);
     return lowest.food_name;
   }
   generateComparisonNote(items) {
-    const names = items.map((i)=>i.food_name).join(', ');
+    const names = items.map((i) => i.food_name).join(', ');
     return `Compared ${items.length} foods: ${names}`;
   }
   // =============================================================
   // RECIPE TOOLS
   // =============================================================
   async searchSavedRecipes(query) {
-    const words = query.trim().split(/\s+/).filter((w)=>w.length > 1);
+    const words = query.trim().split(/\s+/).filter((w) => w.length > 1);
     const searchPattern = words.length > 0 ? `%${words.join('%')}%` : `%${query.trim()}%`;
     const { data, error } = await this.context.supabase.from('user_recipes').select('id, recipe_name, nutrition_data, servings').eq('user_id', this.context.userId).ilike('recipe_name', searchPattern).limit(5);
     if (error) throw error;
@@ -381,12 +388,12 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. ${hi
       };
     }
     return {
-      recipes: data.map((r)=>({
-          id: r.id,
-          name: r.recipe_name,
-          servings: r.servings || 1,
-          calories_per_serving: r.nutrition_data?.calories ? Math.round(r.nutrition_data.calories / (r.servings || 1)) : 0
-        }))
+      recipes: data.map((r) => ({
+        id: r.id,
+        name: r.recipe_name,
+        servings: r.servings || 1,
+        calories_per_serving: r.nutrition_data?.calories ? Math.round(r.nutrition_data.calories / (r.servings || 1)) : 0
+      }))
     };
   }
   async getRecipeDetails(recipeId) {
@@ -595,7 +602,7 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. ${hi
         message: 'Need goals set to provide recommendations'
       };
     }
-    for (const [nutrient, goalData] of Object.entries(goals)){
+    for (const [nutrient, goalData] of Object.entries(goals)) {
       const consumed = progress[nutrient] || 0;
       remaining[nutrient] = Math.max(0, goalData.target - consumed);
     }
@@ -621,7 +628,7 @@ Return JSON with: { suggestions: [{ food: string, reason: string, approximate_nu
     });
     try {
       return JSON.parse(response.choices[0].message.content || '{}');
-    } catch  {
+    } catch {
       return {
         message: 'Could not generate recommendations'
       };
@@ -654,7 +661,7 @@ Return JSON with: { patterns: string[], insights: string[], suggestions: string[
     });
     try {
       return JSON.parse(response.choices[0].message.content || '{}');
-    } catch  {
+    } catch {
       return {
         message: 'Could not analyze patterns'
       };
