@@ -62,71 +62,113 @@ export class RecipeAgent {
         };
       }
       if (action.type === 'find') {
-        const name = action.name.trim();
+        const name = action.name?.trim() || '';
         const fingerprint = action.fingerprint;
         console.log(`[RecipeAgent] Searching for recipe: "${name}" (Fingerprint provided: ${!!fingerprint})`);
+
         // 1. Try fingerprint match first if provided (Exact identical ingredients)
-        if (fingerprint) {
-          const { data, error } = await supabase.from('user_recipes').select('*, recipe_ingredients(*)').eq('user_id', userId).eq('ingredient_fingerprint', fingerprint).order('updated_at', {
-            ascending: false
-          }).limit(1).maybeSingle();
+        if (fingerprint && fingerprint.length > 0) {
+          const { data, error } = await supabase.from('user_recipes')
+            .select('*, recipe_ingredients(*)')
+            .eq('user_id', userId)
+            .eq('ingredient_fingerprint', fingerprint)
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
           if (error) {
             console.error('[RecipeAgent] Error finding recipe by fingerprint:', error);
           } else if (data) {
             console.log(`[RecipeAgent] Found exact fingerprint match: "${data.recipe_name}"`);
-            return {
-              type: 'found',
-              recipe: data
-            };
+            return { type: 'found', recipe: data };
           }
         }
+
+        // IF NO NAME PROVIDED, DON'T DO SUBSTRING/FUZZY MATCHES (Avoids matching "empty" to first recipe)
+        if (!name || name.length < 2) {
+          return { type: 'not_found' };
+        }
+
         // 2. Try exact name match (Case-insensitive)
-        const { data: exactName, error: exactError } = await supabase.from('user_recipes').select('*, recipe_ingredients(*)').eq('user_id', userId).ilike('recipe_name', name).maybeSingle();
+        const { data: exactName } = await supabase.from('user_recipes')
+          .select('*, recipe_ingredients(*)')
+          .eq('user_id', userId)
+          .ilike('recipe_name', name)
+          .maybeSingle();
+
         if (exactName) {
           console.log(`[RecipeAgent] Found exact name match: "${exactName.recipe_name}"`);
-          return {
-            type: 'found',
-            recipe: exactName
-          };
+          return { type: 'found', recipe: exactName };
         }
-        // 3. Try substring match (Name check)
-        const { data: substringMatch, error } = await supabase.from('user_recipes').select('*, recipe_ingredients(*)').eq('user_id', userId).ilike('recipe_name', `%${name}%`).limit(1).maybeSingle();
-        if (substringMatch) {
-          console.log(`[RecipeAgent] Found substring name match: "${substringMatch.recipe_name}"`);
+
+        // 3. Try substring match (Name check) - return multiple if found
+        const { data: substringMatches } = await supabase.from('user_recipes')
+          .select('*, recipe_ingredients(*)')
+          .eq('user_id', userId)
+          .ilike('recipe_name', `%${name}%`)
+          .order('updated_at', { ascending: false })
+          .limit(5);
+
+        if (substringMatches && substringMatches.length > 1) {
+          console.log(`[RecipeAgent] Found ${substringMatches.length} substring matches for "${name}"`);
           return {
-            type: 'found',
-            recipe: substringMatch
+            type: 'multiple_found',
+            recipes: substringMatches.map(r => ({
+              id: r.id,
+              recipe_name: r.recipe_name,
+              servings: r.servings,
+              calories_per_serving: r.nutrition_data?.calories
+                ? Math.round(r.nutrition_data.calories / (r.servings || 1))
+                : 0,
+              full_recipe: r // Store full recipe for later use
+            }))
           };
+        } else if (substringMatches && substringMatches.length === 1) {
+          console.log(`[RecipeAgent] Found substring name match: "${substringMatches[0].recipe_name}"`);
+          return { type: 'found', recipe: substringMatches[0] };
         }
-        // 4. word-level intersection matching
-        const words = name.split(/\s+/).filter((w) => w.length > 2 && ![
-          'with',
-          'and',
-          'the',
-          'for',
-          'from'
-        ].includes(w.toLowerCase()));
+
+        // 4. word-level intersection matching - return multiple if found
+        const words = name.split(/\s+/)
+          .filter(w => w.length > 2 && !['with', 'and', 'the', 'for', 'from'].includes(w.toLowerCase()));
+
         if (words.length > 0) {
-          let query = supabase.from('user_recipes').select('*, recipe_ingredients(*)').eq('user_id', userId);
+          let query = supabase.from('user_recipes')
+            .select('*, recipe_ingredients(*)')
+            .eq('user_id', userId);
+
           // Build a query where at least most words match or use word intersection
-          // Simple implementation: all significant words must be present
           for (const word of words) {
             query = query.ilike('recipe_name', `%${word}%`);
           }
-          const { data: fuzzyData, error: fuzzyError } = await query.limit(1).maybeSingle();
+
+          const { data: fuzzyMatches, error: fuzzyError } = await query
+            .order('updated_at', { ascending: false })
+            .limit(5);
+
           if (fuzzyError) {
             console.error('[RecipeAgent] Error in fuzzy recipe find:', fuzzyError);
-          } else if (fuzzyData) {
-            console.log(`[RecipeAgent] Found fuzzy name match (multi-word): "${fuzzyData.recipe_name}"`);
+          } else if (fuzzyMatches && fuzzyMatches.length > 1) {
+            console.log(`[RecipeAgent] Found ${fuzzyMatches.length} fuzzy matches (multi-word) for "${name}"`);
             return {
-              type: 'found',
-              recipe: fuzzyData
+              type: 'multiple_found',
+              recipes: fuzzyMatches.map(r => ({
+                id: r.id,
+                recipe_name: r.recipe_name,
+                servings: r.servings,
+                calories_per_serving: r.nutrition_data?.calories
+                  ? Math.round(r.nutrition_data.calories / (r.servings || 1))
+                  : 0,
+                full_recipe: r
+              }))
             };
+          } else if (fuzzyMatches && fuzzyMatches.length === 1) {
+            console.log(`[RecipeAgent] Found fuzzy name match (multi-word): "${fuzzyMatches[0].recipe_name}"`);
+            return { type: 'found', recipe: fuzzyMatches[0] };
           }
         }
-        return {
-          type: 'not_found'
-        };
+
+        return { type: 'not_found' };
       }
       if (action.type === 'parse') {
         // Step 1: Parse the recipe text with GPT
@@ -145,10 +187,10 @@ export class RecipeAgent {
   "ingredients": [ { "name": "string", "quantity": number, "unit": "string" } ],
   "instructions": "string"
 }
-- Use provided name exactly if given.
+- Use provided name exactly if given. If the user says "save this recipe for my [name]", extract [name] as the recipe\_name.
 - Default servings to 1.
 - Extract batch/serving sizes if mentioned.
-- ONLY include "instructions" if they were explicitly provided in the text. DO NOT infer or create them yourself. If missing, return an empty string.
+- ONLY include "instructions" if they were explicitly provided. DO NOT infer them.
 - If not a recipe, return what you can find.`
             },
             {
@@ -156,9 +198,7 @@ export class RecipeAgent {
               content: action.text
             }
           ],
-          response_format: {
-            type: "json_object"
-          }
+          response_format: { type: "json_object" }
         });
         const content = response.choices[0].message.content;
         if (!content) throw new Error('Failed to parse recipe');
@@ -172,53 +212,71 @@ export class RecipeAgent {
         }
         // 0. Calculate Fingerprint for fast matching
         parsed.fingerprint = RecipeAgent.calculateFingerprint(parsed.ingredients);
-        // 1. EARLY DUPLICATE CHECK
+
+        // 1. Calculate everything upfront (Nutrition + Batch) 
+        // This ensures flowState is complete even in duplicate flows
+        const batchResult = calculateBatchSize(parsed.ingredients);
+        const { batchNutrition, ingredientsWithNutrition, warnings } = await this.calculateNutrition(parsed, context);
+        parsed.total_batch_grams = batchResult.totalGrams;
+
+        // 2. EARLY DUPLICATE CHECK
         const findResult = await this.execute({
           type: 'find',
           name: parsed.recipe_name,
           fingerprint: parsed.fingerprint
         }, context);
+
         const existingRecipe = findResult.type === 'found' ? findResult.recipe : null;
+
         if (existingRecipe) {
           const isExactMatch = existingRecipe.ingredient_fingerprint === parsed.fingerprint;
           console.log(`[RecipeAgent] Found existing recipe: "${existingRecipe.recipe_name}" (Exact match: ${isExactMatch})`);
-          const batchResult = calculateBatchSize(parsed.ingredients);
-          parsed.total_batch_grams = batchResult.totalGrams;
+
           const flowState = {
             step: 'pending_duplicate_confirm',
             parsed,
             batchSizeGrams: batchResult.totalGrams,
             suggestedServings: 1,
             existingRecipeId: existingRecipe.id,
-            existingRecipeName: existingRecipe.recipe_name
+            existingRecipeName: existingRecipe.recipe_name,
+            batchNutrition,
+            ingredientsWithNutrition
           };
-          const existingCalories = existingRecipe.nutrition_data?.calories || 'unknown';
-          const matchMsg = isExactMatch ? `I found an exact match for this recipe: "**${existingRecipe.recipe_name}**".` : `You already have a recipe called "**${existingRecipe.recipe_name}**" with similar ingredients.`;
+
+          const perServingNutrition = scaleNutrition(batchNutrition, 1 / (parsed.servings || 1));
+          perServingNutrition.food_name = parsed.recipe_name;
+          const perServingCalories = Math.round(perServingNutrition.calories);
+
+          const matchMsg = isExactMatch
+            ? `I found an exact match for this recipe: "**${existingRecipe.recipe_name}**".`
+            : `You already have a recipe called "**${existingRecipe.recipe_name}**" with similar ingredients.`;
+
           return {
             type: 'needs_confirmation',
             flowState,
-            prompt: `${matchMsg}\n\n` + `What would you like to do?\n` + `• **Log existing** - Use your saved version and log consumption\n` + `• **Update** - Update the saved recipe with these new details\n` + `• **Save new** - Keep both versions\n\n` + `*If logging, how much did you have? (e.g. 1 serving, 2 cups)*`,
+            prompt: `${matchMsg}\n\n` +
+              `What would you like to do?\n` +
+              `• **Log existing** - Use your saved version and log consumption\n` +
+              `• **Update** - Update the saved recipe with these new details\n` +
+              `• **Save new** - Keep both versions\n\n` +
+              `*If logging, how much did you have? (e.g. 1 serving, 2 cups)*`,
             response_type: 'pending_duplicate_confirm',
             proposal_type: 'recipe_save',
             pending: true,
             data: {
               flowState,
-              recipe_name: parsed.recipe_name,
-              ingredients: parsed.ingredients
+              nutrition: [perServingNutrition], // Added nutrition for frontend display
+              validation: { warnings, passed: warnings.length === 0, errors: [] }
             }
           };
         }
-        // Step 2: Calculate everything upfront (Batch, Servings, Nutrition)
-        // Step 2: Calculate everything upfront (Batch, Servings, Nutrition)
-        const batchResult = calculateBatchSize(parsed.ingredients);
         const servingResult = detectServingType(parsed.ingredients, parsed.recipe_name, action.text);
-        parsed.total_batch_grams = batchResult.totalGrams;
+
         // PREFER parsed servings if greater than 1 (meaning it was explicitly found in text)
         if (!parsed.servings || parsed.servings <= 1) {
           parsed.servings = servingResult.suggestedServings;
         }
-        // Step 3: Calculate Nutrition immediately for a "One-Shot" experience
-        const { batchNutrition, ingredientsWithNutrition, warnings } = await this.calculateNutrition(parsed, context);
+
         // Step 4: Build Flow State
         const flowState = {
           step: 'ready_to_save',
@@ -615,7 +673,6 @@ export class RecipeAgent {
       'baby',
       'leaves',
       'powder',
-      'protein', // Often "Whey Protein" -> "Whey", "Pea Protein" -> "Pea" which is better for matching
       'isolate',
       'shake',
       'mix'

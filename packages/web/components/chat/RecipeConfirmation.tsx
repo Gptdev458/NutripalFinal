@@ -66,7 +66,7 @@ export const RecipeConfirmation: React.FC<RecipeConfirmationProps> = ({
             {/* Status Header */}
             <div className={`${isMatch ? 'bg-amber-50' : 'bg-emerald-50'} px-4 py-1.5 border-b ${isMatch ? 'border-amber-100' : 'border-emerald-100'} flex justify-between items-center`}>
                 <span className={`font-bold ${isMatch ? 'text-amber-900' : 'text-emerald-900'} text-[10px] uppercase tracking-wider`}>
-                    {isMatch ? 'Existing Recipe Match' : 'Save New Recipe'}
+                    {isMatch ? `Existing Match: ${existingRecipeName || 'Found'}` : 'Save New Recipe'}
                 </span>
             </div>
 

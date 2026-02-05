@@ -295,9 +295,38 @@ class ThoughtLogger {
             type: 'find',
             name: food
           }, context);
-          if (findResultForLog.type === 'found') {
+          if (findResultForLog.type === 'multiple_found') {
+            // Multiple recipes match - ask user to select one
+            console.log(`[OrchestratorV3] Found ${findResultForLog.recipes.length} recipes matching "${food}"`);
+            await sessionService.savePendingAction(userId, {
+              type: 'recipe_selection',
+              data: {
+                recipes: findResultForLog.recipes,
+                query: food,
+                original_portion: portion
+              }
+            });
+            response.response_type = 'recipe_selection';
+            response.data = {
+              recipes: findResultForLog.recipes.map((r: any) => ({
+                id: r.id,
+                recipe_name: r.recipe_name,
+                servings: r.servings,
+                calories_per_serving: r.calories_per_serving
+              })),
+              query: food
+            };
+            const chatAgent = new ChatAgent();
+            response.message = `I found ${findResultForLog.recipes.length} recipes matching "**${food}**". Which one would you like to log?\n\n${findResultForLog.recipes.map((r: any, i: number) => `${i + 1}. **${r.recipe_name}** (${r.servings} serving(s), ~${r.calories_per_serving} kcal each)`).join('\n')}`;
+            return {
+              ...response,
+              steps: thoughts.getSteps()
+            };
+          } else if (findResultForLog.type === 'found') {
             console.log(`[OrchestratorV3] Found saved recipe match for "${food}" during log_food intent`);
             const recipe = findResultForLog.recipe;
+            // Calculate per-serving nutrition
+            const perServingNutrition = scaleNutrition(recipe.nutrition_data || {}, 1 / (recipe.servings || 1));
             const fs = {
               step: 'pending_duplicate_confirm',
               parsed: {
@@ -310,6 +339,7 @@ class ThoughtLogger {
                 })) || []
               },
               batchNutrition: recipe.nutrition_data,
+              perServingNutrition,
               existingRecipeId: recipe.id,
               existingRecipeName: recipe.recipe_name
             };
@@ -329,11 +359,13 @@ class ThoughtLogger {
               parsed: {
                 ...fs.parsed,
                 nutrition_data: fs.batchNutrition,
+                per_serving_nutrition: perServingNutrition,
                 ingredients: recipe.recipe_ingredients?.map((ing: any) => ({
                   name: ing.ingredient_name,
                   amount: ing.quantity,
                   unit: ing.unit,
-                  calories: ing.nutrition_data?.calories || 0
+                  calories: ing.nutrition_data?.calories || 0,
+                  nutrition_data: ing.nutrition_data
                 })) || []
               }
             };
@@ -454,11 +486,39 @@ class ThoughtLogger {
             type: 'find',
             name: query
           }, context);
-          if (findResult.type === 'found') {
+          if (findResult.type === 'multiple_found') {
+            // Multiple recipes match - ask user to select one
+            console.log(`[OrchestratorV3] Found ${findResult.recipes.length} recipes matching "${query}"`);
+            await sessionService.savePendingAction(userId, {
+              type: 'recipe_selection',
+              data: {
+                recipes: findResult.recipes,
+                query: query,
+                original_intent: 'log_recipe'
+              }
+            });
+            response.response_type = 'recipe_selection';
+            response.data = {
+              recipes: findResult.recipes.map((r: any) => ({
+                id: r.id,
+                recipe_name: r.recipe_name,
+                servings: r.servings,
+                calories_per_serving: r.calories_per_serving
+              })),
+              query: query
+            };
+            response.message = `I found ${findResult.recipes.length} recipes matching "**${query}**". Which one would you like to work with?\n\n${findResult.recipes.map((r: any, i: number) => `${i + 1}. **${r.recipe_name}** (${r.servings} serving(s), ~${r.calories_per_serving} kcal each)`).join('\n')}`;
+            return {
+              ...response,
+              steps: thoughts.getSteps()
+            };
+          } else if (findResult.type === 'found') {
             // We found it! Trigger the same "Duplicate Found" modal so user can choose log/update/new
             // This fulfills: "If we have the recipe saved we need to ask user what he wants, showing the modal to log, update, or do the edited log"
             // Convert saved recipe back to a pseudo-parsed format for the flowState
             const recipe = findResult.recipe;
+            // Calculate per-serving nutrition
+            const perServingNutrition = scaleNutrition(recipe.nutrition_data || {}, 1 / (recipe.servings || 1));
             const fs = {
               step: 'pending_duplicate_confirm',
               parsed: {
@@ -471,6 +531,7 @@ class ThoughtLogger {
                 })) || []
               },
               batchNutrition: recipe.nutrition_data,
+              perServingNutrition,
               existingRecipeId: recipe.id,
               existingRecipeName: recipe.recipe_name
             };
@@ -489,11 +550,13 @@ class ThoughtLogger {
               parsed: {
                 ...fs.parsed,
                 nutrition_data: fs.batchNutrition,
+                per_serving_nutrition: perServingNutrition,
                 ingredients: recipe.recipe_ingredients?.map((ing) => ({
                   name: ing.ingredient_name,
                   amount: ing.quantity,
                   unit: ing.unit,
-                  calories: ing.nutrition_data?.calories || 0
+                  calories: ing.nutrition_data?.calories || 0,
+                  nutrition_data: ing.nutrition_data
                 })) || []
               }
             };
@@ -795,6 +858,91 @@ async function logFilteredFood(userId: string, db: DbService, nutritionData: any
           response_type: 'goal_updated',
           data: {
             goal_updated: data
+          }
+        };
+      case 'recipe_selection':
+        // User has selected one recipe from multiple matches
+        // Extract recipe ID from user's choice (could be number or recipe name)
+        const selectionChoice = message.trim();
+        console.log(`[OrchestratorV3] Recipe selection choice: "${selectionChoice}"`);
+
+        let selectedRecipe = null;
+
+        // Try to match by number (e.g., "1", "2")
+        const choiceNum = parseInt(selectionChoice);
+        if (!isNaN(choiceNum) && choiceNum > 0 && choiceNum <= data.recipes.length) {
+          selectedRecipe = data.recipes[choiceNum - 1];
+        } else {
+          // Try to match by name
+          selectedRecipe = data.recipes.find((r: any) =>
+            r.recipe_name.toLowerCase().includes(selectionChoice.toLowerCase())
+          );
+        }
+
+        if (!selectedRecipe) {
+          return {
+            status: 'error',
+            message: `I couldn't find that recipe in the list. Please enter the number (1-${data.recipes.length}) or the recipe name.`,
+            response_type: 'error'
+          };
+        }
+
+        console.log(`[OrchestratorV3] Selected recipe: ${selectedRecipe.recipe_name} (${selectedRecipe.id})`);
+
+        // Fetch the full recipe data (selectedRecipe might only have summary data)
+        const selectedRecipeData = selectedRecipe.full_recipe || selectedRecipe;
+
+        // Calculate per-serving nutrition
+        const perServingNutritionSelection = scaleNutrition(selectedRecipeData.nutrition_data || {}, 1 / (selectedRecipeData.servings || 1));
+
+        // Build flowState for duplicate confirmation
+        const recipeFs = {
+          step: 'pending_duplicate_confirm',
+          parsed: {
+            recipe_name: selectedRecipeData.recipe_name,
+            servings: selectedRecipeData.servings,
+            ingredients: selectedRecipeData.recipe_ingredients?.map((ing: any) => ({
+              name: ing.ingredient_name,
+              quantity: ing.quantity,
+              unit: ing.unit
+            })) || []
+          },
+          batchNutrition: selectedRecipeData.nutrition_data,
+          perServingNutrition: perServingNutritionSelection,
+          existingRecipeId: selectedRecipeData.id,
+          existingRecipeName: selectedRecipeData.recipe_name
+        };
+
+        // Save new pending action for duplicate confirmation
+        await sessionService.savePendingAction(userId, {
+          type: 'recipe_save',
+          data: {
+            flowState: recipeFs,
+            response_type: 'pending_duplicate_confirm',
+            pending: true,
+            portion: data.original_portion
+          }
+        });
+
+        return {
+          status: 'success',
+          message: `Great! I'll use \"**${selectedRecipeData.recipe_name}**\". What would you like to do?`,
+          response_type: 'confirmation_recipe_save',
+          data: {
+            isMatch: true,
+            existingRecipeName: selectedRecipeData.recipe_name,
+            parsed: {
+              ...recipeFs.parsed,
+              nutrition_data: recipeFs.batchNutrition,
+              per_serving_nutrition: perServingNutritionSelection,
+              ingredients: selectedRecipeData.recipe_ingredients?.map((ing: any) => ({
+                name: ing.ingredient_name,
+                amount: ing.quantity,
+                unit: ing.unit,
+                calories: ing.nutrition_data?.calories || 0,
+                nutrition_data: ing.nutrition_data
+              })) || []
+            }
           }
         };
       case 'recipe_save':

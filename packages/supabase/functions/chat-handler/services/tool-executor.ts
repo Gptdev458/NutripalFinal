@@ -452,6 +452,12 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. ${hi
   // =============================================================
 
   async searchSavedRecipes(query: string) {
+    if (!query || query.trim().length < 2) {
+      return {
+        message: "Please provide a more specific search term.",
+        recipes: []
+      };
+    }
     const words = query.trim().split(/\s+/).filter((w) => w.length > 1);
     const searchPattern = words.length > 0 ? `%${words.join('%')}%` : `%${query.trim()}%`;
     const { data, error } = await this.context.supabase.from('user_recipes').select('id, recipe_name, nutrition_data, servings').eq('user_id', this.context.userId).ilike('recipe_name', searchPattern).limit(5);
