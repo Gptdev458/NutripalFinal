@@ -20,13 +20,25 @@ const LoadingSpinner = () => {
   );
 };
 
+interface Ingredient {
+  ingredient_name: string;
+  quantity: number;
+  unit: string;
+  nutrition_data?: Record<string, number>;
+}
+
 // Interface for saved recipes (can expand later)
 interface SavedRecipe {
   id: string;
   recipe_name: string;
   calories?: number | null;
   description?: string | null;
-  ingredients?: string | null; // For detailed view
+  ingredients?: string | null; // Keep for legacy, though we'll use recipe_ingredients
+  recipe_ingredients?: Ingredient[];
+  per_serving_nutrition?: Record<string, number | null>;
+  nutrition_data?: Record<string, number | null>;
+  servings?: number;
+  instructions?: string | null;
   // Add other potential detailed fields: protein, carbs, fat etc.
   [key: string]: unknown; // Fix: Use unknown instead of any
 }
@@ -72,6 +84,12 @@ export default function SavedRecipesPage() {
     ingredients: ''
   });
 
+  // Edit states for modal
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editInstructions, setEditInstructions] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
+
   // Fetch recipes AND user goals
   const loadData = useCallback(async (isRefreshing = false) => {
     if (!user || !supabase) {
@@ -90,7 +108,7 @@ export default function SavedRecipesPage() {
       const [recipeResponse, goalsResponse] = await Promise.all([
         supabase
           .from('user_recipes')
-          .select('*') // Fetch all columns
+          .select('*, recipe_ingredients(*)') // Fetch all columns and ingredients
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),
         supabase
@@ -151,6 +169,53 @@ export default function SavedRecipesPage() {
     setIsRecipeModalVisible(false);
     setSelectedRecipeData(null);
     setModalError(null);
+    setIsEditing(false); // Reset editing state
+  };
+
+  const handleStartEditing = () => {
+    if (!selectedRecipeData) return;
+    setEditName(selectedRecipeData.recipe_name);
+    setEditInstructions(selectedRecipeData.instructions || '');
+    setIsEditing(true);
+  };
+
+  const handleSaveChanges = async () => {
+    if (!selectedRecipeData || !supabase || !user) return;
+    if (!editName.trim()) {
+      setModalError("Recipe name cannot be empty.");
+      return;
+    }
+
+    setIsUpdating(true);
+    setModalError(null);
+
+    try {
+      const { error: updateError } = await supabase
+        .from('user_recipes')
+        .update({
+          recipe_name: editName.trim(),
+          instructions: editInstructions.trim()
+        })
+        .eq('id', selectedRecipeData.id)
+        .eq('user_id', user.id);
+
+      if (updateError) throw updateError;
+
+      // Update local state
+      const updatedRecipe = {
+        ...selectedRecipeData,
+        recipe_name: editName.trim(),
+        instructions: editInstructions.trim()
+      };
+      setSelectedRecipeData(updatedRecipe);
+      setRecipes(prev => prev.map(r => r.id === updatedRecipe.id ? updatedRecipe : r));
+      setIsEditing(false);
+    } catch (err: unknown) {
+      console.error("Error updating recipe:", err);
+      setModalError("Failed to save changes. Please try again.");
+    } finally {
+      setIsUpdating(false);
+    }
   };
 
   // Show portion modal instead of directly logging
@@ -298,159 +363,262 @@ export default function SavedRecipesPage() {
     };
     // --- End formatting logic ---
 
-    // Helper to render nutrient rows
-    const renderTrackedNutrient = (goal: UserGoal) => {
-      const nutrientKey = goal.nutrient;
-      const dataKey = nutrientKey.includes('_') ? nutrientKey : `${nutrientKey}_g`;
-      // Check both top-level and inside nutrition_data
-      const value = (selectedRecipeData[dataKey] !== undefined && selectedRecipeData[dataKey] !== null)
-        ? selectedRecipeData[dataKey]
-        : (selectedRecipeData.nutrition_data as any)?.[dataKey];
-      const unit = goal.unit || 'g';
-
-      if (value !== null && value !== undefined && typeof value === 'number') {
-        const displayValue = formatValue(value, unit);
-        return (
-          <div key={nutrientKey} className="flex justify-between py-1 text-sm">
-            <span className="text-gray-700 capitalize">{nutrientKey.replace(/_/g, ' ').replace(/ g$| mg$| mcg$/i, '')}:</span>
-            <span className="font-medium text-gray-900">{displayValue}</span>
-          </div>
-        );
-      }
-      return null;
+    // Standardized Nutrient List (Matching FoodLogDetailModal)
+    const NUTRIENT_MAP: Record<string, { name: string; unit: string }> = {
+      protein_g: { name: "Protein", unit: "g" },
+      fat_total_g: { name: "Total Fat", unit: "g" },
+      carbs_g: { name: "Carbohydrates", unit: "g" },
+      calories: { name: "Calories", unit: "kcal" },
+      hydration_ml: { name: "Water", unit: "ml" },
+      fiber_g: { name: "Fiber", unit: "g" },
+      sugar_g: { name: "Sugar", unit: "g" },
+      sodium_mg: { name: "Sodium", unit: "mg" },
+      potassium_mg: { name: "Potassium", unit: "mg" },
+      calcium_mg: { name: "Calcium", unit: "mg" },
+      iron_mg: { name: "Iron", unit: "mg" },
+      magnesium_mg: { name: "Magnesium", unit: "mg" },
     };
 
-    // Determine which nutrients to display based on available data and goals
-    const nutritionObj = (selectedRecipeData.nutrition_data as any) || {};
-    const combinedData = { ...nutritionObj, ...selectedRecipeData };
+    const perServingNutrition = selectedRecipeData.per_serving_nutrition || (selectedRecipeData.nutrition_data ? (
+      Object.fromEntries(
+        Object.entries(selectedRecipeData.nutrition_data).map(([k, v]) => [k, typeof v === 'number' ? v / (selectedRecipeData.servings || 1) : v])
+      )
+    ) : {});
 
-    const availableNutrients = Object.keys(combinedData).filter(key =>
-      key !== 'id' && key !== 'user_id' && key !== 'created_at' && key !== 'recipe_name' && key !== 'description' && key !== 'ingredients' &&
-      key !== 'nutrition_data' && key !== 'instructions' && key !== 'servings' && key !== 'updated_at' &&
-      combinedData[key] !== null && typeof combinedData[key] === 'number'
-    );
+    const trackedDetails = userGoals
+      .filter(goal => goal.nutrient !== 'calories')
+      .map(goal => {
+        const key = goal.nutrient;
+        const value = perServingNutrition[key] ?? (selectedRecipeData[key] !== undefined ? (selectedRecipeData[key] as number / (selectedRecipeData.servings || 1)) : 0);
+        const mapping = NUTRIENT_MAP[key];
 
-    const goalNutrientKeys = userGoals.map(g => g.nutrient.includes('_') ? g.nutrient : `${g.nutrient}_g`);
+        return {
+          key,
+          name: mapping?.name || key.replace(/_/g, ' '),
+          value: typeof value === 'number' ? value : 0,
+          unit: mapping?.unit || goal.unit
+        };
+      });
 
-    // Display goal nutrients first, then others
-    const nutrientsToShow = [
-      ...userGoals.map(goal => renderTrackedNutrient(goal)).filter(Boolean),
-      ...availableNutrients
-        .filter(key => !goalNutrientKeys.includes(key)) // Filter out nutrients already shown via goals
-        .map(key => {
-          const value = selectedRecipeData[key] as number;
-          let unit = 'g';
-          if (key.endsWith('_mg')) unit = 'mg';
-          else if (key.endsWith('_mcg') || key.endsWith('_μg')) unit = 'mcg';
-          else if (key.endsWith('_ml')) unit = 'ml';
-          else if (key === 'calories') unit = 'kcal';
-          const displayValue = formatValue(value, unit);
-          return (
-            <div key={key} className="flex justify-between py-1 text-sm">
-              <span className="text-gray-700 capitalize">{key.replace(/_/g, ' ').replace(/ g$| mg$| mcg$/i, '')}:</span>
-              <span className="font-medium text-gray-900">{displayValue}</span>
-            </div>
-          );
-        })
-    ];
+    const displayCalories = perServingNutrition.calories ?? (typeof selectedRecipeData.calories === 'number' ? (selectedRecipeData.calories / (selectedRecipeData.servings || 1)) : 0);
 
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4 backdrop-blur-sm">
-        <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col">
-          {/* Header */}
-          <div className="p-5 border-b border-gray-200 flex justify-between items-center flex-shrink-0">
-            <h3 className="text-xl font-semibold text-gray-800">{selectedRecipeData.recipe_name}</h3>
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex justify-center items-center p-4 transition-all animate-in fade-in duration-200">
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden border border-gray-100">
+          {/* Modal Header */}
+          <div className="bg-emerald-50 px-4 py-2 border-b border-emerald-100 flex justify-between items-center">
+            <span className="font-bold text-emerald-900 text-[10px] uppercase tracking-wider">Recipe Details</span>
             <button
               onClick={handleCloseModal}
-              className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100"
+              className="text-emerald-400 hover:text-emerald-600 p-1 rounded-full transition-colors"
               aria-label="Close modal"
             >
-              {/* Simple X icon */}
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>
-          {/* Body */}
-          <div className="p-6 overflow-y-auto max-h-[60vh]">
-            {/* Description */}
-            {selectedRecipeData.description && (
-              <p className="text-sm text-gray-600 mb-4">{selectedRecipeData.description}</p>
-            )}
 
-            {/* Nutrient Details */}
-            <h4 className="text-md font-semibold mb-2 text-gray-800 border-t pt-4">Nutrition Details:</h4>
-            {nutrientsToShow.length > 0 ? (
-              <div className="space-y-1">
-                {nutrientsToShow}
+          <div className="p-5 flex justify-between items-start">
+            <div className="flex-1 min-w-0 pr-4">
+              {isEditing ? (
+                <div className="space-y-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Recipe Name</label>
+                    <input
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="text-xl font-bold text-gray-900 leading-tight w-full outline-none border-b-2 border-emerald-500 bg-emerald-50/30 px-1 py-0.5 rounded-t"
+                      placeholder="Recipe name"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="group flex items-center gap-2">
+                  <h3 className="text-xl font-bold text-gray-900 leading-tight">
+                    {selectedRecipeData.recipe_name}
+                  </h3>
+                  <button
+                    onClick={handleStartEditing}
+                    className="p-1 text-gray-300 hover:text-emerald-500 transition-colors opacity-0 group-hover:opacity-100"
+                    title="Edit Name"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+              <p className="text-sm text-gray-500 mt-1 font-medium">
+                {selectedRecipeData.servings || 1} Servings
+                {selectedRecipeData.serving_size ? ` • ${selectedRecipeData.serving_size} per serving` : ''}
+              </p>
+            </div>
+            {!isEditing && (
+              <div className="text-right">
+                <div className="text-2xl font-black text-emerald-600 whitespace-nowrap tracking-tight">
+                  {formatEnergy(displayCalories as number)}
+                </div>
+                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">PER SERVING</div>
               </div>
-            ) : (
-              <p className="text-sm text-gray-500 italic">No detailed nutrition data available.</p>
+            )}
+          </div>
+
+          {/* Modal Body (Scrollable) */}
+          <div className="px-5 pb-5 overflow-y-auto flex-1 custom-scrollbar">
+            {/* Description */}
+            {!isEditing && selectedRecipeData.description && (
+              <div className="mb-6">
+                <p className="text-sm text-gray-600 leading-relaxed italic border-l-2 border-emerald-100 pl-3">
+                  {selectedRecipeData.description}
+                </p>
+              </div>
             )}
 
-            {/* Ingredients */}
-            {selectedRecipeData.ingredients && (
-              <>
-                <h4 className="text-md font-semibold mt-4 mb-2 text-gray-800 border-t pt-4">Ingredients:</h4>
-                <p className="text-sm text-gray-600 whitespace-pre-wrap">{selectedRecipeData.ingredients}</p>
-              </>
+            <div className={`grid ${isEditing ? 'grid-cols-1' : 'grid-cols-2'} gap-6`}>
+              {/* Left: Ingredients */}
+              {!isEditing && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Ingredients</span>
+                  </div>
+                  <div className="space-y-2">
+                    {selectedRecipeData.recipe_ingredients && selectedRecipeData.recipe_ingredients.length > 0 ? (
+                      selectedRecipeData.recipe_ingredients.map((ing, idx) => (
+                        <div key={idx} className="flex flex-col border-b border-gray-50 pb-1.5 last:border-0">
+                          <span className="text-xs font-bold text-gray-800 leading-tight">{ing.ingredient_name}</span>
+                          <span className="text-[10px] text-gray-500 font-medium">{ing.quantity} {ing.unit}</span>
+                        </div>
+                      ))
+                    ) : selectedRecipeData.ingredients ? (
+                      <div className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed">
+                        {selectedRecipeData.ingredients}
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-gray-400 italic">No ingredients listed.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Right/Only: Tracked Nutrients / Edit View */}
+              <div className={`space-y-3 ${!isEditing ? 'border-l border-gray-100 pl-6' : ''}`}>
+                {!isEditing ? (
+                  <>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none">Nutrition</span>
+                      <span className="text-[8px] font-bold text-gray-300 uppercase tracking-tighter leading-none">Per Portion</span>
+                    </div>
+                    <div className="space-y-2.5">
+                      {trackedDetails.length > 0 ? (
+                        trackedDetails.map((n) => (
+                          <div key={n.key} className="flex flex-col border-b border-gray-50 pb-1.5 last:border-0">
+                            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-tight">{n.name}</span>
+                            <span className="text-xs font-black text-gray-800">{formatValue(n.value, n.unit)}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-[10px] text-gray-400 italic">No goals tracked for this period.</p>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Instructions</label>
+                      <textarea
+                        value={editInstructions}
+                        onChange={(e) => setEditInstructions(e.target.value)}
+                        className="text-sm text-gray-700 leading-relaxed w-full outline-none border-2 border-emerald-100 focus:border-emerald-500 bg-white p-3 rounded-lg min-h-[150px] resize-none custom-scrollbar shadow-inner"
+                        placeholder="Enter recipe instructions here... (Leave empty to hide)"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Instructions (View Mode) */}
+            {!isEditing && selectedRecipeData.instructions && (
+              <div className="mt-8 pt-6 border-t border-gray-100">
+                <div className="flex items-center justify-between gap-1.5 mb-3">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Instructions</span>
+                  <button
+                    onClick={handleStartEditing}
+                    className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700 uppercase tracking-wider transition-colors"
+                  >
+                    Edit
+                  </button>
+                </div>
+                <div className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed bg-gray-50/50 p-4 rounded-lg border border-gray-100 shadow-sm">
+                  {selectedRecipeData.instructions}
+                </div>
+              </div>
+            )}
+
+            {/* If no instructions and not editing, show an option to add them if user wants */}
+            {!isEditing && !selectedRecipeData.instructions && (
+              <div className="mt-8 pt-6 border-t border-gray-50 text-center">
+                <button
+                  onClick={handleStartEditing}
+                  className="px-4 py-2 text-[10px] font-bold text-gray-400 hover:text-emerald-600 uppercase tracking-widest transition-all hover:bg-emerald-50 rounded-lg flex items-center justify-center gap-2 mx-auto border border-dashed border-gray-200"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+                  </svg>
+                  Add Instructions
+                </button>
+              </div>
             )}
 
             {/* Modal Specific Error Display */}
             {modalError && (
-              <p className="mt-4 text-sm text-red-600 bg-red-100 p-2 rounded">Error: {modalError}</p>
+              <div className="mt-6 bg-red-50 border border-red-100 rounded-lg p-3 flex items-center gap-3">
+                <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
+                <p className="text-xs font-semibold text-red-600">{modalError}</p>
+              </div>
             )}
           </div>
-          {/* Footer / Actions */}
-          <div className="border-t border-gray-200 p-4 flex justify-between items-center bg-gray-50 flex-shrink-0">
-            {/* Delete Button */}
-            <button
-              onClick={() => handleDeleteRecipe(selectedRecipeData.id, selectedRecipeData.recipe_name)}
-              disabled={!!loggingRecipeId || !!deletingRecipeId || isModalLoading}
-              className={`px-4 py-2 rounded-md text-sm font-medium flex items-center ${!!loggingRecipeId || !!deletingRecipeId || isModalLoading ? 'text-red-300 cursor-not-allowed' : 'text-red-600 hover:bg-red-50'}`}
-            >
-              {deletingRecipeId === selectedRecipeData.id ? (
-                <>
-                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-red-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Deleting...
-                </>
-              ) : 'Delete'}
-            </button>
-            <div className="flex space-x-2">
-              {/* Close Button */}
-              <button
-                onClick={handleCloseModal}
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-100"
-                disabled={!!loggingRecipeId || !!deletingRecipeId}
-              >
-                Close
-              </button>
-              {/* Log Button */}
-              <button
-                onClick={() => handleLogRecipe(selectedRecipeData.id, selectedRecipeData.recipe_name)}
-                disabled={!!loggingRecipeId || !!deletingRecipeId || isModalLoading}
-                className={`px-4 py-2 rounded-md text-sm font-medium flex items-center ${!!loggingRecipeId || !!deletingRecipeId || isModalLoading ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'} text-white`}
-              >
-                {loggingRecipeId === selectedRecipeData.id ? (
-                  <>
-                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Logging...
-                  </>
-                ) : (
-                  <>
-                    {/* Optional Log icon */}
-                    {/* <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg> */}
-                    Log Recipe
-                  </>
-                )}
-              </button>
-            </div>
+
+          {/* Modal Footer */}
+          <div className="p-4 bg-gray-50/50 border-t border-gray-100 flex gap-3">
+            {isEditing ? (
+              <>
+                <button
+                  onClick={() => setIsEditing(false)}
+                  disabled={isUpdating}
+                  className="flex-1 py-2.5 px-4 bg-white border border-gray-200 text-gray-600 text-sm font-bold rounded-lg hover:bg-gray-50 transition-all shadow-sm active:scale-[0.98] disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveChanges}
+                  disabled={isUpdating}
+                  className="flex-1 py-2.5 px-4 bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-700 transition-all shadow-sm active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isUpdating ? 'Saving...' : 'Save Changes'}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => handleDeleteRecipe(selectedRecipeData.id, selectedRecipeData.recipe_name)}
+                  disabled={!!loggingRecipeId || !!deletingRecipeId}
+                  className="flex-1 py-2.5 px-4 bg-white border border-red-200 text-red-600 text-sm font-bold rounded-lg hover:bg-red-50 hover:border-red-300 transition-all shadow-sm active:scale-[0.98] disabled:opacity-50"
+                >
+                  {deletingRecipeId === selectedRecipeData.id ? 'Deleting...' : 'Delete Recipe'}
+                </button>
+
+                <button
+                  onClick={() => handleLogRecipe(selectedRecipeData.id, selectedRecipeData.recipe_name)}
+                  disabled={!!loggingRecipeId || !!deletingRecipeId}
+                  className="flex-1 py-2.5 px-4 bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-700 transition-all shadow-sm active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {loggingRecipeId === selectedRecipeData.id ? 'Logging...' : 'Log Recipe'}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

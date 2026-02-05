@@ -1,5 +1,5 @@
 import React from 'react';
-import { formatNutrientName, formatWeight, formatVolume, formatMilligram, formatMicrogram, formatEnergy } from '@/utils/formatting';
+import { formatNutrientName, formatWeight, formatVolume, formatMilligram, formatMicrogram, formatEnergy, formatNutrientValue } from '@/utils/formatting';
 import { Progress } from "@/components/ui/progress";
 
 interface UserGoal {
@@ -118,28 +118,8 @@ interface SummaryTableRowProps {
 
 const SummaryTableRow: React.FC<SummaryTableRowProps> = ({ nutrient, current, target, unit, goalType }) => {
     // Define formatting logic based on unit using AVAILABLE formatters
-    const formatValue = (value: number): string => {
-        if (isNaN(value) || value === null || value === undefined) return '-';
-        switch (unit?.toLowerCase()) {
-            case 'g':
-                return formatWeight(value);
-            case 'mg':
-                return formatMilligram(value);
-            case 'mcg':
-            case 'μg':
-                return formatMicrogram(value);
-            case 'ml':
-                return formatVolume(value);
-            case 'kcal':
-                return formatEnergy(value);
-            default:
-                return `${value.toFixed(0)} ${unit || ''}`;
-        }
-    };
-
-    const targetValue = target ?? 0;
-    const displayCurrent = formatValue(current);
-    const displayTarget = target !== undefined ? formatValue(targetValue) : '-';
+    const displayCurrent = formatNutrientValue(nutrient, current);
+    const displayTarget = target !== undefined ? formatNutrientValue(nutrient, target) : '-';
     const progressText = `${displayCurrent} / ${displayTarget}`;
 
     const percentage = (target && target > 0) ? Math.round((current / target) * 100) : 0;

@@ -89,10 +89,16 @@ class ThoughtLogger {
     }
     // 0.2 Quick Confirmation Buttons (from UI)
     // If message starts with "Confirm " or is exactly "Log it", "Save it", etc.
-    const isButtonConfirm = lowerMessage.startsWith('confirm') || lowerMessage.startsWith('yes, ') || lowerMessage.startsWith('log ') || lowerMessage.startsWith('save ') || [
+    const looksLikeNewLog = lowerMessage.startsWith('log ') || lowerMessage.startsWith('track ') || lowerMessage.startsWith('save ') || lowerMessage.startsWith('add ');
+
+    const isButtonConfirm = !looksLikeNewLog && (lowerMessage.startsWith('confirm') || lowerMessage.startsWith('yes, ') || [
       'yes',
       'log it',
+      'log this',
       'save it',
+      'save this',
+      'record it',
+      'track it',
       'correct',
       'yep',
       'yeah',
@@ -100,7 +106,7 @@ class ThoughtLogger {
       'yes, log',
       'confirm save',
       'looks good'
-    ].includes(lowerMessage) || lowerMessage.includes('portion:') || lowerMessage.includes('name:');
+    ].includes(lowerMessage) || lowerMessage.includes('portion:') || lowerMessage.includes('name:'));
     if (isButtonConfirm && session.pending_action) {
       console.log(`[OrchestratorV3] Static fast-path: button confirm (Action: ${session.pending_action.type})`);
       reportStep('Processing your confirmation...');
@@ -250,13 +256,19 @@ class ThoughtLogger {
         };
       case 'confirm':
         if (session.pending_action) {
-          console.log('[OrchestratorV3] Branch: confirm (Direct Route)');
-          reportStep('Confirmed! Processing...');
-          const confirmResult: any = await handlePendingConfirmation(session.pending_action, userId, sessionService, db, context, message);
-          confirmResult.steps = thoughts.getSteps();
-          return confirmResult;
+          // DEFENSIVE CHECK: If the explorer found food items, it might NOT be a confirmation of the PREVIOUS action
+          if (intentResult.food_items && intentResult.food_items.length > 0) {
+            console.log('[OrchestratorV3] Intent was confirm but food items found. Redirecting to log_food.');
+            // We fall through to log_food logic or let it hit reasoning
+          } else {
+            console.log('[OrchestratorV3] Branch: confirm (Direct Route)');
+            reportStep('Confirmed! Processing...');
+            const confirmResult: any = await handlePendingConfirmation(session.pending_action, userId, sessionService, db, context, message);
+            confirmResult.steps = thoughts.getSteps();
+            return confirmResult;
+          }
         }
-        break; // Fallback to reasoning if no pending action
+        break; // Fallback to reasoning if no pending action or if it looked like a new log
       case 'decline':
       case 'cancel':
         console.log('[OrchestratorV3] Branch: cancel');

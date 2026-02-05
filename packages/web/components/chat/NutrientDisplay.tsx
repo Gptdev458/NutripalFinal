@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatNutrientName, formatNutrientValue } from '../../utils/formatting';
 
 export interface UserGoal {
     nutrient: string;
@@ -107,12 +108,12 @@ export const NutrientDisplay: React.FC<NutrientDisplayProps> = ({
                         {/* Essential Macros + Tracked Goals */}
                         <div className={`flex flex-wrap gap-x-3 gap-y-1 ${variant === 'dashboard' ? 'text-[11px]' : 'text-[11px]'}`}>
                             {variant === 'dashboard' && typeof item.calories === 'number' && (
-                                <span className="font-bold text-blue-600">{Math.round(item.calories)} kcal</span>
+                                <span className="font-bold text-blue-600">{formatNutrientValue('calories', item.calories)}</span>
                             )}
 
                             {coreKeys.map(k => typeof item[k] === 'number' && (
                                 <span key={k} className="text-gray-700">
-                                    <span className="font-bold text-blue-700">{NUTRIENT_MAP[k]?.name || k}:</span> {Math.round(item[k] * 10) / 10}{NUTRIENT_MAP[k]?.unit || ''}
+                                    <span className="font-bold text-blue-700">{formatNutrientName(k)}</span> {formatNutrientValue(k, item[k])}
                                 </span>
                             ))}
 
@@ -121,7 +122,7 @@ export const NutrientDisplay: React.FC<NutrientDisplayProps> = ({
                                 if (typeof val === 'number' && val > 0) {
                                     return (
                                         <span key={k} className="text-gray-700">
-                                            <span className="font-bold text-emerald-700">{NUTRIENT_MAP[k]?.name || k}:</span> {Math.round(val * 10) / 10}{NUTRIENT_MAP[k]?.unit || ''}
+                                            <span className="font-bold text-emerald-700">{formatNutrientName(k)}</span> {formatNutrientValue(k, val)}
                                         </span>
                                     );
                                 }
@@ -148,8 +149,8 @@ export const NutrientDisplay: React.FC<NutrientDisplayProps> = ({
                                     <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 mt-1 bg-gray-50 p-1.5 rounded border border-gray-100 animate-in fade-in slide-in-from-top-1 duration-200">
                                         {otherKeys.map(k => (
                                             <div key={k} className="text-[10px] flex justify-between">
-                                                <span className="text-gray-500 uppercase">{NUTRIENT_MAP[k]?.name || k}:</span>
-                                                <span className="font-medium text-gray-700">{Math.round(item[k] * 10) / 10}{NUTRIENT_MAP[k]?.unit || ''}</span>
+                                                <span className="text-gray-500">{formatNutrientName(k)}</span>
+                                                <span className="font-medium text-gray-700">{formatNutrientValue(k, item[k])}</span>
                                             </div>
                                         ))}
                                     </div>

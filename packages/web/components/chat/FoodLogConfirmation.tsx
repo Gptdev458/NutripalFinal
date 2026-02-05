@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { NutrientDisplay, UserGoal, NUTRIENT_MAP } from './NutrientDisplay';
+import { formatNutrientName, formatNutrientValue } from '../../utils/formatting';
 
 interface FoodItem {
     food_name: string;
@@ -47,14 +48,13 @@ export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
     }, {} as any);
 
     const trackedDetails = userGoals
-        .filter(goal => goal.nutrient !== 'calories')
         .map(goal => {
             const val = aggregated[goal.nutrient];
             // Show all tracked nutrients, default to 0 if not present
             return {
-                name: NUTRIENT_MAP[goal.nutrient]?.name || goal.nutrient.replace(/_/g, ' '),
-                value: typeof val === 'number' ? val : 0,
-                unit: NUTRIENT_MAP[goal.nutrient]?.unit || goal.unit
+                name: formatNutrientName(goal.nutrient),
+                valueStr: formatNutrientValue(goal.nutrient, val),
+                unit: '' // unit is now included in valueStr
             };
         });
 
@@ -93,8 +93,8 @@ export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
                             <div className="mt-2 space-y-1 bg-gray-50 p-2 rounded border border-gray-100 animate-in fade-in slide-in-from-top-1 duration-200">
                                 {trackedDetails.map((n: any, idx) => (
                                     <div key={idx} className="flex justify-between text-xs">
-                                        <span className="text-gray-500 uppercase font-medium">{n.name}:</span>
-                                        <span className="font-bold text-gray-700">{Math.round(n.value * 10) / 10}{n.unit}</span>
+                                        <span className="text-gray-500 font-bold">{n.name}</span>
+                                        <span className="font-bold text-gray-700">{n.valueStr}</span>
                                     </div>
                                 ))}
                             </div>

@@ -148,6 +148,7 @@ export class RecipeAgent {
 - Use provided name exactly if given.
 - Default servings to 1.
 - Extract batch/serving sizes if mentioned.
+- ONLY include "instructions" if they were explicitly provided in the text. DO NOT infer or create them yourself. If missing, return an empty string.
 - If not a recipe, return what you can find.`
             },
             {

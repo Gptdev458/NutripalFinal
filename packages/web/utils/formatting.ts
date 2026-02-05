@@ -1,9 +1,11 @@
 // utils/formatting.ts
 
 // Basic number formatting (can be expanded)
-const formatNumber = (value: number | null | undefined, precision: number = 0): string => {
+export const formatNumber = (value: number | null | undefined, precision: number = 0): string => {
   if (value === null || value === undefined || isNaN(value)) return 'N/A';
-  return value.toFixed(precision);
+  // Use 1 decimal place for values < 10 to preserve precision for small amounts
+  const p = precision === 0 && (value > 0 && value < 10) ? 1 : precision;
+  return value.toFixed(p);
 };
 
 // Specific Formatters (Metric Only)
@@ -13,7 +15,7 @@ export const formatWeight = (grams: number | null | undefined): string => {
 
 export const formatVolume = (milliliters: number | null | undefined): string => {
   return `${formatNumber(milliliters, 0)} ml`;
-}; 
+};
 
 export const formatHeight = (heightCm: number | null | undefined): string => {
   return `${formatNumber(heightCm, 0)} cm`;
@@ -34,9 +36,28 @@ export const formatMilligram = (mg: number | null | undefined): string => {
 
 // Example for nutrient display names (if needed elsewhere)
 export const formatNutrientName = (key: string): string => {
-   return key.replace(/_/g, ' ')
-             .replace(/\b\w/g, l => l.toUpperCase())
-             .replace(/ G$/, ' (g)')
-             .replace(/ Mg$/, ' (mg)')
-             .replace(/ Mcg$/, ' (mcg)'); 
-}; 
+  // Special cases
+  if (key === 'hydration_ml') return 'Water';
+
+  return key.replace(/_/g, ' ')
+    .replace(/\b\w/g, l => l.toUpperCase())
+    .replace(/ G$/, ' (g)')
+    .replace(/ Mg$/, ' (mg)')
+    .replace(/ Mcg$/, ' (mcg)')
+    .replace(/ Ml$/, ' (ml)')
+    .replace(/ Ug$/, ' (µg)');
+};
+
+// Generic formatter for nutrient values based on key
+export const formatNutrientValue = (key: string, value: number | null | undefined): string => {
+  if (value === null || value === undefined || isNaN(value)) return '-';
+
+  const k = key.toLowerCase();
+  if (k.endsWith('_mg')) return formatMilligram(value);
+  if (k.endsWith('_mcg') || k.endsWith('_ug')) return formatMicrogram(value);
+  if (k.endsWith('_ml')) return formatVolume(value);
+  if (k.includes('calories') || k.includes('kcal')) return formatEnergy(value);
+  if (k.endsWith('_g')) return formatWeight(value);
+
+  return formatNumber(value, 0);
+};
