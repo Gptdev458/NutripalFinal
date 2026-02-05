@@ -13,14 +13,15 @@
 import { ChatAgent } from './agents/chat-agent.ts';
 import { ReasoningAgent } from './agents/reasoning-agent.ts';
 import { RecipeAgent } from './agents/recipe-agent.ts';
+import { scaleNutrition } from './agents/nutrition-agent.ts';
 import { createAdminClient } from '../_shared/supabase-client.ts';
 import { DbService } from './services/db-service.ts';
 import { PersistenceService } from './services/persistence-service.ts';
 import { SessionService } from './services/session-service.ts';
 import { ToolExecutor } from './services/tool-executor.ts';
 class ThoughtLogger {
-  steps = [];
-  log(step) {
+  steps: string[] = [];
+  log(step: string) {
     console.log(`[ThoughtLogger] ${step}`);
     this.steps.push(step);
   }
@@ -34,7 +35,7 @@ class ThoughtLogger {
  * - IntentAgent: Fast classification (gpt-4o-mini)
  * - ReasoningAgent: Tool orchestration and reasoning (gpt-4o)
  * - ChatAgent: Response formatting with personality (gpt-4o-mini)
- */ export async function orchestrateV3(userId, message, sessionId, chatHistory = [], timezone = 'UTC', onStep) {
+ */ export async function orchestrateV3(userId: string, message: string, sessionId: string, chatHistory: any[] = [], timezone: string = 'UTC', onStep?: (step: string) => void) {
   const supabase = createAdminClient();
   const db = new DbService(supabase);
   const persistence = new PersistenceService(supabase);
@@ -50,16 +51,16 @@ class ThoughtLogger {
   };
   const startTime = Date.now();
   const thoughts = new ThoughtLogger();
-  const reportStep = (step) => {
+  const reportStep = (step: string) => {
     thoughts.log(step);
     if (onStep) onStep(step);
   };
   const agentsInvolved = [];
-  let response = {
+  let response: any = {
     status: 'success',
     message: '',
     response_type: 'unknown',
-    steps: []
+    steps: [] as string[]
   };
   try {
     const lowerMessage = message.trim().toLowerCase();
@@ -117,7 +118,7 @@ class ThoughtLogger {
         session.pending_action.data.customName = nameMatch[1].trim();
         console.log(`[OrchestratorV3] Extracted custom name: "${session.pending_action.data.customName}"`);
       }
-      const confirmResult = await handlePendingConfirmation(session.pending_action, userId, sessionService, db, context, message);
+      const confirmResult: any = await handlePendingConfirmation(session.pending_action, userId, sessionService, db, context, message);
       confirmResult.steps = thoughts.getSteps();
       return confirmResult;
     }
@@ -251,7 +252,7 @@ class ThoughtLogger {
         if (session.pending_action) {
           console.log('[OrchestratorV3] Branch: confirm (Direct Route)');
           reportStep('Confirmed! Processing...');
-          const confirmResult = await handlePendingConfirmation(session.pending_action, userId, sessionService, db, context, message);
+          const confirmResult: any = await handlePendingConfirmation(session.pending_action, userId, sessionService, db, context, message);
           confirmResult.steps = thoughts.getSteps();
           return confirmResult;
         }
@@ -316,7 +317,7 @@ class ThoughtLogger {
               parsed: {
                 ...fs.parsed,
                 nutrition_data: fs.batchNutrition,
-                ingredients: recipe.recipe_ingredients?.map((ing) => ({
+                ingredients: recipe.recipe_ingredients?.map((ing: any) => ({
                   name: ing.ingredient_name,
                   amount: ing.quantity,
                   unit: ing.unit,
@@ -642,12 +643,12 @@ class ThoughtLogger {
           recipe_name: fs.parsed.recipe_name,
           servings: fs.parsed.servings,
           nutrition_data: fs.batchNutrition,
-          ingredients: fs.ingredientsWithNutrition?.map((ing) => ({
+          ingredients: fs.ingredientsWithNutrition?.map((ing: any) => ({
             name: ing.name || ing.ingredient_name,
             amount: ing.amount || ing.quantity || '',
             unit: ing.unit || '',
             calories: ing.nutrition?.calories || ing.nutrition_data?.calories || 0
-          })) || fs.parsed.ingredients?.map((ing) => ({
+          })) || fs.parsed.ingredients?.map((ing: any) => ({
             name: ing.name,
             amount: ing.quantity || '',
             unit: ing.unit || '',
@@ -675,7 +676,7 @@ class ThoughtLogger {
       });
     }
     response.steps = thoughts.getSteps();
-    persistence.logExecution(userId, sessionId, 'reasoning', agentsInvolved, startTime, response, message);
+    persistence.logExecution(userId, sessionId, 'reasoning', agentsInvolved, startTime, response, message, timezone);
     return response;
   } catch (error) {
     console.error('[OrchestratorV3] Fatal Error:', error);
@@ -687,30 +688,69 @@ class ThoughtLogger {
   }
 }
 /**
+ * Helper to log food items with strict nutrient filtering
+ */
+async function logFilteredFood(userId: string, db: DbService, nutritionData: any) {
+  const goals = await db.getUserGoals(userId);
+  const trackedKeys = goals && goals.length > 0 ? goals.map((g: any) => g.nutrient) : ['calories', 'protein_g', 'carbs_g', 'fat_total_g'];
+
+  // Base fields
+  const item: any = {
+    food_name: nutritionData.food_name || nutritionData.recipe_name,
+    portion: nutritionData.portion,
+    calories: Math.round(nutritionData.calories || 0),
+    log_time: new Date().toISOString()
+  };
+
+  // Add optional metadata
+  if (nutritionData.recipe_id) item.recipe_id = nutritionData.recipe_id;
+
+  // Tracked fields only
+  const extras: Record<string, any> = {};
+
+  // We need to know which keys are EXPLICIT database columns vs. extras
+  // For now, we'll assume anything not in the standard FoodLogEntry interface is an extra
+  // But wait, I added 40+ columns. I should check against a known list.
+  const schemaColumns = [
+    'protein_g', 'carbs_g', 'fat_total_g', 'hydration_ml', 'fat_saturated_g',
+    'fat_poly_g', 'fat_mono_g', 'fat_trans_g', 'omega_3_g', 'omega_6_g',
+    'omega_ratio', 'fiber_g', 'fiber_soluble_g', 'sugar_g', 'sugar_added_g',
+    'cholesterol_mg', 'sodium_mg', 'potassium_mg', 'calcium_mg', 'iron_mg',
+    'magnesium_mg', 'phosphorus_mg', 'zinc_mg', 'copper_mg', 'manganese_mg',
+    'selenium_mcg', 'vitamin_a_mcg', 'vitamin_c_mg', 'vitamin_d_mcg',
+    'vitamin_e_mg', 'vitamin_k_mcg', 'thiamin_mg', 'riboflavin_mg',
+    'niacin_mg', 'pantothenic_acid_mg', 'vitamin_b6_mg', 'biotin_mcg',
+    'folate_mcg', 'vitamin_b12_mcg'
+  ];
+
+  trackedKeys.forEach(key => {
+    if (nutritionData[key] !== undefined && key !== 'calories') {
+      const val = typeof nutritionData[key] === 'number' ? Math.round(nutritionData[key] * 10) / 10 : nutritionData[key];
+      if (schemaColumns.includes(key)) {
+        item[key] = val;
+      } else {
+        extras[key] = val;
+      }
+    }
+  });
+
+  if (Object.keys(extras).length > 0) {
+    item.extras = extras;
+  }
+
+  await db.logFoodItems(userId, [item]);
+  return item;
+}
+
+/**
  * Handle confirmation of pending actions (food log, recipe log, goal update)
- */ async function handlePendingConfirmation(pendingAction, userId, sessionService, db, context, message) {
+ */ async function handlePendingConfirmation(pendingAction: any, userId: string, sessionService: any, db: DbService, context: any, message: string) {
   const { type, data } = pendingAction;
   const lowerMessage = message.trim().toLowerCase();
   try {
     switch (type) {
       case 'food_log':
-        await db.logFoodItems(userId, [
-          {
-            food_name: data.food_name,
-            portion: data.portion,
-            calories: data.calories,
-            protein_g: data.protein_g,
-            carbs_g: data.carbs_g,
-            fat_total_g: data.fat_total_g || data.fat_g,
-            fiber_g: data.fiber_g,
-            sugar_g: data.sugar_g,
-            sodium_mg: data.sodium_mg,
-            fat_saturated_g: data.fat_saturated_g,
-            cholesterol_mg: data.cholesterol_mg,
-            potassium_mg: data.potassium_mg,
-            log_time: new Date().toISOString()
-          }
-        ]);
+        await logFilteredFood(userId, db, data);
         await sessionService.clearPendingAction(userId);
         return {
           status: 'success',
@@ -721,21 +761,10 @@ class ThoughtLogger {
           }
         };
       case 'recipe_log':
-        await db.logFoodItems(userId, [
-          {
-            food_name: data.recipe_name,
-            portion: `${data.servings} serving(s)`,
-            calories: data.calories,
-            protein_g: data.protein_g,
-            carbs_g: data.carbs_g,
-            fat_total_g: data.fat_total_g || data.fat_g,
-            fiber_g: data.fiber_g,
-            sugar_g: data.sugar_g,
-            sodium_mg: data.sodium_mg,
-            log_time: new Date().toISOString(),
-            recipe_id: data.recipe_id
-          }
-        ]);
+        await logFilteredFood(userId, db, {
+          ...data,
+          portion: `${data.servings} serving(s)`
+        });
         await sessionService.clearPendingAction(userId);
         return {
           status: 'success',
@@ -791,21 +820,13 @@ class ThoughtLogger {
             const recipe = saveResult.recipe;
             const servings = parseFloat(portion) || 1;
             const scale = servings / (recipe.servings || 1);
-            await db.logFoodItems(userId, [
-              {
-                food_name: recipe.recipe_name,
-                portion: portion,
-                calories: Math.round((recipe.nutrition_data?.calories || 0) * scale),
-                protein_g: (recipe.nutrition_data?.protein_g || 0) * scale,
-                carbs_g: (recipe.nutrition_data?.carbs_g || 0) * scale,
-                fat_total_g: (recipe.nutrition_data?.fat_total_g || 0) * scale,
-                fiber_g: (recipe.nutrition_data?.fiber_g || 0) * scale,
-                sugar_g: (recipe.nutrition_data?.sugar_g || 0) * scale,
-                sodium_mg: (recipe.nutrition_data?.sodium_mg || 0) * scale,
-                log_time: new Date().toISOString(),
-                recipe_id: recipe.id
-              }
-            ]);
+            const scaled = scaleNutrition(recipe.nutrition_data || {}, scale);
+            await logFilteredFood(userId, db, {
+              ...scaled,
+              food_name: recipe.recipe_name,
+              portion: portion,
+              recipe_id: recipe.id
+            });
             return {
               status: 'success',
               message: `✅ Updated and logged ${portion} of "${recipe.recipe_name}"! 🍽️`,
@@ -831,21 +852,13 @@ class ThoughtLogger {
           // Simple scaling for logging
           const servings = parseFloat(portion) || 1;
           const scale = servings / (recipe.servings || 1);
-          await db.logFoodItems(userId, [
-            {
-              food_name: recipe.recipe_name,
-              portion: portion,
-              calories: Math.round((recipe.nutrition_data?.calories || 0) * scale),
-              protein_g: (recipe.nutrition_data?.protein_g || 0) * scale,
-              carbs_g: (recipe.nutrition_data?.carbs_g || 0) * scale,
-              fat_total_g: (recipe.nutrition_data?.fat_total_g || 0) * scale,
-              fiber_g: (recipe.nutrition_data?.fiber_g || 0) * scale,
-              sugar_g: (recipe.nutrition_data?.sugar_g || 0) * scale,
-              sodium_mg: (recipe.nutrition_data?.sodium_mg || 0) * scale,
-              log_time: new Date().toISOString(),
-              recipe_id: recipe.id
-            }
-          ]);
+          const scaled = scaleNutrition(recipe.nutrition_data || {}, scale);
+          await logFilteredFood(userId, db, {
+            ...scaled,
+            food_name: recipe.recipe_name,
+            portion: portion,
+            recipe_id: recipe.id
+          });
           return {
             status: 'success',
             message: `✅ Logged ${portion} of "${recipe.recipe_name}"! 🍽️`,
@@ -883,7 +896,7 @@ class ThoughtLogger {
 /**
  * Extract food entity names from intent result and gathered data.
  * Phase 2.2: These are stored in the buffer for context preservation.
- */ function extractFoodEntities(intentResult, gatheredData) {
+ */ function extractFoodEntities(intentResult: any, gatheredData: any) {
   const foods = [];
   // Extract from intent entities
   if (intentResult.food_items && Array.isArray(intentResult.food_items)) {
@@ -917,7 +930,7 @@ class ThoughtLogger {
 /**
  * Classify the topic of conversation based on intent.
  * Phase 2.2: Used to track conversation context.
- */ function classifyTopic(intent) {
+ */ function classifyTopic(intent: string) {
   if ([
     'log_food',
     'query_nutrition',

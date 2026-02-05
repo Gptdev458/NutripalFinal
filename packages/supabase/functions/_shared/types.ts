@@ -96,7 +96,35 @@ export interface FoodLogEntry {
   serving_size?: string
   meal_type?: string
   log_time?: string
-  recipe_id?: string  // If logged from a recipe
+  recipe_id?: string
+  // New Exhaustive Nutrients
+  hydration_ml?: number
+  fat_poly_g?: number
+  fat_mono_g?: number
+  omega_3_g?: number
+  omega_6_g?: number
+  fiber_soluble_g?: number
+  magnesium_mg?: number
+  phosphorus_mg?: number
+  zinc_mg?: number
+  copper_mg?: number
+  manganese_mg?: number
+  selenium_mcg?: number
+  vitamin_a_mcg?: number
+  vitamin_c_mg?: number
+  vitamin_d_mcg?: number
+  vitamin_e_mg?: number
+  vitamin_k_mcg?: number
+  thiamin_mg?: number
+  riboflavin_mg?: number
+  niacin_mg?: number
+  pantothenic_acid_mg?: number
+  vitamin_b6_mg?: number
+  biotin_mcg?: number
+  folate_mcg?: number
+  vitamin_b12_mcg?: number
+  omega_ratio?: number
+  extras?: Record<string, any>
 }
 
 export interface UserGoal {
@@ -125,6 +153,33 @@ export interface NutritionData {
   iron_mg?: number
   sugar_added_g?: number
   serving_size?: string
+  // New Exhaustive Nutrients
+  hydration_ml?: number
+  fat_poly_g?: number
+  fat_mono_g?: number
+  omega_3_g?: number
+  omega_6_g?: number
+  fiber_soluble_g?: number
+  magnesium_mg?: number
+  phosphorus_mg?: number
+  zinc_mg?: number
+  copper_mg?: number
+  manganese_mg?: number
+  selenium_mcg?: number
+  vitamin_a_mcg?: number
+  vitamin_c_mg?: number
+  vitamin_d_mcg?: number
+  vitamin_e_mg?: number
+  vitamin_k_mcg?: number
+  thiamin_mg?: number
+  riboflavin_mg?: number
+  niacin_mg?: number
+  pantothenic_acid_mg?: number
+  vitamin_b6_mg?: number
+  biotin_mcg?: number
+  folate_mcg?: number
+  vitamin_b12_mcg?: number
+  omega_ratio?: number
 }
 
 export interface ValidationResult {

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { TypingIndicator } from '@/components/LoadingIndicators';
+import FoodLogDetailModal from '@/components/FoodLogDetailModal';
 import Link from 'next/link';
 import ChatDashboardLayout from '@/components/ChatDashboardLayout';
 import DashboardShell from '@/components/DashboardShell';
@@ -47,6 +48,28 @@ interface ChatSessionMeta {
   updated_at: string;
 }
 
+// --- Constants & Helpers ---
+const normalizeNutrientKey = (key: string): string => {
+  const k = key.toLowerCase().trim();
+  if (k === 'calories' || k === 'kcal' || k === 'energy') return 'calories';
+  if (k.includes('protein')) return 'protein_g';
+  if (k.includes('carb')) return 'carbs_g';
+  if (k.includes('fat') && k.includes('sat')) return 'fat_saturated_g';
+  if (k.includes('fat')) return 'fat_total_g';
+  if (k.includes('fiber')) return 'fiber_g';
+  if (k.includes('sugar')) return 'sugar_g';
+  if (k.includes('sodium')) return 'sodium_mg';
+  if (k.includes('potassium')) return 'potassium_mg';
+  if (k.includes('cholesterol')) return 'cholesterol_mg';
+  if (k.includes('calcium')) return 'calcium_mg';
+  if (k.includes('iron')) return 'iron_mg';
+  if (k.includes('magnesium')) return 'magnesium_mg';
+  if (k.includes('vit') && k.includes('a')) return 'vitamin_a_mcg';
+  if (k.includes('vit') && k.includes('c')) return 'vitamin_c_mg';
+  if (k.includes('vit') && k.includes('d')) return 'vitamin_d_mcg';
+  return key.replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+};
+
 export default function ChatPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -68,6 +91,10 @@ export default function ChatPage() {
   const [refreshingDashboard, setRefreshingDashboard] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState<string | null>(null);
+
+  // --- Modal State ---
+  const [selectedLog, setSelectedLog] = useState<any>(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
 
   // Fetch initial messages when activeChatId changes
   useEffect(() => {
@@ -162,17 +189,29 @@ export default function ChatPage() {
       if (goalsResponse.error) throw goalsResponse.error;
       if (logsResponse.error) throw logsResponse.error;
 
-      const goals = goalsResponse.data || [];
+      const fetchedGoals = goalsResponse.data || [];
       const fetchedLogs = logsResponse.data || [];
 
-      setUserGoals(goals as UserGoal[]);
+      // Deduplicate goals by normalized key
+      const uniqueGoalsMap = new Map<string, UserGoal>();
+      fetchedGoals.forEach(g => {
+        const normalized = normalizeNutrientKey(g.nutrient);
+        const existing = uniqueGoalsMap.get(normalized);
+        if (!existing || g.target_value > existing.target_value) {
+          uniqueGoalsMap.set(normalized, { ...g, nutrient: normalized });
+        }
+      });
+      const finalGoals = Array.from(uniqueGoalsMap.values());
+
+      setUserGoals(finalGoals);
       setRecentLogs(fetchedLogs.slice(0, 5));
 
       const totals: DailyTotals = {};
       fetchedLogs.forEach(log => {
         Object.keys(log).forEach(key => {
           if (typeof log[key] === 'number') {
-            totals[key] = (totals[key] || 0) + (log[key] as number);
+            const normalizedKey = normalizeNutrientKey(key);
+            totals[normalizedKey] = (totals[normalizedKey] || 0) + (log[key] as number);
           }
         });
       });
@@ -335,6 +374,28 @@ export default function ChatPage() {
     // TODO: Implement flag message logic
   };
 
+  const handleViewLogDetail = (logData: any) => {
+    setSelectedLog(logData);
+    setShowDetailModal(true);
+  };
+
+  const handleDeleteLogItem = async (logId: string | number) => {
+    if (!supabase) return;
+    try {
+      const { error } = await supabase
+        .from('food_log')
+        .delete()
+        .eq('id', logId);
+
+      if (error) throw error;
+      setShowDetailModal(false);
+      fetchDashboardData(true);
+    } catch (err) {
+      console.error('Error deleting log item:', err);
+      alert('Failed to delete log item');
+    }
+  };
+
   if (authLoading) return <div className="flex justify-center items-center h-screen"><TypingIndicator /></div>;
 
   if (!user || !session) {
@@ -357,6 +418,7 @@ export default function ChatPage() {
         userGoals={userGoals}
         onFlagMessage={handleFlagMessage}
         onSendMessage={(text, isHidden) => handleSend(undefined, text, isHidden)}
+        onViewLogDetail={handleViewLogDetail}
       />
       {sending && (
         <div className="px-4 py-2 flex flex-col items-start space-y-1">
@@ -416,6 +478,15 @@ export default function ChatPage() {
         chatPanel={chatPanelContent}
         dashboardPanel={dashboardPanelContent}
       />
+
+      {showDetailModal && selectedLog && (
+        <FoodLogDetailModal
+          logData={selectedLog}
+          onClose={() => setShowDetailModal(false)}
+          userGoals={userGoals}
+          onDelete={selectedLog.id ? () => handleDeleteLogItem(selectedLog.id) : undefined}
+        />
+      )}
     </DashboardShell>
   );
 }

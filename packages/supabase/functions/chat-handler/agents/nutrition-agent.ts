@@ -65,7 +65,7 @@ const failedLookups = new Map();
   }
   // 2. Try after removing modifiers
   let simplified = normalized;
-  for (const modifier of INGREDIENT_MODIFIERS){
+  for (const modifier of INGREDIENT_MODIFIERS) {
     simplified = simplified.replace(new RegExp(`\\b${modifier}\\b`, 'gi'), '').trim();
   }
   simplified = simplified.replace(/\s+/g, ' ').trim();
@@ -74,7 +74,7 @@ const failedLookups = new Map();
     return NUTRITION_FALLBACKS[simplified];
   }
   // 3. Partial match - check if any fallback key is contained in search term or vice versa
-  for (const [key, data] of Object.entries(NUTRITION_FALLBACKS)){
+  for (const [key, data] of Object.entries(NUTRITION_FALLBACKS)) {
     // Check if fallback key is contained in the search term
     if (normalized.includes(key)) {
       console.log(`[NutritionAgent] Fallback partial match: "${normalized}" contains "${key}"`);
@@ -88,7 +88,7 @@ const failedLookups = new Map();
   }
   // 4. Try word-level matching for the core ingredient
   const words = simplified.split(' ');
-  for(let i = words.length - 1; i >= 0; i--){
+  for (let i = words.length - 1; i >= 0; i--) {
     const candidate = words.slice(i).join(' ');
     if (NUTRITION_FALLBACKS[candidate]) {
       console.log(`[NutritionAgent] Fallback word match: "${normalized}" -> "${candidate}"`);
@@ -134,7 +134,7 @@ const failedLookups = new Map();
     'tea',
     'coffee'
   ];
-  const isZeroCalorieItem = zeroCalorieItems.some((z)=>itemName.toLowerCase().includes(z));
+  const isZeroCalorieItem = zeroCalorieItems.some((z) => itemName.toLowerCase().includes(z));
   if (data.calories === 0 && !isZeroCalorieItem) {
     console.warn(`[NutritionAgent] Warning: 0 calories for "${itemName}" - may be incorrect`);
     return false;
@@ -286,7 +286,7 @@ function parseUnitAndAmount(str) {
   if (amountStr.includes(' ')) {
     const parts = amountStr.split(' ');
     amount = 0;
-    for (const part of parts){
+    for (const part of parts) {
       if (part.includes('/')) {
         const [num, den] = part.split('/').map(parseFloat);
         amount += num / den;
@@ -362,9 +362,13 @@ export function scaleNutrition(data, multiplier) {
     'fat_trans_g',
     'calcium_mg',
     'iron_mg',
+    'magnesium_mg',
+    'vitamin_a_mcg',
+    'vitamin_c_mg',
+    'vitamin_d_mcg',
     'sugar_added_g'
   ];
-  keysToScale.forEach((key)=>{
+  keysToScale.forEach((key) => {
     if (typeof scaled[key] === 'number') {
       // @ts-ignore: key is valid
       scaled[key] = Math.round(scaled[key] * multiplier * 10) / 10;
@@ -378,7 +382,7 @@ export class NutritionAgent {
   async execute(input, context) {
     const { items, portions } = input;
     const supabase = context.supabase || createAdminClient();
-    const results = await Promise.all(items.map(async (itemName, i)=>{
+    const results = await Promise.all(items.map(async (itemName, i) => {
       const userPortion = portions[i] || '1 serving';
       const normalizedSearch = normalizeFoodName(itemName);
       // 1. Check Cache with normalized name
@@ -469,7 +473,7 @@ export class NutritionAgent {
         }
       }
     }));
-    return results.filter((r)=>r !== null);
+    return results.filter((r) => r !== null);
   }
   async estimateNutritionWithLLM(itemName) {
     try {
@@ -490,6 +494,15 @@ export class NutritionAgent {
               "fiber_g": number,
               "sugar_g": number,
               "sodium_mg": number,
+              "fat_saturated_g": number,
+              "cholesterol_mg": number,
+              "potassium_mg": number,
+              "calcium_mg": number,
+              "iron_mg": number,
+              "magnesium_mg": number,
+              "vitamin_a_mcg": number,
+              "vitamin_c_mg": number,
+              "vitamin_d_mcg": number,
               "serving_size": string (e.g. "100g", "1 cup", "1 scoop")
             }
             If you are completely unsure, return null.`
@@ -516,7 +529,16 @@ export class NutritionAgent {
         serving_size: parsed.serving_size || '100g',
         fiber_g: parsed.fiber_g || 0,
         sugar_g: parsed.sugar_g || 0,
-        sodium_mg: parsed.sodium_mg || 0
+        sodium_mg: parsed.sodium_mg || 0,
+        fat_saturated_g: parsed.fat_saturated_g || 0,
+        cholesterol_mg: parsed.cholesterol_mg || 0,
+        potassium_mg: parsed.potassium_mg || 0,
+        calcium_mg: parsed.calcium_mg || 0,
+        iron_mg: parsed.iron_mg || 0,
+        magnesium_mg: parsed.magnesium_mg || 0,
+        vitamin_a_mcg: parsed.vitamin_a_mcg || 0,
+        vitamin_c_mg: parsed.vitamin_c_mg || 0,
+        vitamin_d_mcg: parsed.vitamin_d_mcg || 0
       };
     } catch (e) {
       console.error('[NutritionAgent] LLM estimation failed:', e);

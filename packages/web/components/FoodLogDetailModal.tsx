@@ -16,19 +16,12 @@ interface UserGoal {
 
 // FoodLog interface (ensure it includes potential keys)
 interface FoodLog {
-  id: string; // Updated to string for UUID
-  log_time: string; // Updated from timestamp
+  id: string;
+  log_time: string;
   food_name?: string | null;
   calories?: number | null;
-  protein_g?: number | null;
-  fat_total_g?: number | null;
-  carbs_g?: number | null;
-  sugar_g?: number | null;
-  fiber_g?: number | null;
-  sodium_mg?: number | null;
-  water_g?: number | null;
-  cholesterol_mg?: number | null;
-  potassium_mg?: number | null;
+  serving_size?: string | null;
+  portion?: string | null;
   [key: string]: unknown;
 }
 
@@ -37,26 +30,61 @@ interface FoodLogDetailModalProps {
   logData: FoodLog | null;
   onClose: () => void;
   userGoals: UserGoal[];
-  onDelete: (logId: string) => Promise<void>; // Updated to string for UUID
+  onDelete?: (logId: any) => Promise<void>;
 }
 
 // Nutrient display names and units (still useful for lookup)
+// Nutrient display names and units (synchronized with NutrientDisplay.tsx)
 const NUTRIENT_MAP: Record<string, { name: string; unit: string }> = {
-  calories: { name: "Calories", unit: "kcal" },
-  water_g: { name: "Water", unit: "g" },
+  // Macros
   protein_g: { name: "Protein", unit: "g" },
   fat_total_g: { name: "Total Fat", unit: "g" },
   carbs_g: { name: "Carbohydrates", unit: "g" },
+  calories: { name: "Calories", unit: "kcal" },
+  hydration_ml: { name: "Water", unit: "ml" },
+
+  // Fats
   fat_saturated_g: { name: "Saturated Fat", unit: "g" },
-  fiber_g: { name: "Total Fiber", unit: "g" },
+  fat_poly_g: { name: "Polyunsaturated Fat", unit: "g" },
+  fat_mono_g: { name: "Monounsaturated Fat", unit: "g" },
+  fat_trans_g: { name: "Trans Fat", unit: "g" },
+  omega_3_g: { name: "Omega-3", unit: "g" },
+  omega_6_g: { name: "Omega-6", unit: "g" },
+  omega_ratio: { name: "Omega 6:3 Ratio", unit: "" },
+
+  // Fibers & Sugars
+  fiber_g: { name: "Dietary Fiber", unit: "g" },
   fiber_soluble_g: { name: "Soluble Fiber", unit: "g" },
-  sugar_g: { name: "Sugars", unit: "g" },
+  sugar_g: { name: "Total Sugars", unit: "g" },
+  sugar_added_g: { name: "Added Sugars", unit: "g" },
+
+  // Minerals
   cholesterol_mg: { name: "Cholesterol", unit: "mg" },
   sodium_mg: { name: "Sodium", unit: "mg" },
   potassium_mg: { name: "Potassium", unit: "mg" },
-  omega_3_g: { name: "Omega-3", unit: "g" },
-  omega_6_g: { name: "Omega-6", unit: "g" },
-  // ... ensure this map covers all possible goal nutrient keys ...
+  calcium_mg: { name: "Calcium", unit: "mg" },
+  iron_mg: { name: "Iron", unit: "mg" },
+  magnesium_mg: { name: "Magnesium", unit: "mg" },
+  phosphorus_mg: { name: "Phosphorus", unit: "mg" },
+  zinc_mg: { name: "Zinc", unit: "mg" },
+  copper_mg: { name: "Copper", unit: "mg" },
+  manganese_mg: { name: "Manganese", unit: "mg" },
+  selenium_mcg: { name: "Selenium", unit: "mcg" },
+
+  // Vitamins
+  vitamin_a_mcg: { name: "Vitamin A", unit: "mcg" },
+  vitamin_c_mg: { name: "Vitamin C", unit: "mg" },
+  vitamin_d_mcg: { name: "Vitamin D", unit: "mcg" },
+  vitamin_e_mg: { name: "Vitamin E", unit: "mg" },
+  vitamin_k_mcg: { name: "Vitamin K", unit: "mcg" },
+  thiamin_mg: { name: "Thiamin (B1)", unit: "mg" },
+  riboflavin_mg: { name: "Riboflavin (B2)", unit: "mg" },
+  niacin_mg: { name: "Niacin (B3)", unit: "mg" },
+  pantothenic_acid_mg: { name: "Pantothenic Acid (B5)", unit: "mg" },
+  vitamin_b6_mg: { name: "Vitamin B6", unit: "mg" },
+  biotin_mcg: { name: "Biotin (B7)", unit: "mcg" },
+  folate_mcg: { name: "Folate (B9)", unit: "mcg" },
+  vitamin_b12_mcg: { name: "Vitamin B12", unit: "mcg" },
 };
 
 const FoodLogDetailModal: React.FC<FoodLogDetailModalProps> = ({ logData, onClose, userGoals, onDelete }) => {
@@ -66,32 +94,40 @@ const FoodLogDetailModal: React.FC<FoodLogDetailModalProps> = ({ logData, onClos
 
   if (!logData) return null;
 
-  // --- Updated Logic: Group nutrients into Core, Tracked, and Others --- 
-  const coreMacroKeys = ['calories', 'protein_g', 'carbs_g', 'fat_total_g'];
-  const trackedKeys = userGoals.map(g => g.nutrient).filter(k => !coreMacroKeys.includes(k));
+  // --- Updated Logic: Only show nutrients that are in userGoals, in their exact order ---
+  const getNutrientDetail = (goal: UserGoal) => {
+    const key = goal.nutrient;
+    // Special case for calories since it's usually in the header but included in goals
+    if (key === 'calories') return null;
 
-  const allNutrientKeys = Object.keys(NUTRIENT_MAP);
-  const otherKeys = allNutrientKeys.filter(k => !coreMacroKeys.includes(k) && !trackedKeys.includes(k));
-
-  const getNutrientDetail = (key: string) => {
-    const value = logData[key];
+    // Check both root and extras
+    const value = logData[key] !== undefined ? logData[key] : (logData.extras as any)?.[key];
     const mapping = NUTRIENT_MAP[key];
-    if (mapping && value !== null && value !== undefined && typeof value === 'number' && value > 0) {
-      return { key, name: mapping.name, value, unit: mapping.unit };
+
+    if (mapping && typeof value === 'number') {
+      return { key, name: mapping.name, value, unit: mapping.unit || goal.unit };
     }
     return null;
   };
 
-  const coreDetails = coreMacroKeys.map(getNutrientDetail).filter(Boolean) as any[];
-  const trackedDetails = trackedKeys.map(getNutrientDetail).filter(Boolean) as any[];
-  const otherDetails = otherKeys.map(getNutrientDetail).filter(Boolean) as any[];
+  const trackedDetails = userGoals
+    .filter(goal => goal.nutrient !== 'calories')
+    .map(goal => {
+      const key = goal.nutrient;
+      const value = logData[key] !== undefined ? logData[key] : (logData.extras as any)?.[key];
+      const mapping = NUTRIENT_MAP[key];
 
-  const [showAll, setShowAll] = useState(false);
-  // --- End Updated Logic ---
+      return {
+        key,
+        name: mapping?.name || key.replace(/_/g, ' '),
+        value: typeof value === 'number' ? value : 0,
+        unit: mapping?.unit || goal.unit
+      };
+    });
 
   // --- Define formatting logic using imported functions --- 
   const formatValue = (value: number, unit: string): string => {
-    if (isNaN(value) || value === null || value === undefined) return '-';
+    if (isNaN(value) || value === null || value === undefined) return '0g';
     switch (unit?.toLowerCase()) {
       case 'g':
         return formatWeight(value);
@@ -105,13 +141,17 @@ const FoodLogDetailModal: React.FC<FoodLogDetailModalProps> = ({ logData, onClos
       case 'kcal':
         return formatEnergy(value);
       default:
-        return `${value.toFixed(0)} ${unit || ''}`;
+        return `${value.toFixed(0)}${unit || ''}`;
     }
   };
   // --- End formatting logic ---
 
   const handleDeleteClick = async () => {
     if (!logData || isDeleting) return;
+    if (!onDelete) {
+      console.warn("onDelete callback is not provided.");
+      return;
+    }
 
     if (!window.confirm(`Are you sure you want to delete the log entry for "${logData.food_name || 'this item'}"?`)) {
       return;
@@ -129,105 +169,75 @@ const FoodLogDetailModal: React.FC<FoodLogDetailModalProps> = ({ logData, onClos
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] flex flex-col">
-        {/* Modal Header */}
-        <div className="flex justify-between items-center p-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-800 truncate">
-            {logData.food_name || 'Log Details'}
-          </h3>
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex justify-center items-center p-4 transition-all animate-in fade-in duration-200">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden border border-gray-100">
+        {/* Modal Header - Side by Side Name | Kcal */}
+        <div className="bg-blue-50 px-4 py-2 border-b border-blue-100 flex justify-between items-center">
+          <span className="font-bold text-blue-900 text-[10px] uppercase tracking-wider">Log Details</span>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 p-1 rounded-full"
+            className="text-blue-400 hover:text-blue-600 p-1 rounded-full transition-colors"
             aria-label="Close modal"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
 
-        {/* Modal Body (Scrollable) */}
-        <div className="p-4 overflow-y-auto flex-1">
-          {/* Core Macros */}
-          <div className="mb-4">
-            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Core Nutrition</h4>
-            <div className="grid grid-cols-2 gap-3">
-              {coreDetails.map(n => (
-                <div key={n.key} className="bg-blue-50 p-2 rounded-lg border border-blue-100">
-                  <p className="text-[10px] text-blue-600 font-bold uppercase">{n.name}</p>
-                  <p className="text-sm font-black text-gray-800">{formatValue(n.value, n.unit)}</p>
-                </div>
-              ))}
+        <div className="p-5 flex justify-between items-start">
+          <div className="flex-1 min-w-0 pr-4">
+            <h3 className="text-xl font-bold text-gray-900 leading-tight">
+              {logData.food_name || 'Food Item'}
+            </h3>
+            <p className="text-sm text-gray-500 mt-1 font-medium">
+              {logData.portion || '1 serving'}
+              {logData.serving_size ? ` (${logData.serving_size} per portion)` : ''}
+            </p>
+          </div>
+          <div className="text-right">
+            <div className="text-2xl font-black text-blue-600 whitespace-nowrap tracking-tight">
+              {formatEnergy(logData.calories || 0)}
             </div>
           </div>
+        </div>
 
-          {/* Tracked Nutrients */}
-          {trackedDetails.length > 0 && (
-            <div className="mb-4">
-              <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Tracked Goals</h4>
-              <ul className="space-y-1">
-                {trackedDetails.map(n => (
-                  <li key={n.key} className="flex justify-between text-sm py-1.5 border-b border-gray-50 last:border-0">
-                    <span className="text-gray-600">{n.name}:</span>
-                    <span className="text-gray-800 font-bold">{formatValue(n.value, n.unit)}</span>
-                  </li>
-                ))}
-              </ul>
+        {/* Modal Body (Scrollable) */}
+        <div className="px-5 pb-5 overflow-y-auto flex-1">
+          {/* Vertical List of Tracked Nutrients */}
+          <div className="border-t border-gray-50 pt-4">
+            <div className="flex items-center gap-1.5 mb-3">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Tracked Goals</span>
             </div>
-          )}
-
-          {/* Expandable Section for Others */}
-          {otherDetails.length > 0 && (
-            <div className="mt-2">
-              <button
-                onClick={() => setShowAll(!showAll)}
-                className="flex items-center text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors"
-                aria-expanded={showAll}
-              >
-                <span>{showAll ? 'Hide Additional Nutrients' : `Show ${otherDetails.length} Additional Nutrients`}</span>
-                <svg
-                  className={`ml-1 h-3 w-3 transform transition-transform ${showAll ? 'rotate-180' : ''}`}
-                  fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-
-              {showAll && (
-                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 pb-4">
-                  {otherDetails.map(n => (
-                    <div key={n.key} className="flex flex-col border-b border-gray-50 pb-1">
-                      <span className="text-[10px] text-gray-500 uppercase font-medium">{n.name}</span>
-                      <span className="text-xs font-semibold text-gray-700">{formatValue(n.value, n.unit)}</span>
-                    </div>
-                  ))}
-                </div>
+            <div className="bg-gray-50 rounded-lg p-3 space-y-2.5 border border-gray-100">
+              {trackedDetails.length > 0 ? (
+                trackedDetails.map((n, i) => (
+                  <div key={n.key} className="flex justify-between items-center">
+                    <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-tight">{n.name}</span>
+                    <span className="text-xs font-black text-gray-800">{formatValue(n.value, n.unit)}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-gray-400 text-center py-2 italic font-medium">No goals tracked for this period.</p>
               )}
             </div>
-          )}
-
-          {coreDetails.length === 0 && trackedDetails.length === 0 && otherDetails.length === 0 && (
-            <p className="text-sm text-gray-500 text-center py-4">No nutritional information available.</p>
-          )}
+          </div>
         </div>
 
         {/* Modal Footer - Added Delete Button */}
-        <div className="p-4 border-t border-gray-200 flex justify-between items-center">
-          {/* Delete Button (Left Aligned) */}
+        <div className="p-4 bg-gray-50/50 border-t border-gray-100 flex gap-3">
           <button
             onClick={handleDeleteClick}
             disabled={isDeleting}
-            className={`px-4 py-2 border border-red-300 text-red-600 text-sm font-medium rounded-md hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed`}
+            className="flex-1 py-2.5 px-4 bg-white border border-red-200 text-red-600 text-sm font-bold rounded-lg hover:bg-red-50 hover:border-red-300 transition-all shadow-sm active:scale-[0.98]"
           >
             {isDeleting ? 'Deleting...' : 'Delete Log'}
           </button>
 
-          {/* Close Button (Right Aligned) */}
           <button
             onClick={onClose}
-            disabled={isDeleting} // Disable close while deleting
-            className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 disabled:opacity-50"
+            disabled={isDeleting}
+            className="flex-1 py-2.5 px-4 bg-gray-900 text-white text-sm font-bold rounded-lg hover:bg-black transition-all shadow-sm active:scale-[0.98]"
           >
             Close
           </button>

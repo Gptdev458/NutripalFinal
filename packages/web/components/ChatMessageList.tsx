@@ -22,9 +22,10 @@ interface ChatMessageListProps {
   userGoals?: UserGoal[];
   onFlagMessage?: (messageId: number) => void;
   onSendMessage?: (text: string, isHidden?: boolean) => void;
+  onViewLogDetail?: (logData: any) => void;
 }
 
-const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, messages, userGoals, onFlagMessage, onSendMessage }) => {
+const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, messages, userGoals, onFlagMessage, onSendMessage, onViewLogDetail }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Scroll to bottom of messages when new ones are added
@@ -151,6 +152,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
                   {msg.message_type === 'confirmation_recipe_save' && msg.metadata.parsed && (
                     <RecipeConfirmation
                       recipe={msg.metadata.parsed}
+                      userGoals={userGoals}
                       preview={msg.metadata.preview}
                       isMatch={msg.metadata.isMatch}
                       existingRecipeName={msg.metadata.existingRecipeName}
@@ -168,17 +170,29 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ activeChatId, message
 
                   {/* Logged Views */}
                   {msg.message_type === 'food_logged' && msg.metadata.nutrition && (
-                    <div className="space-y-2">
-                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-1">Logged to Dashboard</p>
+                    <button
+                      onClick={() => onViewLogDetail?.(msg.metadata.nutrition[0])}
+                      className="w-full text-left space-y-2 hover:bg-gray-50 p-2 -m-2 rounded-lg transition-colors group/card"
+                    >
+                      <div className="flex justify-between items-center border-b border-gray-50 pb-1">
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ">Logged to Dashboard</p>
+                        <span className="text-[10px] text-blue-500 opacity-0 group-hover/card:opacity-100 transition-opacity font-bold">VIEW DETAILS →</span>
+                      </div>
                       <NutrientDisplay nutrition={msg.metadata.nutrition} userGoals={userGoals} />
-                    </div>
+                    </button>
                   )}
 
                   {msg.message_type === 'nutrition_info' && msg.metadata.nutrition && (
-                    <div className="space-y-2">
-                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-1">Nutritional Analysis</p>
+                    <button
+                      onClick={() => onViewLogDetail?.(msg.metadata.nutrition[0])}
+                      className="w-full text-left space-y-2 hover:bg-gray-50 p-2 -m-2 rounded-lg transition-colors group/card"
+                    >
+                      <div className="flex justify-between items-center border-b border-gray-50 pb-1">
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Nutritional Analysis</p>
+                        <span className="text-[10px] text-blue-500 opacity-0 group-hover/card:opacity-100 transition-opacity font-bold">VIEW DETAILS →</span>
+                      </div>
                       <NutrientDisplay nutrition={msg.metadata.nutrition} userGoals={userGoals} />
-                    </div>
+                    </button>
                   )}
 
                   {msg.metadata.warnings && msg.metadata.warnings.length > 0 && (

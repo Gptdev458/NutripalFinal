@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { NutrientDisplay, UserGoal } from './NutrientDisplay';
+import { NutrientDisplay, UserGoal, NUTRIENT_MAP } from './NutrientDisplay';
 
 interface FoodItem {
     food_name: string;
@@ -23,79 +23,100 @@ interface FoodLogConfirmationProps {
 
 export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
     nutrition,
-    userGoals,
+    userGoals = [],
     onConfirm,
     onDecline,
     onEdit,
-    title = 'Verify Log',
+    title = 'Verify log',
     confirmLabel = 'Log Food'
 }) => {
-    const [isEditing, setIsEditing] = useState(false);
-    const totalCalories = nutrition.reduce((sum, item) => sum + (item.calories || 0), 0);
+    const [showDetails, setShowDetails] = useState(false);
 
-    // Calculate totals for all nutrients present in any item
-    const aggregatedNutrition = nutrition.reduce((acc, item) => {
+    const totalCalories = nutrition.reduce((sum, item) => sum + (item.calories || 0), 0);
+    const mainItem = nutrition[0];
+    const itemName = nutrition.length > 1 ? `${mainItem?.food_name} + ${nutrition.length - 1} more` : (mainItem?.food_name || 'Food Item');
+
+    // Calculate totals for tracked nutrients in order
+    const aggregated = nutrition.reduce((acc, item) => {
         Object.keys(item).forEach(key => {
             if (typeof item[key] === 'number') {
                 acc[key] = (acc[key] || 0) + item[key];
             }
         });
         return acc;
-    }, { food_name: 'Total' } as any);
+    }, {} as any);
+
+    const trackedDetails = userGoals
+        .filter(goal => goal.nutrient !== 'calories')
+        .map(goal => {
+            const val = aggregated[goal.nutrient];
+            // Show all tracked nutrients, default to 0 if not present
+            return {
+                name: NUTRIENT_MAP[goal.nutrient]?.name || goal.nutrient.replace(/_/g, ' '),
+                value: typeof val === 'number' ? val : 0,
+                unit: NUTRIENT_MAP[goal.nutrient]?.unit || goal.unit
+            };
+        });
 
     return (
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden mt-2">
-            <div className="bg-blue-50 px-4 py-2 border-b border-blue-100 flex justify-between items-center">
-                <span className="font-semibold text-blue-900 text-sm">{title}</span>
-                <span className="text-xs text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">Propose</span>
+            <div className="bg-blue-50 px-4 py-1.5 border-b border-blue-100">
+                <span className="font-bold text-blue-900 text-xs uppercase tracking-tight">{title}</span>
             </div>
 
-            <div className="p-4 space-y-4">
-                {/* Dynamic Summary using NutrientDisplay */}
-                <div className="border-b border-gray-50 pb-3">
-                    <NutrientDisplay
-                        nutrition={[aggregatedNutrition]}
-                        userGoals={userGoals}
-                        variant="chat"
-                    />
+            <div className="p-4 space-y-3">
+                {/* Header Row: Name | Calories */}
+                <div className="flex justify-between items-baseline">
+                    <h3 className="text-lg font-bold text-gray-900 truncate pr-2">{itemName}</h3>
+                    <span className="text-lg font-black text-blue-600 whitespace-nowrap">{Math.round(totalCalories)} kcal</span>
                 </div>
 
-                {/* Item List */}
-                <div className="space-y-2 border-t border-gray-100 pt-2 max-h-40 overflow-y-auto">
-                    {nutrition.map((item, idx) => (
-                        <div key={idx} className="flex justify-between text-sm group">
-                            <div className="flex-1 truncate pr-2">
-                                <div className="font-medium text-gray-800">{item.food_name}</div>
-                                <div className="text-xs text-gray-500">{item.serving_size || '1 serving'}</div>
-                            </div>
-                            <div className="text-right">
-                                <div className="font-medium text-gray-700">{item.calories}</div>
-                            </div>
-                        </div>
-                    ))}
+                {/* Sub-header: Portion details */}
+                <div className="text-sm text-gray-500 -mt-1">
+                    {mainItem?.serving_size || '1 serving'}
                 </div>
+
+                {/* Collapsible Details */}
+                {trackedDetails.length > 0 && (
+                    <div className="border-t border-gray-50 pt-2">
+                        <button
+                            onClick={() => setShowDetails(!showDetails)}
+                            className="flex items-center text-xs font-bold text-gray-400 hover:text-blue-500 transition-colors"
+                        >
+                            <span>Details</span>
+                            <svg className={`ml-1 h-3 w-3 transform transition-transform ${showDetails ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+
+                        {showDetails && (
+                            <div className="mt-2 space-y-1 bg-gray-50 p-2 rounded border border-gray-100 animate-in fade-in slide-in-from-top-1 duration-200">
+                                {trackedDetails.map((n: any, idx) => (
+                                    <div key={idx} className="flex justify-between text-xs">
+                                        <span className="text-gray-500 uppercase font-medium">{n.name}:</span>
+                                        <span className="font-bold text-gray-700">{Math.round(n.value * 10) / 10}{n.unit}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* Actions */}
-                <div className="flex gap-2 pt-2">
+                <div className="flex gap-3 pt-2">
                     <button
                         onClick={onDecline}
-                        className="flex-1 py-2 px-3 bg-white border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-gray-200 transition-colors"
+                        className="flex-1 py-2 px-3 bg-white border border-gray-300 text-gray-700 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors"
                     >
                         Cancel
                     </button>
                     <button
                         onClick={onConfirm}
-                        className="flex-1 py-2 px-3 bg-blue-600 border border-transparent text-white rounded-md text-sm font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500 shadow-sm transition-colors"
+                        className="flex-1 py-2 px-3 bg-blue-600 border border-transparent text-white rounded-md text-sm font-bold hover:bg-blue-700 shadow-sm transition-colors"
                     >
                         {confirmLabel}
                     </button>
                 </div>
-
-                {!isEditing && (
-                    <div className="text-center">
-                        <button className='text-xs text-gray-400 hover:text-blue-500 underline'>Edit details (Coming Soon)</button>
-                    </div>
-                )}
             </div>
         </div>
     );

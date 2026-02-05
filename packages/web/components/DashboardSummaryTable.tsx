@@ -142,27 +142,68 @@ const SummaryTableRow: React.FC<SummaryTableRowProps> = ({ nutrient, current, ta
     const displayTarget = target !== undefined ? formatValue(targetValue) : '-';
     const progressText = `${displayCurrent} / ${displayTarget}`;
 
-    const percentage = (target && target > 0) ? Math.min(Math.round((current / target) * 100), 100) : 0;
-    const progressValue = percentage;
+    const percentage = (target && target > 0) ? Math.round((current / target) * 100) : 0;
+    const barWidth = Math.min(percentage, 100);
 
     // Format the nutrient name properly
     const formattedNutrientName = formatNutrientName(nutrient);
 
+    // Color coding logic
+    const isLimit = goalType === 'limit';
+    const isOver = target !== undefined && current > target;
+    const isMet = target !== undefined && current >= target;
+
+    let textColorClass = 'text-gray-600';
+    let progressBarClass = 'bg-blue-600';
+
+    if (target !== undefined) {
+        if (isLimit) {
+            if (isOver) {
+                textColorClass = 'text-red-600 font-bold';
+                progressBarClass = 'bg-red-500';
+            } else {
+                textColorClass = 'text-blue-600 font-medium';
+                progressBarClass = 'bg-blue-500';
+            }
+        } else {
+            // Default Goal behavior
+            if (isMet) {
+                textColorClass = 'text-emerald-600 font-bold';
+                progressBarClass = 'bg-emerald-500';
+            } else {
+                textColorClass = 'text-blue-600 font-medium';
+                progressBarClass = 'bg-blue-500';
+            }
+        }
+    }
+
     return (
-        <tr>
-            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{formattedNutrientName}</td>
-            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{displayTarget}</td>
-            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{displayCurrent}</td>
+        <tr className="hover:bg-gray-50 transition-colors">
+            <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">
+                <div className="flex flex-col">
+                    <span>{formattedNutrientName}</span>
+                    <span className="text-[10px] text-gray-400 uppercase tracking-tighter">
+                        {isLimit ? 'Limit' : 'Goal'}
+                    </span>
+                </div>
+            </td>
+            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-medium">{displayTarget}</td>
+            <td className={`px-6 py-4 whitespace-nowrap text-sm ${textColorClass}`}>{displayCurrent}</td>
             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                <div className="flex items-center">
+                <div className="flex items-center space-x-2">
                     {target !== undefined && (
                         <>
-                            <Progress value={progressValue} className="w-20 h-2 mr-2" />
-                            <span>{`${percentage}%`}</span>
+                            <div className="w-32 bg-gray-100 rounded-full h-2 overflow-hidden border border-gray-200">
+                                <div
+                                    className={`h-full transition-all duration-500 ${progressBarClass}`}
+                                    style={{ width: `${barWidth}%` }}
+                                />
+                            </div>
+                            <span className={`text-xs font-bold w-10 ${textColorClass}`}>{`${percentage}%`}</span>
                         </>
                     )}
                     {target === undefined && (
-                        <span>N/A</span>
+                        <span className="text-gray-400 italic">No Goal Set</span>
                     )}
                 </div>
             </td>
