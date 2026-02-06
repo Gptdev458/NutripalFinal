@@ -109,7 +109,7 @@ const ChatScreen = () => {
         .from('chat_sessions')
         .select('id, title')
         .eq('user_id', user.id)
-        .order('updated_at', { ascending: false })
+        .order('created_at', { ascending: false })
         .limit(1);
 
       if (data && data.length > 0) {
