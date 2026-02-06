@@ -10,6 +10,9 @@ interface UserGoal {
   target_value: number;
   unit: string;
   goal_type?: string;
+  yellow_min?: number;
+  green_min?: number;
+  red_min?: number;
 }
 
 interface FoodLog {
@@ -21,6 +24,10 @@ interface FoodLog {
 }
 
 interface DailyTotals {
+  [nutrientKey: string]: number | undefined;
+}
+
+interface DailyAdjustments {
   [nutrientKey: string]: number | undefined;
 }
 
@@ -55,6 +62,7 @@ export const useDashboardData = () => {
   const { user, supabase, loading: authLoading } = useAuth();
   const [userGoals, setUserGoals] = useState<UserGoal[]>([]);
   const [dailyTotals, setDailyTotals] = useState<DailyTotals>({});
+  const [dailyAdjustments, setDailyAdjustments] = useState<DailyAdjustments>({});
   const [recentLogs, setRecentLogs] = useState<FoodLog[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -78,18 +86,24 @@ export const useDashboardData = () => {
     const { start: startOfDay, end: endOfDay } = getStartAndEndOfDay(new Date(), timezone);
 
     try {
-      const [goalsResponse, logsResponse] = await Promise.all([
+      const [goalsResponse, logsResponse, adjsResponse] = await Promise.all([
         supabase.from('user_goals').select('*').eq('user_id', user.id),
         supabase.from('food_log')
           .select('*')
           .eq('user_id', user.id)
           .gte('log_time', startOfDay)
           .lte('log_time', endOfDay)
-          .order('log_time', { ascending: false })
+          .order('log_time', { ascending: false }),
+        supabase.from('daily_adjustments')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('adjustment_date', startOfDay.split('T')[0])
       ]);
 
       if (goalsResponse.error) throw goalsResponse.error;
       if (logsResponse.error) throw logsResponse.error;
+      // adjustments might fail if table just created or user has none - be graceful
+      const fetchedAdjs = adjsResponse?.data || [];
 
       const fetchedGoals = goalsResponse.data || [];
       const fetchedLogs = logsResponse.data || [];
@@ -120,6 +134,13 @@ export const useDashboardData = () => {
       setRecentLogs(fetchedLogs);
       setDailyTotals(totals);
 
+      const adjs: DailyAdjustments = {};
+      fetchedAdjs.forEach(adj => {
+        const normalized = normalizeNutrientKey(adj.nutrient);
+        adjs[normalized] = (adjs[normalized] || 0) + (adj.adjustment_value as number);
+      });
+      setDailyAdjustments(adjs);
+
     } catch (err: unknown) {
       console.error("[useDashboardData] Error fetching data:", err);
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -141,6 +162,7 @@ export const useDashboardData = () => {
   return {
     userGoals,
     dailyTotals,
+    dailyAdjustments,
     recentLogs,
     loadingData,
     error,

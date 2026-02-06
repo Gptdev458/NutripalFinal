@@ -81,7 +81,13 @@ export class ToolExecutor {
           return this.confirmPendingLog(args.proposal_id);
         // Goal Tools
         case 'update_user_goal':
-          return this.updateUserGoal(args.nutrient, args.target_value, args.unit);
+          return this.updateUserGoal(args.nutrient, args.target_value, args.unit, {
+            yellow_min: args.yellow_min,
+            green_min: args.green_min,
+            red_min: args.red_min
+          });
+        case 'apply_daily_workout_offset':
+          return this.applyDailyWorkoutOffset(args.adjustment_value, args.nutrient, args.notes);
         case 'calculate_recommended_goals':
           return this.calculateRecommendedGoals();
         // Insight Tools
@@ -138,7 +144,10 @@ export class ToolExecutor {
     for (const goal of goals) {
       goalsMap[goal.nutrient] = {
         target: goal.target_value,
-        unit: goal.unit || (goal.nutrient === 'calories' ? 'kcal' : 'g')
+        unit: goal.unit || (goal.nutrient === 'calories' ? 'kcal' : 'g'),
+        yellow_min: goal.yellow_min,
+        green_min: goal.green_min,
+        red_min: goal.red_min
       };
     }
     return goalsMap;
@@ -147,7 +156,10 @@ export class ToolExecutor {
   async getTodayProgress() {
     const timezone = this.context.timezone || 'UTC';
     const { start, end } = getStartAndEndOfDay(new Date(), timezone);
-    const logs = await this.db.getFoodLogs(this.context.userId, start, end);
+    const [logs, adjustments] = await Promise.all([
+      this.db.getFoodLogs(this.context.userId, start, end),
+      this.db.getDailyAdjustments(this.context.userId, start.split('T')[0], end.split('T')[0])
+    ]);
 
     // Dynamically accumulate any nutrient found in NUTRIENT_MAP
     const map = this.getMasterNutrientMap();
@@ -155,9 +167,13 @@ export class ToolExecutor {
       calories: 0,
       items_logged: 0
     };
+    const adjustmentMap: Record<string, number> = {};
 
     // Initialize all possible keys
-    Object.keys(map).forEach(key => totals[key] = 0);
+    Object.keys(map).forEach(key => {
+      totals[key] = 0;
+      adjustmentMap[key] = 0;
+    });
 
     if (logs) {
       for (const log of logs) {
@@ -174,13 +190,27 @@ export class ToolExecutor {
       }
     }
 
+    if (adjustments) {
+      for (const adj of adjustments) {
+        const key = adj.nutrient;
+        if (adjustmentMap[key] !== undefined) {
+          adjustmentMap[key] += adj.adjustment_value;
+        } else if (key === 'calories') {
+          totals.calories += adj.adjustment_value; // Fallback if calories not in map
+        }
+      }
+    }
+
     // Round values
     Object.keys(totals).forEach((key) => {
       totals[key] = Math.round(totals[key] * 10) / 10;
     });
     totals.calories = Math.round(totals.calories);
 
-    return totals;
+    return {
+      consumed: totals,
+      adjustments: adjustmentMap
+    };
   }
 
   async getWeeklySummary() {
@@ -603,7 +633,7 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. ${hi
   // GOAL TOOLS
   // =============================================================
 
-  async updateUserGoal(nutrient: string, targetValue: number, unit?: string) {
+  async updateUserGoal(nutrient: string, targetValue: number, unit?: string, thresholds: any = {}) {
     const proposalId = `goal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const nutrientMap: Record<string, string> = {
       'protein': 'protein_g',
@@ -618,6 +648,13 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. ${hi
     };
     const normalizedNutrient = nutrientMap[nutrient.toLowerCase()] || nutrient.toLowerCase();
     const defaultUnit = normalizedNutrient === 'calories' ? 'kcal' : normalizedNutrient === 'sodium_mg' ? 'mg' : 'g';
+
+    // Clean up thresholds (remove undefined)
+    const cleanedThresholds: any = {};
+    if (thresholds.yellow_min !== undefined) cleanedThresholds.yellow_min = thresholds.yellow_min;
+    if (thresholds.green_min !== undefined) cleanedThresholds.green_min = thresholds.green_min;
+    if (thresholds.red_min !== undefined) cleanedThresholds.red_min = thresholds.red_min;
+
     return {
       proposal_type: 'goal_update',
       proposal_id: proposalId,
@@ -625,9 +662,35 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. ${hi
       data: {
         nutrient: normalizedNutrient,
         target_value: targetValue,
-        unit: unit || defaultUnit
+        unit: unit || defaultUnit,
+        ...cleanedThresholds
       },
-      message: `Ready to update ${normalizedNutrient} goal to ${targetValue}${unit || defaultUnit}. Please confirm.`
+      message: `Ready to update ${normalizedNutrient} goal to ${targetValue}${unit || defaultUnit}${Object.keys(cleanedThresholds).length ? ' with custom thresholds' : ''}. Please confirm.`
+    };
+  }
+
+  async applyDailyWorkoutOffset(value: number, nutrient: string = 'calories', notes?: string) {
+    const proposalId = `workout_${Date.now()}`;
+    const nutrientMap: Record<string, string> = {
+      'protein': 'protein_g',
+      'carbs': 'carbs_g',
+      'fat': 'fat_total_g',
+      'fiber': 'fiber_g'
+    };
+    const normalizedNutrient = nutrientMap[nutrient.toLowerCase()] || nutrient.toLowerCase();
+
+    // Directly apply or propose? The requirement says "AI triggers a call". 
+    // Usually PCC pattern is better for tracking.
+    return {
+      proposal_type: 'workout_adjustment',
+      proposal_id: proposalId,
+      pending: true,
+      data: {
+        nutrient: normalizedNutrient,
+        adjustment_value: value,
+        notes: notes || 'Daily workout'
+      },
+      message: `I'll add a ${value} ${normalizedNutrient === 'calories' ? 'kcal' : 'g'} bonus to your ${normalizedNutrient} target for today's workout. Sound good?`
     };
   }
 

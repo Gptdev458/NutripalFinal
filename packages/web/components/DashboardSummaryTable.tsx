@@ -7,6 +7,9 @@ interface UserGoal {
     target_value: number;
     unit: string;
     goal_type?: string;
+    yellow_min?: number;
+    green_min?: number;
+    red_min?: number;
 }
 
 interface DailyTotals {
@@ -16,6 +19,7 @@ interface DailyTotals {
 interface DashboardSummaryTableProps {
     userGoals: UserGoal[];
     dailyTotals: DailyTotals;
+    dailyAdjustments?: Record<string, number | undefined>;
     loading: boolean;
     error: string | null;
     refreshing?: boolean;
@@ -25,6 +29,7 @@ interface DashboardSummaryTableProps {
 const DashboardSummaryTable: React.FC<DashboardSummaryTableProps> = ({
     userGoals,
     dailyTotals,
+    dailyAdjustments = {},
     loading,
     error,
     refreshing = false,
@@ -75,28 +80,46 @@ const DashboardSummaryTable: React.FC<DashboardSummaryTableProps> = ({
                                     <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Nutrient</th>
                                     <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Target</th>
                                     <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Consumed</th>
-                                    <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Progress</th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Progress %</th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider italic">Delta</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
-                                {(userGoals.find(g => g.nutrient === 'calories') || (dailyTotals['calories'] && dailyTotals['calories'] > 0)) && (
-                                    <SummaryTableRow
-                                        key="calories"
-                                        nutrient="calories"
-                                        current={dailyTotals['calories'] || 0}
-                                        target={userGoals.find(g => g.nutrient === 'calories')?.target_value}
-                                        unit="kcal"
-                                        goalType={userGoals.find(g => g.nutrient === 'calories')?.goal_type}
-                                    />
-                                )}
+                                {(() => {
+                                    const caloriesGoal = userGoals.find(g => g.nutrient === 'calories');
+                                    const hasCalories = caloriesGoal || (dailyTotals['calories'] && dailyTotals['calories'] > 0);
+                                    if (!hasCalories) return null;
+                                    return (
+                                        <SummaryTableRow
+                                            key="calories"
+                                            nutrient="calories"
+                                            current={dailyTotals['calories'] || 0}
+                                            target={caloriesGoal?.target_value}
+                                            adjustment={dailyAdjustments['calories']}
+                                            unit="kcal"
+                                            goalType={caloriesGoal?.goal_type}
+                                            thresholds={{
+                                                yellow_min: caloriesGoal?.yellow_min,
+                                                green_min: caloriesGoal?.green_min,
+                                                red_min: caloriesGoal?.red_min
+                                            }}
+                                        />
+                                    );
+                                })()}
                                 {userGoals.filter(goal => goal.nutrient !== 'calories').map(goal => (
                                     <SummaryTableRow
                                         key={goal.nutrient}
                                         nutrient={goal.nutrient}
                                         current={dailyTotals[goal.nutrient] || 0}
                                         target={goal.target_value}
+                                        adjustment={dailyAdjustments[goal.nutrient]}
                                         unit={goal.unit}
                                         goalType={goal.goal_type}
+                                        thresholds={{
+                                            yellow_min: goal.yellow_min,
+                                            green_min: goal.green_min,
+                                            red_min: goal.red_min
+                                        }}
                                     />
                                 ))}
                             </tbody>
@@ -112,47 +135,84 @@ interface SummaryTableRowProps {
     nutrient: string;
     current: number;
     target?: number;
+    adjustment?: number;
     unit: string;
     goalType?: string;
+    thresholds?: {
+        yellow_min?: number;
+        green_min?: number;
+        red_min?: number;
+    };
 }
 
-const SummaryTableRow: React.FC<SummaryTableRowProps> = ({ nutrient, current, target, unit, goalType }) => {
-    // Define formatting logic based on unit using AVAILABLE formatters
-    const displayCurrent = formatNutrientValue(nutrient, current);
-    const displayTarget = target !== undefined ? formatNutrientValue(nutrient, target) : '-';
-    const progressText = `${displayCurrent} / ${displayTarget}`;
+const SummaryTableRow: React.FC<SummaryTableRowProps> = ({ nutrient, current, target, adjustment = 0, unit, goalType, thresholds = {} }) => {
+    const isLimit = goalType === 'limit';
+    const finalTarget = target !== undefined ? target + adjustment : undefined;
 
-    const percentage = (target && target > 0) ? Math.round((current / target) * 100) : 0;
+    const displayCurrent = formatNutrientValue(nutrient, current);
+    const displayBaseTarget = target !== undefined ? formatNutrientValue(nutrient, target) : '-';
+    const displayAdjustment = adjustment !== 0 ? ` (+${formatNutrientValue(nutrient, adjustment)})` : '';
+    const displayTarget = target !== undefined ? (
+        <div className="flex flex-col">
+            <span>{formatNutrientValue(nutrient, finalTarget!)}</span>
+            {adjustment !== 0 && (
+                <span className="text-[10px] text-blue-500 font-medium">Base: {displayBaseTarget} + Workout</span>
+            )}
+        </div>
+    ) : '-';
+
+    const percentage = (finalTarget && finalTarget > 0) ? Math.round((current / finalTarget) * 100) : 0;
+    const fraction = (finalTarget && finalTarget > 0) ? (current / finalTarget) : 0;
     const barWidth = Math.min(percentage, 100);
 
-    // Format the nutrient name properly
-    const formattedNutrientName = formatNutrientName(nutrient);
+    const delta = finalTarget !== undefined ? finalTarget - current : null;
+    const displayDelta = delta !== null ? formatNutrientValue(nutrient, Math.abs(delta)) : '-';
+    const deltaColor = delta !== null ? (delta < 0 ? (isLimit ? 'text-red-500' : 'text-emerald-500') : 'text-gray-400') : 'text-gray-400';
 
     // Color coding logic
-    const isLimit = goalType === 'limit';
-    const isOver = target !== undefined && current > target;
-    const isMet = target !== undefined && current >= target;
+    const yellowMin = thresholds.yellow_min ?? (isLimit ? 0.90 : 0.50);
+    const greenMin = thresholds.green_min ?? (isLimit ? 0.75 : 0.75);
+    const redMin = thresholds.red_min ?? (isLimit ? 1.00 : 0.90);
 
     let textColorClass = 'text-gray-600';
-    let progressBarClass = 'bg-blue-600';
+    let progressBarClass = 'bg-gray-300';
 
-    if (target !== undefined) {
+    if (finalTarget !== undefined) {
         if (isLimit) {
-            if (isOver) {
+            // For limits: green if < green_min, yellow if >= yellow_min, red if >= red_min
+            if (fraction >= redMin) {
                 textColorClass = 'text-red-600 font-bold';
                 progressBarClass = 'bg-red-500';
+            } else if (fraction >= yellowMin) {
+                textColorClass = 'text-amber-500 font-medium';
+                progressBarClass = 'bg-amber-500';
+            } else if (fraction >= greenMin) {
+                textColorClass = 'text-blue-500 font-medium';
+                progressBarClass = 'bg-blue-400';
             } else {
-                textColorClass = 'text-blue-600 font-medium';
-                progressBarClass = 'bg-blue-500';
+                textColorClass = 'text-emerald-600 font-medium';
+                progressBarClass = 'bg-emerald-500';
             }
         } else {
-            // Default Goal behavior
-            if (isMet) {
+            // For goals: red if < yellow_min, yellow if >= yellow_min, green if >= green_min
+            if (fraction >= greenMin) {
                 textColorClass = 'text-emerald-600 font-bold';
                 progressBarClass = 'bg-emerald-500';
-            } else {
+            } else if (fraction >= yellowMin) {
+                textColorClass = 'text-amber-500 font-medium';
+                progressBarClass = 'bg-amber-400';
+            } else if (fraction >= 0.1) {
+                // Red only if very low or explicitly configured
                 textColorClass = 'text-blue-600 font-medium';
                 progressBarClass = 'bg-blue-500';
+            } else {
+                textColorClass = 'text-gray-400';
+                progressBarClass = 'bg-gray-200';
+            }
+
+            // Special override for goal met
+            if (fraction >= 1.0) {
+                textColorClass = 'text-emerald-700 font-black';
             }
         }
     }
@@ -161,7 +221,7 @@ const SummaryTableRow: React.FC<SummaryTableRowProps> = ({ nutrient, current, ta
         <tr className="hover:bg-gray-50 transition-colors">
             <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">
                 <div className="flex flex-col">
-                    <span>{formattedNutrientName}</span>
+                    <span>{formatNutrientName(nutrient)}</span>
                     <span className="text-[10px] text-gray-400 uppercase tracking-tighter">
                         {isLimit ? 'Limit' : 'Goal'}
                     </span>
@@ -171,9 +231,9 @@ const SummaryTableRow: React.FC<SummaryTableRowProps> = ({ nutrient, current, ta
             <td className={`px-6 py-4 whitespace-nowrap text-sm ${textColorClass}`}>{displayCurrent}</td>
             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                 <div className="flex items-center space-x-2">
-                    {target !== undefined && (
+                    {finalTarget !== undefined && (
                         <>
-                            <div className="w-32 bg-gray-100 rounded-full h-2 overflow-hidden border border-gray-200">
+                            <div className="w-24 bg-gray-100 rounded-full h-2 overflow-hidden border border-gray-200">
                                 <div
                                     className={`h-full transition-all duration-500 ${progressBarClass}`}
                                     style={{ width: `${barWidth}%` }}
@@ -182,10 +242,13 @@ const SummaryTableRow: React.FC<SummaryTableRowProps> = ({ nutrient, current, ta
                             <span className={`text-xs font-bold w-10 ${textColorClass}`}>{`${percentage}%`}</span>
                         </>
                     )}
-                    {target === undefined && (
-                        <span className="text-gray-400 italic">No Goal Set</span>
+                    {finalTarget === undefined && (
+                        <span className="text-gray-400 italic">No Target</span>
                     )}
                 </div>
+            </td>
+            <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${deltaColor}`}>
+                {delta !== null ? (delta < 0 ? `+${displayDelta}` : displayDelta) : '-'}
             </td>
         </tr>
     );

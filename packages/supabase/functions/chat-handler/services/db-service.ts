@@ -2,16 +2,16 @@
  * Service to handle database operations, decoupling persistence from orchestrator
  */ export class DbService {
   supabase;
-  constructor(supabase){
+  constructor(supabase) {
     this.supabase = supabase;
   }
   /**
    * Logs food items to the database
    */ async logFoodItems(userId, items) {
-    const { error } = await this.supabase.from('food_log').insert(items.map((item)=>({
-        ...item,
-        user_id: userId
-      })));
+    const { error } = await this.supabase.from('food_log').insert(items.map((item) => ({
+      ...item,
+      user_id: userId
+    })));
     if (error) {
       console.error('[DbService] Error logging food items:', error);
       throw error;
@@ -30,7 +30,7 @@
   /**
    * Fetches user goals
    */ async getUserGoals(userId) {
-    const { data, error } = await this.supabase.from('user_goals').select('nutrient, target_value, unit, goal_type').eq('user_id', userId);
+    const { data, error } = await this.supabase.from('user_goals').select('nutrient, target_value, unit, goal_type, yellow_min, green_min, red_min').eq('user_id', userId);
     if (error) {
       console.error('[DbService] Error fetching user goals:', error);
       throw error;
@@ -60,13 +60,14 @@
   }
   /**
    * Updates a user's nutritional goal
-   */ async updateUserGoal(userId, nutrient, value, unit) {
+   */ async updateUserGoal(userId, nutrient, value, unit, thresholds = {}) {
     const { error } = await this.supabase.from('user_goals').upsert({
       user_id: userId,
       nutrient: nutrient,
       target_value: value,
       unit: unit,
-      goal_type: 'goal'
+      goal_type: 'goal',
+      ...thresholds
     }, {
       onConflict: 'user_id, nutrient'
     });
@@ -90,13 +91,16 @@
   /**
    * Updates multiple user nutritional goals in a single transaction-like call
    */ async updateUserGoals(userId, goals) {
-    const { error } = await this.supabase.from('user_goals').upsert(goals.map((g)=>({
-        user_id: userId,
-        nutrient: g.nutrient,
-        target_value: g.value,
-        unit: g.unit,
-        goal_type: 'goal'
-      })), {
+    const { error } = await this.supabase.from('user_goals').upsert(goals.map((g) => ({
+      user_id: userId,
+      nutrient: g.nutrient,
+      target_value: g.value,
+      unit: g.unit,
+      goal_type: 'goal',
+      yellow_min: g.yellow_min,
+      green_min: g.green_min,
+      red_min: g.red_min
+    })), {
       onConflict: 'user_id, nutrient'
     });
     if (error) {
@@ -124,5 +128,33 @@
     return {
       data
     };
+  }
+  /**
+   * Adds a daily adjustment (e.g., workout)
+   */ async addDailyAdjustment(userId, adjustment) {
+    const { error } = await this.supabase.from('daily_adjustments').upsert({
+      user_id: userId,
+      nutrient: adjustment.nutrient,
+      adjustment_value: adjustment.adjustment_value,
+      adjustment_type: adjustment.adjustment_type || 'workout',
+      notes: adjustment.notes,
+      adjustment_date: adjustment.date || new Date().toISOString().split('T')[0]
+    }, {
+      onConflict: 'user_id, adjustment_date, nutrient, adjustment_type'
+    });
+    if (error) {
+      console.error('[DbService] Error adding daily adjustment:', error);
+      throw error;
+    }
+  }
+  /**
+   * Fetches daily adjustments for a date range
+   */ async getDailyAdjustments(userId, start, end) {
+    const { data, error } = await this.supabase.from('daily_adjustments').select('*').eq('user_id', userId).gte('adjustment_date', start).lte('adjustment_date', end);
+    if (error) {
+      console.error('[DbService] Error fetching daily adjustments:', error);
+      throw error;
+    }
+    return data;
   }
 }

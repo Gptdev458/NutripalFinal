@@ -21,13 +21,18 @@ const SYSTEM_PROMPT = `You are NutriPal's ReasoningAgent, the brain of an intell
    - For saved recipes: Call 'propose_recipe_log'.
    - NEVER just tell the user nutritional info without offering to log it via a tool.
 3. **Smart Comparisons:** If asked "should I have A or B", call 'compare_foods' or 'lookup_nutrition' for both, then use goals/progress to recommend the better fit.
-4. **Error Handling:** If a user is off-topic, be polite but redirect to nutrition and health.
+4. **Goal Management & Thresholds:**
+   - If user wants to change goal status colors (e.g., "Make fiber green at 90%"), use 'update_user_goal' with 'green_min=0.9'.
+   - Default thresholds: yellow (0.5), green (0.75) for goals; green (0.75), yellow (0.9), red (1.0) for limits.
+5. **Workout Adjustments:**
+   - If user reports a workout (e.g., "I did 30 mins cardio"), call 'apply_daily_workout_offset' with a recommended calorie/macro bonus.
+6. **Error Handling:** If a user is off-topic, be polite but redirect to nutrition and health.
 
 **TOOLS OVERVIEW:**
 - Context: profile, goals, today_progress, weekly_summary, history
 - Nutrition: lookup, estimate, validate, compare
 - Recipes: search_saved, details, parse_recipe_text, calculate_recipe_serving
-- Logging: propose_food_log, propose_recipe_log
+- Logging: propose_food_log, propose_recipe_log, apply_daily_workout_offset
 - Goals: update_user_goal, calculate_recommended_goals
 - Insights: get_food_recommendations, analyze_eating_patterns, get_progress_report`;
 export class ReasoningAgent {
@@ -54,7 +59,7 @@ export class ReasoningAgent {
     ];
     // Add recent chat history for context (last 6 messages)
     const recentHistory = chatHistory.slice(-6);
-    for (const msg of recentHistory){
+    for (const msg of recentHistory) {
       messages.push({
         role: msg.role,
         content: msg.content
@@ -92,14 +97,14 @@ export class ReasoningAgent {
     // Process tool calls iteratively
     let iterations = 0;
     const maxIterations = 5 // Safety limit
-    ;
-    while(assistantMessage.tool_calls && iterations < maxIterations){
+      ;
+    while (assistantMessage.tool_calls && iterations < maxIterations) {
       iterations++;
       console.log(`[ReasoningAgent] Processing ${assistantMessage.tool_calls.length} tool calls (iteration ${iterations})`);
       // Add assistant message with tool calls
       messages.push(assistantMessage);
       // Execute each tool call
-      for (const toolCall of assistantMessage.tool_calls){
+      for (const toolCall of assistantMessage.tool_calls) {
         const toolName = toolCall.function.name;
         const args = JSON.parse(toolCall.function.arguments || '{}');
         console.log(`[ReasoningAgent] Calling tool: ${toolName}`, args);
@@ -141,7 +146,7 @@ export class ReasoningAgent {
     console.log('[ReasoningAgent] Final response:', finalResponse.slice(0, 200));
     // Check for any proposals in gathered data
     let proposal = undefined;
-    for (const [_toolName, result] of Object.entries(gatheredData)){
+    for (const [_toolName, result] of Object.entries(gatheredData)) {
       if (result?.proposal_type && result?.pending) {
         // Preserve flowState if present at root or in data
         const proposalData = result.data || {};

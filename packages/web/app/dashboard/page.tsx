@@ -71,6 +71,7 @@ export default function DashboardPage() {
   const {
     userGoals,
     dailyTotals,
+    dailyAdjustments,
     recentLogs,
     loadingData,
     refreshing,
@@ -219,6 +220,7 @@ export default function DashboardPage() {
           <DashboardSummaryTable
             userGoals={userGoals}
             dailyTotals={dailyTotals}
+            dailyAdjustments={dailyAdjustments}
             loading={loadingData}
             error={error}
             refreshing={refreshing}

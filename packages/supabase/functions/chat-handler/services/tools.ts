@@ -458,11 +458,50 @@
           unit: {
             type: "string",
             description: "The unit (kcal for calories, g for macros, mg for sodium)"
+          },
+          yellow_min: {
+            type: "number",
+            description: "Optional: The progress threshold for yellow status (0.0 to 1.0, e.g., 0.50)"
+          },
+          green_min: {
+            type: "number",
+            description: "Optional: The progress threshold for green status (0.0 to 1.0, e.g., 0.75)"
+          },
+          red_min: {
+            type: "number",
+            description: "Optional: The progress threshold for red status (0.0 to 1.0, e.g., 0.90)"
           }
         },
         required: [
           "nutrient",
           "target_value"
+        ]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "apply_daily_workout_offset",
+      description: "Applies a nutritional offset for today based on a workout. Adds a 'bonus' to daily targets.",
+      parameters: {
+        type: "object",
+        properties: {
+          nutrient: {
+            type: "string",
+            description: "The nutrient to adjust (default: 'calories')"
+          },
+          adjustment_value: {
+            type: "number",
+            description: "The amount to add to the target (e.g., 300)"
+          },
+          notes: {
+            type: "string",
+            description: "Reason for the adjustment (e.g., 'Intense cardio', 'Strength training')"
+          }
+        },
+        required: [
+          "adjustment_value"
         ]
       }
     }
