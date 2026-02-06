@@ -128,7 +128,7 @@
     type: "function",
     function: {
       name: "estimate_nutrition",
-      description: "Estimates nutrition for foods that can't be found in the database. Uses LLM-based estimation with transparency about estimates.",
+      description: "Estimates nutrition for foods that can't be found in the database. Uses LLM-based estimation with transparency about estimates. Automatically includes user's tracked nutrients.",
       parameters: {
         type: "object",
         properties: {
@@ -143,6 +143,11 @@
           calories_hint: {
             type: "number",
             description: "User-provided calorie value to help guide the macro estimation"
+          },
+          tracked_nutrients: {
+            type: "array",
+            items: { type: "string" },
+            description: "Optional list of nutrient keys to estimate (e.g., ['hydration_ml', 'fiber_g']). If not provided, user goals will be fetched automatically."
           }
         },
         required: [

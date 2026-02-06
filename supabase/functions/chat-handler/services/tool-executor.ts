@@ -329,6 +329,7 @@ export class ToolExecutor {
 
   private getMasterNutrientMap(): Record<string, { name: string, unit: string }> {
     return {
+      calories: { name: "Calories", unit: "kcal" },
       protein_g: { name: "Protein", unit: "g" },
       fat_total_g: { name: "Total Fat", unit: "g" },
       carbs_g: { name: "Carbohydrates", unit: "g" },
@@ -377,8 +378,8 @@ export class ToolExecutor {
 
     const hintPrompt = calories_hint ? `\nIMPORTANT: The user has specified that this food has EXACTLY ${calories_hint} kcal. Your goal is to estimate the macros (protein, carbs, fat) that would logically make up these ${calories_hint} calories for this type of food (using 4 kcal/g for protein/carbs and 9 kcal/g for fat). DO NOT deviate from ${calories_hint} kcal unless absolutely necessary for mathematical consistency.` : 'Always provide realistic estimates - never return 0 calories for foods that have calories.';
 
-    const baseKeys = ['protein_g', 'carbs_g', 'fat_total_g'];
-    const allToEstimate = Array.from(new Set([...baseKeys, ...trackedNutrients])).filter(k => k !== 'calories');
+    const baseKeys = ['calories', 'protein_g', 'carbs_g', 'fat_total_g'];
+    const allToEstimate = Array.from(new Set([...baseKeys, ...trackedNutrients]));
 
     const nutrientListPrompt = allToEstimate.map(key => {
       const info = map[key];
@@ -394,9 +395,8 @@ export class ToolExecutor {
 Return a JSON object with these fields:
 - food_name: string (clean name of the food)
 - portion: string (the portion size)
-- calories: number
 ${nutrientListPrompt}
-
+ 
 Be reasonable and accurate. Use your knowledge of typical nutrition values. Even if a nutrient value is 0 (e.g. fat in an apple), you MUST include it in the response as 0. ${hintPrompt}`
         },
         {
@@ -413,26 +413,26 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. Even
       const estimate = JSON.parse(response.choices[0].message.content || '{}');
       if (calories_hint !== undefined) estimate.calories = calories_hint;
 
-      if (estimate.fat_g !== undefined && estimate.fat_total_g === undefined) estimate.fat_total_g = estimate.fat_g;
-      if (estimate.fiber !== undefined && estimate.fiber_g === undefined) estimate.fiber_g = estimate.fiber;
-      if (estimate.sugar !== undefined && estimate.sugar_g === undefined) estimate.sugar_g = estimate.sugar;
-
       const filtered: any = {
         food_name: estimate.food_name || description,
         portion: estimate.portion || portion || 'serving',
-        calories: Math.round(estimate.calories || 0),
         source: 'estimate',
         estimated: true
       };
 
       allToEstimate.forEach(key => {
-        if (estimate[key] !== undefined && key !== 'calories') {
-          filtered[key] = typeof estimate[key] === 'number' ? Math.round(estimate[key] * 10) / 10 : estimate[key];
-        } else if (trackedNutrients.includes(key)) {
-          // If a tracked nutrient is missing from the AI response, default to 0
+        const value = this.getNutrientValue(estimate, key);
+        if (value !== undefined) {
+          const numValue = typeof value === 'number' ? value : parseFloat(value);
+          filtered[key] = !isNaN(numValue) ? Math.round(numValue * 10) / 10 : 0;
+        } else if (trackedNutrients.includes(key) || baseKeys.includes(key)) {
+          // Default to 0 for any tracked nutrient or macro if missing
           filtered[key] = 0;
         }
       });
+
+      // Ensure calories is always present (fallback to 0 if totally missing)
+      if (filtered.calories === undefined) filtered.calories = 0;
 
       return filtered;
     } catch (e) {
@@ -590,33 +590,29 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. Even
 
     const filteredData: any = {
       food_name: data.food_name,
-      portion: data.portion || 'serving',
-      calories: Math.round(data.calories)
+      portion: data.portion || 'serving'
     };
 
     trackedKeys.forEach(key => {
-      // Improved mapping robustness
-      let value = data[key];
-      if (value === undefined) {
-        if (key === 'fat_total_g') value = data.fat_g || data.fat;
-        if (key === 'carbs_g') value = data.carbs;
-        if (key === 'protein_g') value = data.protein;
-      }
+      const value = this.getNutrientValue(data, key);
 
-      if (value !== undefined && key !== 'calories') {
-        filteredData[key] = typeof value === 'number' ? Math.round(value * 10) / 10 : value;
-      } else if (key !== 'calories') {
-        // Ensure 0 instead of dash for tracked nutrients
+      if (value !== undefined) {
+        const numValue = typeof value === 'number' ? value : parseFloat(value);
+        filteredData[key] = !isNaN(numValue) ? Math.round(numValue * 10) / 10 : 0;
+      } else {
         filteredData[key] = 0;
       }
     });
+
+    // Ensure calories is explicitly set for the proposal message
+    if (filteredData.calories === undefined) filteredData.calories = 0;
 
     return {
       proposal_type: 'food_log',
       proposal_id: proposalId,
       pending: true,
       data: filteredData,
-      message: `Ready to log ${data.food_name} (${Math.round(data.calories)} cal). Please confirm.`
+      message: `Ready to log ${data.food_name} (${Math.round(filteredData.calories)} cal). Please confirm.`
     };
   }
 
@@ -635,32 +631,28 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. Even
     const filteredData: any = {
       recipe_id: data.recipe_id,
       recipe_name: data.recipe_name,
-      servings: data.servings,
-      calories: Math.round(data.calories)
+      servings: data.servings
     };
 
     trackedKeys.forEach(key => {
-      let value = data[key];
-      if (value === undefined) {
-        if (key === 'fat_total_g') value = data.fat_g || data.fat;
-        if (key === 'carbs_g') value = data.carbs;
-        if (key === 'protein_g') value = data.protein;
-      }
+      const value = this.getNutrientValue(data, key);
 
-      if (value !== undefined && key !== 'calories') {
-        filteredData[key] = typeof value === 'number' ? Math.round(value * 10) / 10 : value;
-      } else if (key !== 'calories') {
-        // Ensure 0 instead of dash for tracked nutrients
+      if (value !== undefined) {
+        const numValue = typeof value === 'number' ? value : parseFloat(value);
+        filteredData[key] = !isNaN(numValue) ? Math.round(numValue * 10) / 10 : 0;
+      } else {
         filteredData[key] = 0;
       }
     });
+
+    if (filteredData.calories === undefined) filteredData.calories = 0;
 
     return {
       proposal_type: 'recipe_log',
       proposal_id: proposalId,
       pending: true,
       data: filteredData,
-      message: `Ready to log ${data.servings} serving(s) of ${data.recipe_name} (${Math.round(data.calories)} cal). Please confirm.`
+      message: `Ready to log ${data.servings} serving(s) of ${data.recipe_name} (${Math.round(filteredData.calories)} cal). Please confirm.`
     };
   }
 
@@ -694,10 +686,14 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. Even
     // Common aliases
     const aliases: Record<string, string> = {
       'water': 'hydration_ml',
+      'hydration': 'hydration_ml',
+      'liquid': 'hydration_ml',
+      'fluids': 'hydration_ml',
       'protein': 'protein_g',
       'carbs': 'carbs_g',
       'carbohydrates': 'carbs_g',
       'fat': 'fat_total_g',
+      'total fat': 'fat_total_g',
       'fiber': 'fiber_g',
       'sugar': 'sugar_g',
       'sugars': 'sugar_g',
@@ -902,5 +898,77 @@ Return JSON with: { patterns: string[], insights: string[], suggestions: string[
       weekly_summary: weekly,
       overall_status: weekly.compliance_summary
     };
+  }
+
+  /**
+   * Universal resolver: checks data (and common sub-objects) for a technical key, its human name, or common aliases.
+   */
+  private getNutrientValue(data: any, key: string): any {
+    if (!data) return undefined;
+
+    const map = this.getMasterNutrientMap();
+    const info = map[key];
+    const aliasesList = {
+      'fat_total_g': ['fat', 'total_fat', 'fat_g'],
+      'carbs_g': ['carbs', 'carbohydrates', 'total_carbohydrates', 'carb_g'],
+      'protein_g': ['protein', 'protein_g'],
+      'hydration_ml': ['water', 'hydration', 'liquid', 'fluids'],
+      'fiber_g': ['fiber', 'dietary_fiber', 'fiber_g'],
+      'sugar_g': ['sugar', 'sugars', 'total_sugar', 'total_sugars', 'sugar_g'],
+      'sodium_mg': ['sodium', 'sodium_mg'],
+      'calories': ['kcal', 'energy', 'calories']
+    };
+
+    // Helper to search within a specific object
+    const findInObject = (obj: any): any => {
+      if (obj[key] !== undefined) return obj[key];
+
+      // Case-insensitive check of all keys
+      const lowerKey = key.toLowerCase();
+      for (const k of Object.keys(obj)) {
+        if (k.toLowerCase() === lowerKey) return obj[k];
+      }
+
+      // Check human names from map
+      if (info) {
+        const humanName = info.name.toLowerCase();
+        for (const k of Object.keys(obj)) {
+          const lowerK = k.toLowerCase();
+          if (lowerK === humanName || lowerK === humanName.replace(/\s/g, '_')) return obj[k];
+        }
+      }
+
+      // Check common aliases
+      const aliases = (aliasesList as any)[key] || [];
+      for (const alias of aliases) {
+        if (obj[alias] !== undefined) return obj[alias];
+        // Case-insensitive alias check
+        for (const k of Object.keys(obj)) {
+          if (k.toLowerCase() === alias.toLowerCase()) return obj[k];
+        }
+      }
+
+      // Check short name (e.g. "protein" for "protein_g")
+      const short = key.split('_')[0];
+      if (obj[short] !== undefined) return obj[short];
+
+      return undefined;
+    };
+
+    // Try top-level first
+    let result = findInObject(data);
+
+    // If not found, look into common sub-objects the AI might use
+    if (result === undefined) {
+      const subObjects = ['nutrition', 'estimate', 'data', 'nutrients', 'values'];
+      for (const subKey of subObjects) {
+        if (data[subKey] && typeof data[subKey] === 'object') {
+          result = findInObject(data[subKey]);
+          if (result !== undefined) break;
+        }
+      }
+    }
+
+    return result;
   }
 }

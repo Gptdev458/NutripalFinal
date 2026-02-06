@@ -385,12 +385,7 @@ class ThoughtLogger {
             macros: intentResult.macros
           });
           const proposal = await toolExecutor.execute('propose_food_log', {
-            food_name: nutritionData.food_name,
-            portion: nutritionData.portion,
-            calories: nutritionData.calories,
-            protein_g: nutritionData.protein_g,
-            carbs_g: nutritionData.carbs_g,
-            fat_total_g: nutritionData.fat_total_g || nutritionData.fat_g
+            ...nutritionData
           });
           await sessionService.savePendingAction(userId, {
             type: 'food_log',
