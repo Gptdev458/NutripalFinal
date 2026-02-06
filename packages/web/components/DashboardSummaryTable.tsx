@@ -170,55 +170,64 @@ const SummaryTableRow: React.FC<SummaryTableRowProps> = ({ nutrient, current, ta
     const deltaColor = delta !== null ? (delta < 0 ? (isLimit ? 'text-red-500' : 'text-emerald-500') : 'text-gray-400') : 'text-gray-400';
 
     // Color coding logic
-    const yellowMin = thresholds.yellow_min ?? (isLimit ? 0.90 : 0.50);
-    const greenMin = thresholds.green_min ?? (isLimit ? 0.75 : 0.75);
-    const redMin = thresholds.red_min ?? (isLimit ? 1.00 : 0.90);
+    // For goals: Green ≥75%, Yellow 50-75%, Red <50%
+    // For limits: Green <75%, Yellow 75-90%, Red >90%
+    const yellowMin = thresholds.yellow_min ?? 0.50;  // Below this = red for goals
+    const greenMin = thresholds.green_min ?? 0.75;    // Above this = green for goals, below = green for limits
+    const redMin = thresholds.red_min ?? 0.90;        // Above this = red for limits
 
     let textColorClass = 'text-gray-600';
     let progressBarClass = 'bg-gray-300';
+    let rowBgClass = 'bg-white hover:bg-gray-50';
 
     if (finalTarget !== undefined) {
         if (isLimit) {
-            // For limits: green if < green_min, yellow if >= yellow_min, red if >= red_min
-            if (fraction >= redMin) {
+            // For limits: green if <75%, yellow if 75-90%, red if >90%
+            if (fraction > redMin) {
+                // RED: Over 90% of limit
                 textColorClass = 'text-red-600 font-bold';
                 progressBarClass = 'bg-red-500';
-            } else if (fraction >= yellowMin) {
-                textColorClass = 'text-amber-500 font-medium';
-                progressBarClass = 'bg-amber-500';
+                rowBgClass = 'bg-red-50 hover:bg-red-100';
             } else if (fraction >= greenMin) {
-                textColorClass = 'text-blue-500 font-medium';
-                progressBarClass = 'bg-blue-400';
+                // YELLOW: 75-90% of limit
+                textColorClass = 'text-amber-600 font-medium';
+                progressBarClass = 'bg-amber-500';
+                rowBgClass = 'bg-amber-50 hover:bg-amber-100';
             } else {
-                textColorClass = 'text-emerald-600 font-medium';
+                // GREEN: Below 75% of limit
+                textColorClass = 'text-emerald-700 font-medium';
                 progressBarClass = 'bg-emerald-500';
+                rowBgClass = 'bg-emerald-50 hover:bg-emerald-100';
             }
         } else {
-            // For goals: red if < yellow_min, yellow if >= yellow_min, green if >= green_min
+            // For goals: green if ≥75%, yellow if 50-75%, red if <50%
             if (fraction >= greenMin) {
-                textColorClass = 'text-emerald-600 font-bold';
+                // GREEN: ≥75% of goal
+                textColorClass = 'text-emerald-700 font-bold';
                 progressBarClass = 'bg-emerald-500';
+                rowBgClass = 'bg-emerald-50 hover:bg-emerald-100';
             } else if (fraction >= yellowMin) {
-                textColorClass = 'text-amber-500 font-medium';
+                // YELLOW: 50-75% of goal
+                textColorClass = 'text-amber-600 font-medium';
                 progressBarClass = 'bg-amber-400';
-            } else if (fraction >= 0.1) {
-                // Red only if very low or explicitly configured
-                textColorClass = 'text-blue-600 font-medium';
-                progressBarClass = 'bg-blue-500';
+                rowBgClass = 'bg-amber-50 hover:bg-amber-100';
             } else {
-                textColorClass = 'text-gray-400';
-                progressBarClass = 'bg-gray-200';
+                // RED: <50% of goal
+                textColorClass = 'text-red-600 font-medium';
+                progressBarClass = 'bg-red-500';
+                rowBgClass = 'bg-red-50 hover:bg-red-100';
             }
 
-            // Special override for goal met
+            // Special override for goal exceeded (100%+)
             if (fraction >= 1.0) {
                 textColorClass = 'text-emerald-700 font-black';
+                rowBgClass = 'bg-emerald-100 hover:bg-emerald-200';
             }
         }
     }
 
     return (
-        <tr className="hover:bg-gray-50 transition-colors">
+        <tr className={`${rowBgClass} transition-colors`}>
             <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">
                 <div className="flex flex-col">
                     <span>{formatNutrientName(nutrient)}</span>
