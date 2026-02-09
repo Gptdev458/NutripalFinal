@@ -333,17 +333,27 @@ export class ToolExecutor {
   // NUTRITION TOOLS
   // =============================================================
 
-  async lookupNutrition(food: string, portion: string, calories?: number, macros?: { protein: number, carbs: number, fat: number }) {
+  async lookupNutrition(food: string, portion: string, calories?: number, macros?: { protein?: number | null, carbs?: number | null, fat?: number | null }) {
     console.log(`[ToolExecutor] lookupNutrition for: ${food}${calories ? ` (${calories} kcal)` : ''}`);
-    if (calories !== undefined && macros?.protein !== undefined && macros?.carbs !== undefined && macros?.fat !== undefined) {
+
+    // Only trust provided values if they are explicitly non-null and calories > 0
+    // (Exception: user might explicitly want to log 0, but usually 0 calories for an "apple" is an error)
+    const hasValidMacros = macros && (
+      (macros.protein !== undefined && macros.protein !== null) ||
+      (macros.carbs !== undefined && macros.carbs !== null) ||
+      (macros.fat !== undefined && macros.fat !== null)
+    );
+
+    if (calories !== undefined && calories !== null && calories > 0 && hasValidMacros) {
       return {
         food_name: food,
         portion: portion || 'standard serving',
         calories,
-        protein_g: macros.protein,
-        carbs_g: macros.carbs,
-        fat_total_g: macros.fat,
+        protein_g: macros?.protein || 0,
+        carbs_g: macros?.carbs || 0,
+        fat_total_g: macros?.fat || 0,
         source: 'user_provided',
+        confidence: 'high',
         ...macros
       };
     }
@@ -379,13 +389,26 @@ export class ToolExecutor {
           portion: portion || result.serving_size || 'standard serving',
           calories: Math.round(result.calories || 0),
           source: result.source || 'agent',
-          confidence: result.confidence, // Feature 3 prep
-          health_flags: result.health_flags // Feature 7 prep
+          confidence: result.confidence || 'medium',
+          confidence_details: result.confidence_details || {},
+          error_sources: result.error_sources || [],
+          health_flags: result.health_flags || []
         };
 
+        // Map nutrient names correctly from agent result to our schema
         trackedNutrients.forEach(key => {
-          if (result[key] !== undefined && key !== 'calories') {
-            filteredResult[key] = typeof result[key] === 'number' ? Math.round(result[key] * 10) / 10 : result[key];
+          // Check if key exists in result (directly or as macro alias)
+          let val = result[key];
+
+          // Fallback mapping for common aliases in agent output
+          if (val === undefined) {
+            if (key === 'fat_total_g') val = result.fat_g || result.fat;
+            if (key === 'protein_g') val = result.protein;
+            if (key === 'carbs_g') val = result.carbs;
+          }
+
+          if (val !== undefined && key !== 'calories') {
+            filteredResult[key] = typeof val === 'number' ? Math.round(val * 10) / 10 : val;
           } else if (baseKeys.includes(key)) {
             filteredResult[key] = 0;
           }
@@ -667,7 +690,10 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. Even
 
     const filteredData: any = {
       food_name: data.food_name,
-      portion: data.portion || 'serving'
+      portion: data.portion || 'serving',
+      confidence: data.confidence,
+      confidence_details: data.confidence_details,
+      error_sources: data.error_sources
     };
 
     trackedKeys.forEach(key => {
@@ -683,6 +709,11 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. Even
 
     // Ensure calories is explicitly set for the proposal message
     if (filteredData.calories === undefined) filteredData.calories = 0;
+
+    // Attach metadata for the UI (Feature 3)
+    filteredData.confidence = data.confidence || 'medium';
+    filteredData.confidence_details = data.confidence_details || {};
+    filteredData.error_sources = data.error_sources || [];
 
     return {
       proposal_type: 'food_log',

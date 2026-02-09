@@ -9,6 +9,9 @@ interface FoodItem {
     carbs_g: number;
     fat_total_g: number;
     serving_size?: string;
+    confidence?: 'low' | 'medium' | 'high';
+    confidence_details?: Record<string, 'low' | 'medium' | 'high'>;
+    error_sources?: string[];
     [key: string]: any;
 }
 
@@ -52,9 +55,11 @@ export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
             const val = aggregated[goal.nutrient];
             // Show all tracked nutrients, default to 0 if not present
             return {
+                key: goal.nutrient,
                 name: formatNutrientName(goal.nutrient),
                 valueStr: formatNutrientValue(goal.nutrient, val),
-                unit: '' // unit is now included in valueStr
+                unit: '', // unit is now included in valueStr
+                confidence: mainItem?.confidence_details?.[goal.nutrient] || mainItem?.confidence || 'high'
             };
         });
 
@@ -68,7 +73,25 @@ export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
                 {/* Header Row: Name | Calories */}
                 <div className="flex justify-between items-baseline">
                     <h3 className="text-lg font-bold text-gray-900 truncate pr-2">{itemName}</h3>
-                    <span className="text-lg font-black text-blue-600 whitespace-nowrap">{Math.round(totalCalories)} kcal</span>
+                    <div className="flex flex-col items-end">
+                        <span className="text-lg font-black text-blue-600 whitespace-nowrap">{Math.round(totalCalories)} kcal</span>
+                        {mainItem?.confidence && mainItem.confidence !== 'high' && (
+                            <span
+                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${mainItem.confidence === 'low' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}
+                                title={(mainItem.error_sources?.length ?? 0) > 0 ? `Reasons: ${mainItem.error_sources!.join(', ')}` : undefined}
+                            >
+                                {mainItem.confidence === 'low' ? 'Low Confidence' : 'Medium Confidence'}
+                            </span>
+                        )}
+                        {(mainItem?.error_sources?.length ?? 0) > 0 && (
+                            <span
+                                className="text-[10px] text-gray-400 max-w-[150px] text-right truncate italic"
+                                title={mainItem.error_sources!.join(', ')}
+                            >
+                                {mainItem.error_sources!.join(', ')}
+                            </span>
+                        )}
+                    </div>
                 </div>
 
                 {/* Sub-header: Portion details */}
@@ -92,9 +115,19 @@ export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
                         {showDetails && (
                             <div className="mt-2 space-y-1 bg-gray-50 p-2 rounded border border-gray-100 animate-in fade-in slide-in-from-top-1 duration-200">
                                 {trackedDetails.map((n: any, idx) => (
-                                    <div key={idx} className="flex justify-between text-xs">
-                                        <span className="text-gray-500 font-bold">{n.name}</span>
-                                        <span className="font-bold text-gray-700">{n.valueStr}</span>
+                                    <div key={idx} className="flex justify-between text-xs group relative">
+                                        <span className={`font-bold flex items-center gap-1 ${['protein_g', 'carbs_g', 'fat_total_g', 'calories'].includes(n.key) ? 'text-blue-700' : 'text-emerald-700'}`}>
+                                            {n.name}
+                                            {n.confidence === 'low' && (
+                                                <span className="w-2 h-2 rounded-full bg-red-400" title="Low confidence estimate"></span>
+                                            )}
+                                            {n.confidence === 'medium' && (
+                                                <span className="w-2 h-2 rounded-full bg-yellow-400" title="Medium confidence estimate"></span>
+                                            )}
+                                        </span>
+                                        <span className={`font-bold ${n.confidence === 'low' ? 'text-red-600' : n.confidence === 'medium' ? 'text-amber-600' : 'text-gray-900'}`}>
+                                            {n.valueStr}
+                                        </span>
                                     </div>
                                 ))}
                             </div>

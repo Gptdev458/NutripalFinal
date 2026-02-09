@@ -344,7 +344,6 @@ function convertToMl(amount, unit) {
   return units[unit] ? amount * units[unit] : null;
 }
 export function scaleNutrition(data, multiplier) {
-  if (multiplier === 1) return data;
   const scaled = {
     ...data
   };
@@ -368,35 +367,107 @@ export function scaleNutrition(data, multiplier) {
     'vitamin_d_mcg',
     'sugar_added_g'
   ];
-  keysToScale.forEach((key) => {
-    if (typeof scaled[key] === 'number') {
-      // @ts-ignore: key is valid
-      scaled[key] = Math.round(scaled[key] * multiplier * 10) / 10;
-      if (key === 'calories') scaled[key] = Math.round(scaled[key]);
+
+  if (multiplier !== 1) {
+    keysToScale.forEach((key) => {
+      if (typeof scaled[key] === 'number') {
+        // @ts-ignore: key is valid
+        scaled[key] = Math.round(scaled[key] * multiplier * 10) / 10;
+        if (key === 'calories') scaled[key] = Math.round(scaled[key]);
+      }
+    });
+  }
+
+  // CRITICAL: Fallback for 0-calorie items that have macros (Feature 3 fix)
+  if ((scaled.calories === 0 || !scaled.calories) &&
+    ((scaled.protein_g || 0) > 0 || (scaled.carbs_g || 0) > 0 || (scaled.fat_total_g || 0) > 0)) {
+    const calculatedCals = ((scaled.protein_g || 0) * 4) + ((scaled.carbs_g || 0) * 4) + ((scaled.fat_total_g || 0) * 9);
+    if (calculatedCals > 0) {
+      console.log(`[NutritionAgent] 0 calories detected with macros for ${scaled.food_name}. Calculating from macros: ${calculatedCals}`);
+      scaled.calories = Math.round(calculatedCals);
+      // Degrade confidence if we had to calculate calories
+      if (scaled.confidence === 'high') scaled.confidence = 'medium';
+      if (!scaled.error_sources) scaled.error_sources = [];
+      if (!scaled.error_sources.includes('calculated_from_macros')) {
+        scaled.error_sources.push('calculated_from_macros');
+      }
     }
-  });
+  }
+
   return scaled;
 }
+
+export interface ConfidenceDetails {
+  calories: 'low' | 'medium' | 'high';
+  protein_g: 'low' | 'medium' | 'high';
+  carbs_g: 'low' | 'medium' | 'high';
+  fat_total_g: 'low' | 'medium' | 'high';
+  [key: string]: 'low' | 'medium' | 'high' | undefined;
+}
+
+export interface EnrichedNutritionResult {
+  food_name: string;
+  calories: number;
+  protein_g: number;
+  carbs_g: number;
+  fat_total_g: number;
+  fiber_g?: number;
+  sugar_g?: number;
+  sodium_mg?: number;
+  fat_saturated_g?: number;
+  cholesterol_mg?: number;
+  potassium_mg?: number;
+  calcium_mg?: number;
+  iron_mg?: number;
+  magnesium_mg?: number;
+  vitamin_a_mcg?: number;
+  vitamin_c_mg?: number;
+  vitamin_d_mcg?: number;
+  serving_size?: string;
+  confidence: 'low' | 'medium' | 'high';
+  confidence_details?: ConfidenceDetails;
+  error_sources: string[];
+}
+
 export class NutritionAgent {
   name = 'nutrition';
-  async execute(input, context) {
+
+  async execute(input: any, context: any) {
     const { items, portions } = input;
     const supabase = context.supabase || createAdminClient();
-    const results = await Promise.all(items.map(async (itemName, i) => {
+
+    const results = await Promise.all(items.map(async (itemName: string, i: number) => {
       const userPortion = portions[i] || '1 serving';
       const normalizedSearch = normalizeFoodName(itemName);
+
       // 1. Check Cache with normalized name
-      const { data: cached } = await supabase.from('food_products').select('nutrition_data, product_name').ilike('search_term', normalizedSearch).limit(1).maybeSingle();
-      let nutrition = null;
+      const { data: cached } = await supabase
+        .from('food_products')
+        .select('nutrition_data, product_name')
+        .ilike('search_term', normalizedSearch)
+        .limit(1)
+        .maybeSingle();
+
+      let nutrition: EnrichedNutritionResult | null = null;
+
       if (cached) {
         console.log(`[NutritionAgent] Cache hit for ${itemName} (normalized: ${normalizedSearch})`);
-        nutrition = cached.nutrition_data;
+        nutrition = {
+          ...cached.nutrition_data,
+          confidence: 'high',
+          error_sources: []
+        };
+
         // Validate cached data
         if (!isValidNutrition(nutrition, itemName)) {
           console.warn(`[NutritionAgent] Cached data for "${itemName}" has 0 calories, trying fallback`);
           const fallback = findFallbackNutrition(itemName);
           if (fallback && isValidNutrition(fallback, itemName)) {
-            nutrition = fallback;
+            nutrition = {
+              ...fallback,
+              confidence: 'medium',
+              error_sources: ['fallback_used_invalid_cache']
+            };
           }
         }
       } else {
@@ -405,33 +476,51 @@ export class NutritionAgent {
         try {
           const lookupResult = await lookupNutrition(itemName);
           if (lookupResult.status === 'success' && lookupResult.nutrition_data) {
-            nutrition = lookupResult.nutrition_data;
+            nutrition = {
+              ...lookupResult.nutrition_data,
+              confidence: 'high',
+              error_sources: []
+            };
+
             // Validate API result
             if (!isValidNutrition(nutrition, itemName)) {
               console.warn(`[NutritionAgent] API result for "${itemName}" has 0 calories, trying fallback`);
               const fallback = findFallbackNutrition(itemName);
               if (fallback && isValidNutrition(fallback, itemName)) {
-                nutrition = fallback;
+                nutrition = {
+                  ...fallback,
+                  confidence: 'medium',
+                  error_sources: ['fallback_used_invalid_api']
+                };
               }
             }
-            // 3. Save to Cache
+
+            // 3. Save to Cache (without confidence fields to keep schema clean if needed, or include them if flexible)
             if (nutrition) {
+              const { confidence, confidence_details, error_sources, ...baseNutrition } = nutrition;
               await supabase.from('food_products').insert({
                 product_name: lookupResult.product_name || itemName,
                 search_term: normalizedSearch,
-                nutrition_data: nutrition,
-                calories: nutrition.calories,
-                protein_g: nutrition.protein_g,
-                carbs_g: nutrition.carbs_g,
-                fat_total_g: nutrition.fat_total_g,
+                nutrition_data: baseNutrition,
+                calories: baseNutrition.calories,
+                protein_g: baseNutrition.protein_g,
+                carbs_g: baseNutrition.carbs_g,
+                fat_total_g: baseNutrition.fat_total_g,
                 source: lookupResult.source,
                 brand: lookupResult.brand
               });
             }
+
           } else {
             // API returned no data - try fallback
-            nutrition = findFallbackNutrition(itemName);
-            if (!nutrition) {
+            const fallback = findFallbackNutrition(itemName);
+            if (fallback) {
+              nutrition = {
+                ...fallback,
+                confidence: 'medium',
+                error_sources: ['fallback_used_no_api_data']
+              };
+            } else {
               await logFailedLookup(itemName, 'API returned no data and no fallback found', {
                 supabase,
                 userId: context.userId,
@@ -441,8 +530,14 @@ export class NutritionAgent {
           }
         } catch (e) {
           console.error(`[NutritionAgent] API failure for ${itemName}:`, e);
-          nutrition = findFallbackNutrition(itemName);
-          if (!nutrition) {
+          const fallback = findFallbackNutrition(itemName);
+          if (fallback) {
+            nutrition = {
+              ...fallback,
+              confidence: 'medium',
+              error_sources: ['fallback_used_api_error']
+            };
+          } else {
             await logFailedLookup(itemName, `API error: ${e instanceof Error ? e.message : 'Unknown error'}`, {
               supabase,
               userId: context.userId,
@@ -451,10 +546,12 @@ export class NutritionAgent {
           }
         }
       }
+
       if (nutrition) {
         // 4. Portion scaling
         const multiplier = await getScalingMultiplier(userPortion, nutrition.serving_size, itemName, supabase);
         console.log(`[NutritionAgent] Scaling ${itemName} by ${multiplier} (user: ${userPortion}, official: ${nutrition.serving_size})`);
+        // We preserve the confidence level when scaling, but logic could degrade it if scaling excessively
         return scaleNutrition(nutrition, multiplier);
       } else {
         // 5. Final fallback: LLM Estimation
@@ -469,13 +566,15 @@ export class NutritionAgent {
             userId: context.userId,
             portion: userPortion
           });
-          return null; // Return something that will be filtered out or handled
+          return null;
         }
       }
     }));
+
     return results.filter((r) => r !== null);
   }
-  async estimateNutritionWithLLM(itemName) {
+
+  async estimateNutritionWithLLM(itemName: string): Promise<EnrichedNutritionResult | null> {
     try {
       const openai = createOpenAIClient();
       const response = await openai.chat.completions.create({
@@ -483,7 +582,13 @@ export class NutritionAgent {
         messages: [
           {
             role: 'system',
-            content: `You are a nutrition expert. Estimate nutrition data for a given food item. 
+            content: `You are a nutrition expert. Estimate nutrition data for a given food item.
+            
+            Rank your confidence for each nutrient and the overall estimate as 'low', 'medium', or 'high'.
+            - High: Standard food items (e.g., "1 apple", "1 egg") where data is well-known.
+            - Medium: Common dishes with some variance (e.g., "slice of pizza", "bowl of cereal").
+            - Low: Obscure items, vague descriptions, or complex restaurant dishes without details.
+
             Return ONLY a JSON object matching this interface:
             {
               "food_name": string,
@@ -503,7 +608,15 @@ export class NutritionAgent {
               "vitamin_a_mcg": number,
               "vitamin_c_mg": number,
               "vitamin_d_mcg": number,
-              "serving_size": string (e.g. "100g", "1 cup", "1 scoop")
+              "serving_size": string (e.g. "100g", "1 cup"),
+              "confidence": "low" | "medium" | "high",
+              "confidence_details": {
+                  "calories": "low" | "medium" | "high",
+                  "protein_g": "low" | "medium" | "high",
+                  "carbs_g": "low" | "medium" | "high",
+                  "fat_total_g": "low" | "medium" | "high"
+              },
+              "error_sources": string[] (e.g. ["vague_portion", "unknown_preparation", "guesswork"])
             }
             If you are completely unsure, return null.`
           },
@@ -516,10 +629,13 @@ export class NutritionAgent {
           type: 'json_object'
         }
       });
+
       const content = response.choices[0].message.content;
       if (!content) return null;
+
       const parsed = JSON.parse(content);
       if (!parsed.calories && parsed.calories !== 0) return null;
+
       return {
         food_name: parsed.food_name || itemName,
         calories: parsed.calories,
@@ -538,7 +654,15 @@ export class NutritionAgent {
         magnesium_mg: parsed.magnesium_mg || 0,
         vitamin_a_mcg: parsed.vitamin_a_mcg || 0,
         vitamin_c_mg: parsed.vitamin_c_mg || 0,
-        vitamin_d_mcg: parsed.vitamin_d_mcg || 0
+        vitamin_d_mcg: parsed.vitamin_d_mcg || 0,
+        confidence: parsed.confidence || 'low',
+        confidence_details: parsed.confidence_details || {
+          calories: 'low',
+          protein_g: 'low',
+          carbs_g: 'low',
+          fat_total_g: 'low'
+        },
+        error_sources: parsed.error_sources || ['llm_estimation']
       };
     } catch (e) {
       console.error('[NutritionAgent] LLM estimation failed:', e);

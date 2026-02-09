@@ -10,7 +10,10 @@
    */ async logFoodItems(userId, items) {
     const { error } = await this.supabase.from('food_log').insert(items.map((item) => ({
       ...item,
-      user_id: userId
+      user_id: userId,
+      confidence: item.confidence,
+      confidence_details: item.confidence_details,
+      error_sources: item.error_sources
     })));
     if (error) {
       console.error('[DbService] Error logging food items:', error);

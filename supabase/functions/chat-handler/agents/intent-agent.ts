@@ -24,14 +24,18 @@ You MUST return a JSON object:
   "intent": "log_food" | "log_recipe" | "save_recipe" | "query_nutrition" | "update_goals" | "suggest_goals" | "audit" | "patterns" | "summary" | "clarify" | "confirm" | "decline" | "modify" | "greet" | "off_topic",
   "food_items": string[], 
   "portions": string[], 
-  "calories": number,
-  "macros": { "protein": number, "carbs": number, "fat": number },
+  "calories": number | null,
+  "macros": { "protein": number | null, "carbs": number | null, "fat": number | null },
   "recipe_text": string,
   "recipe_portion": string,
   "goal_action": "add" | "remove" | "update" | "recommend",
   "nutrient": string,
-  "value": number,
+  "value": number | null,
   "unit": string,
+  ...
+}
+
+NOTE: For calories and macros, ONLY provide a number if the user EXPLICITLY mentioned it (e.g., "log this 200 calorie apple"). Otherwise, use null. NEVER guess 0.
   "modification_details": string,
   "modified_items": [{ "item": "string", "portion": "string" }]
 }
@@ -39,7 +43,7 @@ You MUST return a JSON object:
 
 export class IntentAgent {
   name = 'intent';
-  async execute(input, _context) {
+  async execute(input: { message: string, history: any[] }, _context: any) {
     const { message, history } = input;
     const openai = createOpenAIClient();
     const messages = [
