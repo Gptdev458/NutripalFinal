@@ -39,7 +39,6 @@ yarn-error.*
 .env
 
 # Dev Docs
-docs/
 CHAT_EVOLUTION_PLAN.md
 IMPROVEMENT_GUIDELINES.md
 dev-todo.md
