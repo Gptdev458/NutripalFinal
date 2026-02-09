@@ -13,6 +13,7 @@
 import { ChatAgent } from './agents/chat-agent.ts';
 import { ReasoningAgent } from './agents/reasoning-agent.ts';
 import { RecipeAgent } from './agents/recipe-agent.ts';
+import { InsightAgent } from './agents/insight-agent.ts';
 import { scaleNutrition } from './agents/nutrition-agent.ts';
 import { createAdminClient } from '../_shared/supabase-client.ts';
 import { DbService } from './services/db-service.ts';
@@ -278,6 +279,31 @@ class ThoughtLogger {
           status: 'success',
           message: 'No problem! I\'ve cancelled that. What else can I help with?',
           response_type: 'action_cancelled',
+          steps: thoughts.getSteps()
+        };
+      case 'audit':
+      case 'patterns':
+      case 'summary':
+        console.log(`[OrchestratorV3] Branch: ${intent} (Direct Route to InsightAgent)`);
+        reportStep('Analyzing your data...');
+        const insightAgent = new InsightAgent();
+        const insightResult = await insightAgent.execute({ action: intent }, context);
+        agentsInvolved.push('insight');
+        // Format with ChatAgent
+        const chatAgentInsight = new ChatAgent();
+        response.message = await chatAgentInsight.execute({
+          userMessage: message,
+          intent: intent,
+          data: {
+            reasoning: `InsightAgent ${intent} analysis`,
+            insight: insightResult
+          },
+          history: chatHistory
+        }, context);
+        response.response_type = 'chat_response';
+        response.data = insightResult;
+        return {
+          ...response,
           steps: thoughts.getSteps()
         };
       case 'log_food':

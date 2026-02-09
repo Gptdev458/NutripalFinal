@@ -51,9 +51,10 @@ Zest and juice of 1 lemon
 ⅓ cup unsweetened vegan yogurt (for a creamy, tangy finish)  (let’s leave this out but I’ll put it in when I eat the soup)
 Instructions:
 Sauté Aromatics – Heat safflower oil in a large pot over medium heat. Add garlic, onion, fennel, and carrots. Sauté for 4–5 minutes until fragrant and softened.
-Simmer the Broth – Pour in the chicken broth, add the chicken thighs and salt, and bring to a boil. Reduce heat and let simmer, covered, for 20 minutes.
-Shred the Chicken – Remove chicken, shred with two forks, and return it to the pot.
+Simmer the Broth – Pour in the chicken broth, add the chicken thighs and salt, and return it to the pot.
 Cook the Couscous – Stir in the pearl couscous and let cook for 10 minutes until tender.
 Add Peas & Spinach – Stir in the frozen peas and chopped spinach. Let cook for 2 minutes until wilted.
 Finish with Herbs & Yogurt – Stir in the fresh dill, basil, lemon zest, and lemon juice. Whisk in the vegan yogurt for a creamy texture.
 Serve & Enjoy – Ladle into bowls and garnish with fennel fronds for a fresh finish.
+
+3. "log apple" -> Should now correctly log with ~95 calories (FIXED 2026-02-09)

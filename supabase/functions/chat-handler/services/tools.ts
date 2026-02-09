@@ -6,11 +6,12 @@
  * 
  * Categories:
  * 1. User Context (5 tools) - Profile, goals, progress, history
- * 2. Nutrition (4 tools) - Wraps NutritionAgent
- * 3. Recipes (4 tools) - Wraps RecipeAgent
- * 4. Logging (3 tools) - PCC pattern for food/recipe logging
- * 5. Goals (2 tools) - Goal management
- * 6. Insights (3 tools) - Wraps InsightAgent
+ * 2. Delegation (3 tools) - Ask specialist agents
+ * 3. Nutrition Support (2 tools) - Validation, comparison
+ * 4. Recipes Support (2 tools) - Parse, calculate
+ * 5. Logging (3 tools) - PCC pattern for food/recipe logging
+ * 6. Goals (3 tools) - Goal management
+ * 7. Insights Support (1 tool) - Food recommendations
  */ export const toolDefinitions = [
   // =============================================================
   // CATEGORY 1: USER CONTEXT (5 tools)
@@ -80,77 +81,91 @@
     }
   },
   // =============================================================
-  // CATEGORY 2: NUTRITION (4 tools) - Wraps NutritionAgent
+  // CATEGORY 2: DELEGATION (3 tools) - Ask specialist agents
   // =============================================================
   {
     type: "function",
     function: {
-      name: "lookup_nutrition",
-      description: "Looks up nutrition information for a food item. Use this before proposing to log food. Returns calories, protein, carbs, fat, etc.",
+      name: "ask_nutrition_agent",
+      description: "Delegate nutrition tasks to the specialist NutritionAgent. Use for food lookups, estimates, and comparisons. Returns enriched response with confidence levels.",
       parameters: {
         type: "object",
         properties: {
-          food: {
+          query_type: {
             type: "string",
-            description: "The food to look up (e.g., 'apple', 'chicken breast', 'pizza')"
+            enum: ["lookup", "estimate", "compare"],
+            description: "Type of nutrition query"
           },
-          portion: {
-            type: "string",
-            description: "Optional portion size (e.g., 'medium', '4oz', '1 cup', '2 slices')"
+          items: {
+            type: "array",
+            items: { type: "string" },
+            description: "Food items to analyze (e.g., ['apple', 'chicken breast'])"
           },
-          calories: {
-            type: "number",
-            description: "Optional user-provided calories to override lookup value"
-          },
-          macros: {
-            type: "object",
-            description: "Optional user-provided macros",
-            properties: {
-              protein: {
-                type: "number"
-              },
-              carbs: {
-                type: "number"
-              },
-              fat: {
-                type: "number"
-              }
-            }
+          portions: {
+            type: "array",
+            items: { type: "string" },
+            description: "Optional portions for each item (e.g., ['1 medium', '4oz'])"
           }
         },
-        required: [
-          "food"
-        ]
+        required: ["query_type", "items"]
       }
     }
   },
   {
     type: "function",
     function: {
-      name: "estimate_nutrition",
-      description: "Estimates nutrition for foods that can't be found in the database. Uses LLM-based estimation with transparency about estimates.",
+      name: "ask_recipe_agent",
+      description: "Delegate recipe tasks to the specialist RecipeAgent. Use for searching saved recipes and getting recipe details.",
       parameters: {
         type: "object",
         properties: {
-          description: {
+          action: {
             type: "string",
-            description: "Description of the food/meal to estimate (e.g., 'homemade chicken stir fry with rice')"
+            enum: ["find", "details", "calculate_serving"],
+            description: "Action to perform"
           },
-          portion: {
+          query: {
             type: "string",
-            description: "Optional portion size"
+            description: "Search query for 'find' action"
           },
-          calories_hint: {
+          recipe_id: {
+            type: "string",
+            description: "Recipe ID for 'details' or 'calculate_serving' actions"
+          },
+          servings: {
             type: "number",
-            description: "User-provided calorie value to help guide the macro estimation"
+            description: "Number of servings for 'calculate_serving' action"
           }
         },
-        required: [
-          "description"
-        ]
+        required: ["action"]
       }
     }
   },
+  {
+    type: "function",
+    function: {
+      name: "ask_insight_agent",
+      description: "Delegate insight/analysis tasks to the specialist InsightAgent. Use for audits, patterns, and summaries.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["audit", "patterns", "summary"],
+            description: "Type of analysis: 'audit' for number verification, 'patterns' for trend analysis, 'summary' for daily report"
+          },
+          days: {
+            type: "number",
+            description: "Optional: number of days to analyze (default varies by action)"
+          }
+        },
+        required: ["action"]
+      }
+    }
+  },
+  // =============================================================
+  // CATEGORY 3: NUTRITION SUPPORT (2 tools)
+  // =============================================================
   {
     type: "function",
     function: {
@@ -205,46 +220,8 @@
     }
   },
   // =============================================================
-  // CATEGORY 3: RECIPES (4 tools) - Wraps RecipeAgent
+  // CATEGORY 4: RECIPES SUPPORT (2 tools)
   // =============================================================
-  {
-    type: "function",
-    function: {
-      name: "search_saved_recipes",
-      description: "Searches the user's saved recipes by name or keyword. Returns matching recipes with their nutrition per serving.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description: "Recipe name or keywords to search for"
-          }
-        },
-        required: [
-          "query"
-        ]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "get_recipe_details",
-      description: "Gets full details of a saved recipe including all ingredients and nutrition breakdown.",
-      parameters: {
-        type: "object",
-        properties: {
-          recipe_id: {
-            type: "string",
-            description: "The ID of the recipe to retrieve"
-          }
-        },
-        required: [
-          "recipe_id"
-        ]
-      }
-    }
-  },
   {
     type: "function",
     function: {
@@ -293,7 +270,7 @@
     }
   },
   // =============================================================
-  // CATEGORY 4: LOGGING (3 tools) - PCC Pattern
+  // CATEGORY 5: LOGGING (3 tools) - PCC Pattern
   // =============================================================
   {
     type: "function",
@@ -437,7 +414,7 @@
     }
   },
   // =============================================================
-  // CATEGORY 5: GOALS (2 tools)
+  // CATEGORY 6: GOALS (3 tools)
   // =============================================================
   {
     type: "function",
@@ -519,7 +496,7 @@
     }
   },
   // =============================================================
-  // CATEGORY 6: INSIGHTS (3 tools) - Wraps InsightAgent
+  // CATEGORY 7: INSIGHTS SUPPORT (1 tool)
   // =============================================================
   {
     type: "function",
@@ -538,34 +515,6 @@
             description: "Any dietary preferences (e.g., 'vegetarian', 'quick snack', 'meal')"
           }
         }
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "analyze_eating_patterns",
-      description: "Analyzes the user's eating patterns over time. Identifies trends, habits, and areas for improvement.",
-      parameters: {
-        type: "object",
-        properties: {
-          days: {
-            type: "number",
-            description: "Number of days to analyze (default 14)"
-          }
-        }
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "get_progress_report",
-      description: "Generates a comprehensive progress report including goal adherence, trends, and personalized suggestions.",
-      parameters: {
-        type: "object",
-        properties: {},
-        required: []
       }
     }
   }

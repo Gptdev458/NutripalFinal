@@ -54,20 +54,28 @@ export class ToolExecutor {
           return this.getWeeklySummary();
         case 'get_food_history':
           return this.getFoodHistory(args.days || 7);
-        // Nutrition Tools
-        case 'lookup_nutrition':
-          return this.lookupNutrition(args.food, args.portion, args.calories, args.macros);
-        case 'estimate_nutrition':
-          return this.estimateNutrition(args.description, args.portion, args.calories_hint, args.tracked_nutrients);
+        // Delegation Tools (NEW)
+        case 'ask_nutrition_agent':
+          return this.askNutritionAgent(args);
+        case 'ask_recipe_agent':
+          return this.askRecipeAgent(args);
+        case 'ask_insight_agent':
+          return this.askInsightAgent(args);
+        // Nutrition Support Tools
         case 'validate_nutrition':
           return this.validateNutrition(args);
         case 'compare_foods':
           return this.compareFoods(args.foods);
-        // Recipe Tools
+        // Legacy tool handlers - kept for backward compatibility with orchestrator direct calls
+        case 'lookup_nutrition':
+          return this.lookupNutrition(args.food, args.portion, args.calories, args.macros);
+        case 'estimate_nutrition':
+          return this.estimateNutrition(args.description, args.portion, args.calories_hint, args.tracked_nutrients);
         case 'search_saved_recipes':
           return this.searchSavedRecipes(args.query);
         case 'get_recipe_details':
           return this.getRecipeDetails(args.recipe_id);
+        // Recipe Support Tools
         case 'parse_recipe_text':
           return this.parseRecipeText(args.recipe_text, args.recipe_name);
         case 'calculate_recipe_serving':
@@ -90,13 +98,9 @@ export class ToolExecutor {
           return this.applyDailyWorkoutOffset(args.adjustment_value, args.nutrient, args.notes);
         case 'calculate_recommended_goals':
           return this.calculateRecommendedGoals();
-        // Insight Tools
+        // Insight Support Tools
         case 'get_food_recommendations':
           return this.getFoodRecommendations(args.focus, args.preferences);
-        case 'analyze_eating_patterns':
-          return this.analyzeEatingPatterns(args.days || 14);
-        case 'get_progress_report':
-          return this.getProgressReport();
         default:
           throw new Error(`Unknown tool: ${toolName}`);
       }
@@ -107,6 +111,63 @@ export class ToolExecutor {
         message: `Failed to execute ${toolName}: ${error.message}`
       };
     }
+  }
+
+  // =============================================================
+  // DELEGATION TOOLS (NEW)
+  // =============================================================
+
+  /**
+   * Delegate nutrition tasks to NutritionAgent
+   */
+  async askNutritionAgent(args: { query_type: string, items: string[], portions?: string[] }) {
+    console.log('[ToolExecutor] Delegating to NutritionAgent:', args);
+    const { query_type, items, portions = [] } = args;
+
+    switch (query_type) {
+      case 'lookup':
+      case 'estimate':
+        // For single item lookups/estimates, use the existing method
+        if (items.length === 1) {
+          return this.lookupNutrition(items[0], portions[0] || '1 serving');
+        }
+        // For multiple items, call NutritionAgent directly
+        return this.nutritionAgent.execute({ items, portions }, this.agentContext);
+      case 'compare':
+        return this.compareFoods(items);
+      default:
+        return this.nutritionAgent.execute({ items, portions }, this.agentContext);
+    }
+  }
+
+  /**
+   * Delegate recipe tasks to RecipeAgent
+   */
+  async askRecipeAgent(args: { action: string, query?: string, recipe_id?: string, servings?: number }) {
+    console.log('[ToolExecutor] Delegating to RecipeAgent:', args);
+    const { action, query, recipe_id, servings } = args;
+
+    switch (action) {
+      case 'find':
+        return this.searchSavedRecipes(query || '');
+      case 'details':
+        if (!recipe_id) return { error: true, message: 'recipe_id required for details action' };
+        return this.getRecipeDetails(recipe_id);
+      case 'calculate_serving':
+        if (!recipe_id || !servings) return { error: true, message: 'recipe_id and servings required' };
+        return this.calculateRecipeServing(recipe_id, servings);
+      default:
+        return { error: true, message: `Unknown recipe action: ${action}` };
+    }
+  }
+
+  /**
+   * Delegate insight/analysis tasks to InsightAgent
+   */
+  async askInsightAgent(args: { action: string, days?: number }) {
+    console.log('[ToolExecutor] Delegating to InsightAgent:', args);
+    const { action, days } = args;
+    return this.insightAgent.execute({ action, days }, this.agentContext);
   }
 
   // =============================================================
@@ -299,32 +360,48 @@ export class ToolExecutor {
       return this.estimateNutrition(food, portion, calories, trackedNutrients);
     }
 
-    const estimate: any = await this.estimateNutrition(food, portion, undefined, trackedNutrients);
-    if (estimate.error) {
-      console.warn(`[ToolExecutor] AI Estimate failed, falling back to database`);
-      const items = [food];
-      const portions = [portion || '1 serving'];
-      const results: any[] = await this.nutritionAgent.execute({ items, portions }, this.agentContext);
+    // Feature 2: Delegate to NutritionAgent FIRST (Cache -> API -> LLM fallback internal to agent)
+    // This ensures we use the specialized agent logic instead of a generic LLM estimate here.
+    const items = [food];
+    const portions = [portion || '1 serving'];
+    const results: any[] = await this.nutritionAgent.execute({ items, portions }, this.agentContext);
 
-      if (results && results.length > 0) {
-        const result = results[0];
+    // Define base keys for filtering
+    const baseKeys = ['calories', 'protein_g', 'carbs_g', 'fat_total_g'];
+
+    if (results && results.length > 0) {
+      const result = results[0];
+
+      // If the result is valid (has calories), use it
+      if (result && (result.calories > 0 || result.calories === 0)) {
         const filteredResult: any = {
           food_name: result.food_name || food,
           portion: portion || result.serving_size || 'standard serving',
           calories: Math.round(result.calories || 0),
-          source: 'database'
+          source: result.source || 'agent',
+          confidence: result.confidence, // Feature 3 prep
+          health_flags: result.health_flags // Feature 7 prep
         };
 
         trackedNutrients.forEach(key => {
           if (result[key] !== undefined && key !== 'calories') {
             filteredResult[key] = typeof result[key] === 'number' ? Math.round(result[key] * 10) / 10 : result[key];
+          } else if (baseKeys.includes(key)) {
+            filteredResult[key] = 0;
           }
+        });
+
+        // Ensure base keys exist
+        baseKeys.forEach(k => {
+          if (filteredResult[k] === undefined) filteredResult[k] = 0;
         });
 
         return filteredResult;
       }
     }
-    return estimate;
+
+    console.warn(`[ToolExecutor] NutritionAgent returned no valid data for "${food}", falling back to generic estimate`);
+    return this.estimateNutrition(food, portion, undefined, trackedNutrients);
   }
 
   private getMasterNutrientMap(): Record<string, { name: string, unit: string }> {

@@ -212,10 +212,17 @@ export async function getScalingMultiplier(userPortion, servingSize, foodName, s
     }
   }
   // 3. Fallback to LLM for ambiguous descriptions
-  console.log(`[NutritionAgent] Falling back to LLM for scaling: "${userPortion}" vs "${servingSize}"`);
+  console.log(`[NutritionAgent] Falling back to LLM for scaling: "${userPortion}" vs "${servingSize}" for "${foodName}"`);
   const openai = createOpenAIClient();
+
+  // Feature Fix: Context for unitless numbers
+  const contextNote = /^\d+(\.\d+)?$/.test(userPortion.trim())
+    ? `(Assume "${userPortion}" means "${userPortion} whole ${foodName}" or "${userPortion} serving")`
+    : '';
+
   const prompt = `
-User portion: "${userPortion}"
+Food Item: "${foodName}"
+User portion input: "${userPortion}" ${contextNote}
 Official serving size: "${servingSize}"
 
 Based on the above, calculate the numerical multiplier to convert the nutrition data from the official serving size to the user's portion.
@@ -238,8 +245,17 @@ Example: "1 apple" (approx 180g) vs "100g" -> 1.8
   const multiplier = match ? parseFloat(match[0]) : 1;
   console.log(`[NutritionAgent] LLM Scaling result: raw="${content}" parsed=${multiplier}`);
   const finalMultiplier = isNaN(multiplier) ? 1 : multiplier;
-  // 4. Save to cache if successful
-  if (foodName && supabase && !isNaN(finalMultiplier)) {
+  // 4. Validate multiplier before saving / returning
+  const SAFE_MIN = 0.1;
+  const SAFE_MAX = 10.0;
+
+  if (finalMultiplier < SAFE_MIN || finalMultiplier > SAFE_MAX) {
+    console.warn(`[NutritionAgent] Dangerous multiplier detected: ${finalMultiplier} for "${userPortion}" -> "${servingSize}". Defaulting to 1.`);
+    return 1;
+  }
+
+  // 5. Save to cache if successful
+  if (foodName && supabase && finalMultiplier !== 1) {
     try {
       await supabase.from('unit_conversions').insert({
         food_name: foodName.toLowerCase().trim(),
@@ -380,28 +396,57 @@ export function scaleNutrition(data, multiplier) {
 export class NutritionAgent {
   name = 'nutrition';
   async execute(input, context) {
-    const { items, portions } = input;
+    const { items, portions, trackedNutrients } = input;
     const supabase = context.supabase || createAdminClient();
     const results = await Promise.all(items.map(async (itemName, i) => {
       const userPortion = portions[i] || '1 serving';
       const normalizedSearch = normalizeFoodName(itemName);
+
       // 1. Check Cache with normalized name
       const { data: cached } = await supabase.from('food_products').select('nutrition_data, product_name').ilike('search_term', normalizedSearch).limit(1).maybeSingle();
       let nutrition = null;
+
       if (cached) {
         console.log(`[NutritionAgent] Cache hit for ${itemName} (normalized: ${normalizedSearch})`);
         nutrition = cached.nutrition_data;
         // Validate cached data
         if (!isValidNutrition(nutrition, itemName)) {
           console.warn(`[NutritionAgent] Cached data for "${itemName}" has 0 calories, trying fallback`);
-          const fallback = findFallbackNutrition(itemName);
-          if (fallback && isValidNutrition(fallback, itemName)) {
-            nutrition = fallback;
-          }
+          nutrition = null; // Invalidate to trigger re-estimation
         }
-      } else {
-        // 2. Lookup from APIs
-        console.log(`[NutritionAgent] Cache miss for ${itemName}, calling APIs`);
+      }
+
+      // 2. Try LLM Estimation (PRIMARY source) if no cache
+      if (!nutrition) {
+        console.log(`[NutritionAgent] Cache miss for "${itemName}", trying LLM estimation (Primary)`);
+        const estimation = await this.estimateNutritionWithLLM(itemName, trackedNutrients);
+
+        if (estimation && isValidNutrition(estimation, itemName)) {
+          nutrition = estimation;
+          // Save LLM result to Cache
+          try {
+            await supabase.from('food_products').insert({
+              product_name: estimation.food_name || itemName,
+              search_term: normalizedSearch,
+              nutrition_data: nutrition,
+              calories: nutrition.calories,
+              protein_g: nutrition.protein_g,
+              carbs_g: nutrition.carbs_g,
+              fat_total_g: nutrition.fat_total_g,
+              source: 'agent',
+              brand: 'AI Estimate'
+            });
+          } catch (err) {
+            console.error('[NutritionAgent] Error saving LLM result to cache:', err);
+          }
+        } else {
+          console.warn(`[NutritionAgent] LLM estimation failed or invalid for "${itemName}"`);
+        }
+      }
+
+      // 3. Fallback to API Lookup if LLM fails
+      if (!nutrition) {
+        console.log(`[NutritionAgent] LLM failed for ${itemName}, failing back to APIs`);
         try {
           const lookupResult = await lookupNutrition(itemName);
           if (lookupResult.status === 'success' && lookupResult.nutrition_data) {
@@ -414,7 +459,8 @@ export class NutritionAgent {
                 nutrition = fallback;
               }
             }
-            // 3. Save to Cache
+
+            // Save API result to Cache
             if (nutrition) {
               await supabase.from('food_products').insert({
                 product_name: lookupResult.product_name || itemName,
@@ -431,53 +477,43 @@ export class NutritionAgent {
           } else {
             // API returned no data - try fallback
             nutrition = findFallbackNutrition(itemName);
-            if (!nutrition) {
-              await logFailedLookup(itemName, 'API returned no data and no fallback found', {
-                supabase,
-                userId: context.userId,
-                portion: userPortion
-              });
-            }
           }
         } catch (e) {
           console.error(`[NutritionAgent] API failure for ${itemName}:`, e);
           nutrition = findFallbackNutrition(itemName);
-          if (!nutrition) {
-            await logFailedLookup(itemName, `API error: ${e instanceof Error ? e.message : 'Unknown error'}`, {
-              supabase,
-              userId: context.userId,
-              portion: userPortion
-            });
-          }
         }
       }
+
+      if (!nutrition) {
+        const fallback = findFallbackNutrition(itemName);
+        if (fallback) nutrition = fallback;
+      }
+
       if (nutrition) {
         // 4. Portion scaling
         const multiplier = await getScalingMultiplier(userPortion, nutrition.serving_size, itemName, supabase);
         console.log(`[NutritionAgent] Scaling ${itemName} by ${multiplier} (user: ${userPortion}, official: ${nutrition.serving_size})`);
         return scaleNutrition(nutrition, multiplier);
       } else {
-        // 5. Final fallback: LLM Estimation
-        console.log(`[NutritionAgent] No data from API/Cache for "${itemName}", trying LLM estimation`);
-        const estimation = await this.estimateNutritionWithLLM(itemName);
-        if (estimation) {
-          const multiplier = await getScalingMultiplier(userPortion, estimation.serving_size, itemName, supabase);
-          return scaleNutrition(estimation, multiplier);
-        } else {
-          await logFailedLookup(itemName, 'No nutrition data available from any source including LLM', {
-            supabase,
-            userId: context.userId,
-            portion: userPortion
-          });
-          return null; // Return something that will be filtered out or handled
-        }
+        // Final failure log
+        await logFailedLookup(itemName, 'No nutrition data available from Cache, LLM, or API', {
+          supabase,
+          userId: context.userId,
+          portion: userPortion
+        });
+        return null; // Return something that will be filtered out or handled
       }
     }));
     return results.filter((r) => r !== null);
   }
-  async estimateNutritionWithLLM(itemName) {
+  async estimateNutritionWithLLM(itemName, trackedNutrients = []) {
     try {
       const openai = createOpenAIClient();
+
+      const extraNutrients = trackedNutrients.length > 0
+        ? `\nIMPORTANT: Also estimate these specific nutrients if possible: ${trackedNutrients.join(', ')}.`
+        : '';
+
       const response = await openai.chat.completions.create({
         model: 'gpt-4o',
         messages: [
@@ -504,7 +540,11 @@ export class NutritionAgent {
               "vitamin_c_mg": number,
               "vitamin_d_mcg": number,
               "serving_size": string (e.g. "100g", "1 cup", "1 scoop")
+              // Add other nutrients if requested
             }
+            ${extraNutrients}
+            
+            Be realistic. If a value is negligible (like fat in an apple), put 0, but do NOT put 0 for calories unless it's water/salt.
             If you are completely unsure, return null.`
           },
           {
@@ -519,8 +559,9 @@ export class NutritionAgent {
       const content = response.choices[0].message.content;
       if (!content) return null;
       const parsed = JSON.parse(content);
-      if (!parsed.calories && parsed.calories !== 0) return null;
-      return {
+      if (!parsed || (parsed.calories === undefined && parsed.calories !== 0)) return null;
+
+      const result = {
         food_name: parsed.food_name || itemName,
         calories: parsed.calories,
         protein_g: parsed.protein_g || 0,
@@ -540,6 +581,15 @@ export class NutritionAgent {
         vitamin_c_mg: parsed.vitamin_c_mg || 0,
         vitamin_d_mcg: parsed.vitamin_d_mcg || 0
       };
+
+      // Merge any other keys from parsed that might have been requested via trackedNutrients
+      for (const key of trackedNutrients) {
+        if (parsed[key] !== undefined && result[key] === undefined) {
+          (result as any)[key] = parsed[key];
+        }
+      }
+
+      return result;
     } catch (e) {
       console.error('[NutritionAgent] LLM estimation failed:', e);
       return null;

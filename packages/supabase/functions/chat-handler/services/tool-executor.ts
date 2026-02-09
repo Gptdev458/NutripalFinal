@@ -284,34 +284,64 @@ export class ToolExecutor {
       trackedNutrients = Object.keys(goals).map(key => this.normalizeNutrientName(key));
     }
 
+    // Feature 2: Delegate to NutritionAgent FIRST (Cache -> API -> LLM fallback internal to agent)
+    // This ensures we use the specialized agent logic instead of a generic LLM estimate here.
+    const items = [food];
+    const portions = [portion || '1 serving'];
+    console.log(`[ToolExecutor] Calling NutritionAgent for ${food}`);
+    const results: any[] = await this.nutritionAgent.execute({ items, portions, trackedNutrients }, this.agentContext);
+    console.log(`[ToolExecutor] NutritionAgent returned:`, JSON.stringify(results));
+
+    // Define base keys for filtering
+    const baseKeys = ['calories', 'protein_g', 'carbs_g', 'fat_total_g'];
+
+    if (results && results.length > 0) {
+      const result = results[0];
+      console.log(`[ToolExecutor] Processing result:`, JSON.stringify(result));
+
+
+      // If the result is valid (has calories), use it
+      if (result && (result.calories > 0 || result.calories === 0)) {
+        const filteredResult: any = {
+          food_name: result.food_name || food,
+          portion: portion || result.serving_size || 'standard serving',
+          calories: Math.round(result.calories || 0),
+          source: result.source || 'agent',
+          confidence: result.confidence, // Feature 3 prep
+          health_flags: result.health_flags // Feature 7 prep
+        };
+
+        trackedNutrients.forEach(key => {
+          if (key === 'calories') return; // Calories handled separately above
+
+          if (result[key] !== undefined) {
+            filteredResult[key] = typeof result[key] === 'number' ? Math.round(result[key] * 10) / 10 : result[key];
+          } else if (baseKeys.includes(key)) {
+            filteredResult[key] = 0;
+          }
+        });
+
+        // Ensure base keys exist
+        baseKeys.forEach(k => {
+          if (filteredResult[k] === undefined) filteredResult[k] = 0;
+        });
+
+        return filteredResult;
+      }
+    }
+
+    console.warn(`[ToolExecutor] NutritionAgent returned no valid data for "${food}", falling back to generic estimate`);
+
     // Always estimate nutrition to get ALL tracked nutrients (fiber, sugar, water, etc.)
     // Pass calories hint if available (helps guide macro estimation)
     const caloriesHint = (calories != null && calories > 0) ? calories : undefined;
     const estimate: any = await this.estimateNutrition(food, portion, caloriesHint, trackedNutrients);
 
     if (estimate.error) {
-      console.warn(`[ToolExecutor] AI Estimate failed, falling back to database`);
-      const items = [food];
-      const portions = [portion || '1 serving'];
-      const results: any[] = await this.nutritionAgent.execute({ items, portions }, this.agentContext);
-
-      if (results && results.length > 0) {
-        const result = results[0];
-        const filteredResult: any = {
-          food_name: result.food_name || food,
-          portion: portion || result.serving_size || 'standard serving',
-          calories: Math.round(result.calories || 0),
-          source: 'database'
-        };
-
-        trackedNutrients.forEach(key => {
-          if (result[key] !== undefined && key !== 'calories') {
-            filteredResult[key] = typeof result[key] === 'number' ? Math.round(result[key] * 10) / 10 : result[key];
-          }
-        });
-
-        return filteredResult;
-      }
+      return {
+        error: true,
+        message: `Could not estimate nutrition for "${food}"`
+      };
     }
     return estimate;
   }

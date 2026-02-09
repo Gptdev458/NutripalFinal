@@ -1,4 +1,4 @@
-import { lookupNutrition } from '../../nutrition-lookup/index.ts';
+import { lookupNutrition } from '../../_shared/nutrition-lookup.ts';
 import { createAdminClient } from '../../_shared/supabase-client.ts';
 import { createOpenAIClient } from '../../_shared/openai-client.ts';
 import { normalizeFoodName } from '../../_shared/utils.ts';

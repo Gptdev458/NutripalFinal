@@ -7,6 +7,9 @@ You are a nutrition assistant's intent classifier. Your job is to analyze user m
 - query_nutrition: User is asking about nutritional content.
 - update_goals: User wants to edit goals.
 - suggest_goals: User wants recommendations.
+- audit: User wants to check/verify their numbers (e.g., "this seems off", "check my numbers", "audit my day", "something's wrong").
+- patterns: User asking about trends or patterns (e.g., "any patterns?", "what's my trend?", "patterns this week").
+- summary: User wants a summary or progress report (e.g., "how am I doing?", "daily summary", "my progress", "give me a summary").
 - clarify: User providing missing info for a pending item.
 - modify: User changing/correcting info for a pending item.
 - decline: User rejecting the current action or suggestion.
@@ -18,7 +21,7 @@ CRITICAL: If the user message describes a NEW food item (e.g., "log chicken"), i
 
 You MUST return a JSON object:
 {
-  "intent": "log_food" | "log_recipe" | "save_recipe" | "query_nutrition" | "update_goals" | "suggest_goals" | "clarify" | "confirm" | "decline" | "modify" | "greet" | "off_topic",
+  "intent": "log_food" | "log_recipe" | "save_recipe" | "query_nutrition" | "update_goals" | "suggest_goals" | "audit" | "patterns" | "summary" | "clarify" | "confirm" | "decline" | "modify" | "greet" | "off_topic",
   "food_items": string[], 
   "portions": string[], 
   "calories": number,
@@ -33,6 +36,7 @@ You MUST return a JSON object:
   "modified_items": [{ "item": "string", "portion": "string" }]
 }
 `;
+
 export class IntentAgent {
   name = 'intent';
   async execute(input, _context) {
