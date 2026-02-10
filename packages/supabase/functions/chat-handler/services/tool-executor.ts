@@ -463,8 +463,20 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. Even
         }
       });
 
-      // Ensure calories is always present (fallback to 0 if totally missing)
-      if (filtered.calories === undefined) filtered.calories = 0;
+      // FIX: If calories is missing or 0, calculate from macros before defaulting.
+      // Previously, this just set calories = 0, allowing malformed LLM responses
+      // to produce 0-calorie food logs.
+      if (!filtered.calories || filtered.calories <= 0) {
+        const calcCals = ((filtered.protein_g || 0) * 4) + ((filtered.carbs_g || 0) * 4) + ((filtered.fat_total_g || 0) * 9);
+        if (calcCals > 0) {
+          console.log(`[ToolExecutor] estimateNutrition: 0 calories from LLM for "${description}", calculated ${Math.round(calcCals)} from macros`);
+          filtered.calories = Math.round(calcCals);
+        } else {
+          // Last resort: LLM returned nothing useful. Log a warning.
+          console.warn(`[ToolExecutor] estimateNutrition: No calories or macros from LLM for "${description}"`);
+          filtered.calories = 0;
+        }
+      }
 
       return filtered;
     } catch (e) {

@@ -441,6 +441,10 @@ class ThoughtLogger {
             steps: thoughts.getSteps()
           };
         }
+        // FIX: Multi-item food logs (e.g. "log chicken and rice") skip the single-item
+        // if-block above. Without this break, they fall through into log_recipe handling.
+        // Instead, let them reach the ReasoningAgent fallback at STEP 4.
+        break;
       case 'log_recipe':
         // Shortcut: If intent is log_recipe and message is large or context exists
         if (message.length > 500 || intentResult.recipe_text) {
