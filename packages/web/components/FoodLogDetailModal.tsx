@@ -22,6 +22,8 @@ interface FoodLog {
   calories?: number | null;
   serving_size?: string | null;
   portion?: string | null;
+  confidence?: 'low' | 'medium' | 'high';
+  confidence_details?: Record<string, 'low' | 'medium' | 'high'>;
   [key: string]: unknown;
 }
 
@@ -117,11 +119,15 @@ const FoodLogDetailModal: React.FC<FoodLogDetailModalProps> = ({ logData, onClos
       const value = logData[key] !== undefined ? logData[key] : (logData.extras as any)?.[key];
       const mapping = NUTRIENT_MAP[key];
 
+      // Get confidence for this nutrient
+      const conf = logData.confidence_details?.[key] || logData.confidence || 'high';
+
       return {
         key,
         name: mapping?.name || key.replace(/_/g, ' '),
         value: typeof value === 'number' ? value : 0,
-        unit: mapping?.unit || goal.unit
+        unit: mapping?.unit || goal.unit,
+        confidence: conf
       };
     });
 
@@ -195,9 +201,22 @@ const FoodLogDetailModal: React.FC<FoodLogDetailModalProps> = ({ logData, onClos
               {logData.serving_size ? ` (${logData.serving_size} per portion)` : ''}
             </p>
           </div>
-          <div className="text-right">
+          <div className="text-right flex flex-col items-end">
             <div className="text-2xl font-black text-blue-600 whitespace-nowrap tracking-tight">
               {formatEnergy(logData.calories || 0)}
+            </div>
+            {/* Confidence Header Tag */}
+            <div className="mt-1">
+              {(!logData.confidence || logData.confidence === 'high') && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                  High Confidence
+                </span>
+              )}
+              {logData.confidence && logData.confidence !== 'high' && (
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${logData.confidence === 'low' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                  {logData.confidence === 'low' ? 'Low Confidence' : 'Medium Confidence'}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -212,9 +231,17 @@ const FoodLogDetailModal: React.FC<FoodLogDetailModalProps> = ({ logData, onClos
             <div className="bg-gray-50 rounded-lg p-3 space-y-2.5 border border-gray-100">
               {trackedDetails.length > 0 ? (
                 trackedDetails.map((n, i) => (
-                  <div key={n.key} className="flex justify-between items-center">
-                    <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-tight">{n.name}</span>
-                    <span className="text-xs font-black text-gray-800">{formatValue(n.value, n.unit)}</span>
+                  <div key={n.key} className="flex justify-between items-center group">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-tight">{n.name}</span>
+                      {/* Dots */}
+                      {n.confidence === 'low' && <span className="w-1.5 h-1.5 rounded-full bg-red-400" title="Low confidence"></span>}
+                      {n.confidence === 'medium' && <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" title="Medium confidence"></span>}
+                      {(n.confidence === 'high' || !n.confidence) && <span className="w-1.5 h-1.5 rounded-full bg-green-400" title="High confidence"></span>}
+                    </div>
+                    <span className={`text-xs font-black ${n.confidence === 'low' ? 'text-red-700' : n.confidence === 'medium' ? 'text-amber-700' : 'text-gray-800'}`}>
+                      {formatValue(n.value, n.unit)}
+                    </span>
                   </div>
                 ))
               ) : (

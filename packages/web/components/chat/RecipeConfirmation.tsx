@@ -14,6 +14,8 @@ interface RecipeData {
     ingredients: Ingredient[];
     nutrition_data?: {
         calories: number;
+        confidence?: 'low' | 'medium' | 'high';
+        confidence_details?: Record<string, 'low' | 'medium' | 'high'>;
         [key: string]: any;
     };
 }
@@ -52,10 +54,14 @@ export const RecipeConfirmation: React.FC<RecipeConfirmationProps> = ({
             const divisor = (isMatch || !recipe.servings) ? (recipe.servings || 1) : 1;
             const scaledVal = typeof val === 'number' ? val / divisor : 0;
 
+            // Get confidence for this nutrient
+            const conf = nutrition?.confidence_details?.[goal.nutrient] || nutrition?.confidence || 'high';
+
             return {
                 name: NUTRIENT_MAP[goal.nutrient]?.name || goal.nutrient.replace(/_/g, ' '),
                 value: scaledVal,
-                unit: NUTRIENT_MAP[goal.nutrient]?.unit || goal.unit
+                unit: NUTRIENT_MAP[goal.nutrient]?.unit || goal.unit,
+                confidence: conf
             };
         });
 
@@ -81,9 +87,22 @@ export const RecipeConfirmation: React.FC<RecipeConfirmationProps> = ({
                             className="w-full text-lg font-bold text-gray-900 bg-transparent border-b border-dashed border-gray-300 focus:border-emerald-500 focus:outline-none"
                             placeholder="Recipe Name"
                         />
-                        <p className="text-xs text-gray-500 mt-1">
-                            {recipe.servings} Servings total • {isMatch ? 'Showing 1 serving' : 'Showing total batch'}
-                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                            <p className="text-xs text-gray-500">
+                                {recipe.servings} Servings total • {isMatch ? 'Showing 1 serving' : 'Showing total batch'}
+                            </p>
+                            {/* Confidence Tag */}
+                            {nutrition?.confidence && nutrition.confidence !== 'high' && (
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${nutrition.confidence === 'low' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                                    {nutrition.confidence === 'low' ? 'Low Confidence' : 'Medium Confidence'}
+                                </span>
+                            )}
+                            {(!nutrition?.confidence || nutrition.confidence === 'high') && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">
+                                    High Confidence
+                                </span>
+                            )}
+                        </div>
                     </div>
                     <div className="text-right">
                         <div className="text-lg font-black text-emerald-600 whitespace-nowrap">
@@ -136,8 +155,15 @@ export const RecipeConfirmation: React.FC<RecipeConfirmationProps> = ({
                             {trackedDetails.length > 0 ? (
                                 trackedDetails.map((n: any, idx) => (
                                     <div key={idx} className="flex flex-col border-b border-gray-50 pb-1 last:border-0">
-                                        <span className="text-[10px] font-medium text-gray-500 uppercase tracking-tight">{n.name}</span>
-                                        <span className="text-xs font-bold text-gray-800">{Math.round(n.value * 10) / 10}{n.unit}</span>
+                                        <div className="flex items-center gap-1">
+                                            <span className="text-[10px] font-medium text-gray-500 uppercase tracking-tight">{n.name}</span>
+                                            {n.confidence === 'low' && <span className="w-1.5 h-1.5 rounded-full bg-red-400" title="Low confidence"></span>}
+                                            {n.confidence === 'medium' && <span className="w-1.5 h-1.5 rounded-full bg-yellow-400" title="Medium confidence"></span>}
+                                            {(n.confidence === 'high' || !n.confidence) && <span className="w-1.5 h-1.5 rounded-full bg-green-400" title="High confidence"></span>}
+                                        </div>
+                                        <span className={`text-xs font-bold ${n.confidence === 'low' ? 'text-red-700' : n.confidence === 'medium' ? 'text-amber-700' : 'text-gray-800'}`}>
+                                            {Math.round(n.value * 10) / 10}{n.unit}
+                                        </span>
                                     </div>
                                 ))
                             ) : (

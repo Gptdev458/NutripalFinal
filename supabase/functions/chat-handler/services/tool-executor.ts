@@ -414,7 +414,10 @@ export class ToolExecutor {
 
           if (val !== undefined && key !== 'calories') {
             filteredResult[key] = typeof val === 'number' ? Math.round(val * 10) / 10 : val;
-          } else if (baseKeys.includes(key)) {
+          } else if (baseKeys.includes(key) && key !== 'calories') {
+            // FIX: Was overwriting filteredResult.calories (already set correctly at line 395) to 0.
+            // The 'key !== calories' guard in the if-branch meant calories always fell to this else-if,
+            // which unconditionally set it to 0. Now we also exclude calories from this fallback.
             filteredResult[key] = 0;
           }
         });

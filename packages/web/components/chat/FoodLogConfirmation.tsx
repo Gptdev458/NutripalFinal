@@ -25,6 +25,22 @@ interface FoodLogConfirmationProps {
     confirmLabel?: string;
 }
 
+const formatConfidenceReason = (reason: string): string => {
+    const map: Record<string, string> = {
+        'vague_portion': 'Portion size was unclear',
+        'unknown_preparation': 'Preparation method unknown',
+        'guesswork': 'Best guess based on description',
+        'llm_estimation': 'AI estimated matching real food data',
+        'calculated_from_macros': 'Calories calculated from macros',
+        'fallback_used_invalid_cache': 'Cached data was invalid',
+        'fallback_used_invalid_api': 'API returned invalid data',
+        'fallback_used_no_api_data': 'No data found in database',
+        'fallback_used_api_error': 'Database connection failed',
+        'no_data': 'No exact match found'
+    };
+    return map[reason] || reason.replace(/_/g, ' ');
+};
+
 export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
     nutrition,
     userGoals = [],
@@ -78,17 +94,24 @@ export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
                         {mainItem?.confidence && mainItem.confidence !== 'high' && (
                             <span
                                 className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${mainItem.confidence === 'low' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}
-                                title={(mainItem.error_sources?.length ?? 0) > 0 ? `Reasons: ${mainItem.error_sources!.join(', ')}` : undefined}
+                                title={(mainItem.error_sources?.length ?? 0) > 0 ? `Reasons: ${mainItem.error_sources!.map(formatConfidenceReason).join(', ')}` : undefined}
                             >
                                 {mainItem.confidence === 'low' ? 'Low Confidence' : 'Medium Confidence'}
                             </span>
                         )}
+                        {(!mainItem?.confidence || mainItem.confidence === 'high') && (
+                            <span
+                                className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-green-100 text-green-700"
+                            >
+                                High Confidence
+                            </span>
+                        )}
                         {(mainItem?.error_sources?.length ?? 0) > 0 && (
                             <span
-                                className="text-[10px] text-gray-400 max-w-[150px] text-right truncate italic"
-                                title={mainItem.error_sources!.join(', ')}
+                                className="text-xs text-gray-500 max-w-[220px] text-right italic leading-tight mt-1"
+                                title={mainItem.error_sources!.map(formatConfidenceReason).join(', ')}
                             >
-                                {mainItem.error_sources!.join(', ')}
+                                {mainItem.error_sources!.map(formatConfidenceReason).join(', ')}
                             </span>
                         )}
                     </div>
@@ -116,13 +139,16 @@ export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
                             <div className="mt-2 space-y-1 bg-gray-50 p-2 rounded border border-gray-100 animate-in fade-in slide-in-from-top-1 duration-200">
                                 {trackedDetails.map((n: any, idx) => (
                                     <div key={idx} className="flex justify-between text-xs group relative">
-                                        <span className={`font-bold flex items-center gap-1 ${['protein_g', 'carbs_g', 'fat_total_g', 'calories'].includes(n.key) ? 'text-blue-700' : 'text-emerald-700'}`}>
+                                        <span className={`font-bold flex items-center gap-1 text-gray-700`}>
                                             {n.name}
                                             {n.confidence === 'low' && (
                                                 <span className="w-2 h-2 rounded-full bg-red-400" title="Low confidence estimate"></span>
                                             )}
                                             {n.confidence === 'medium' && (
                                                 <span className="w-2 h-2 rounded-full bg-yellow-400" title="Medium confidence estimate"></span>
+                                            )}
+                                            {(n.confidence === 'high' || !n.confidence) && (
+                                                <span className="w-2 h-2 rounded-full bg-green-400" title="High confidence estimate"></span>
                                             )}
                                         </span>
                                         <span className={`font-bold ${n.confidence === 'low' ? 'text-red-600' : n.confidence === 'medium' ? 'text-amber-600' : 'text-gray-900'}`}>
