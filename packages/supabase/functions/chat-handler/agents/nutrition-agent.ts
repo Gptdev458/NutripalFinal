@@ -360,7 +360,6 @@ function convertToMl(amount, unit) {
   return units[unit] ? amount * units[unit] : null;
 }
 export function scaleNutrition(data, multiplier) {
-  if (multiplier === 1) return data;
   const scaled = {
     ...data
   };
@@ -384,13 +383,32 @@ export function scaleNutrition(data, multiplier) {
     'vitamin_d_mcg',
     'sugar_added_g'
   ];
-  keysToScale.forEach((key) => {
-    if (typeof scaled[key] === 'number') {
-      // @ts-ignore: key is valid
-      scaled[key] = Math.round(scaled[key] * multiplier * 10) / 10;
-      if (key === 'calories') scaled[key] = Math.round(scaled[key]);
+
+  if (multiplier !== 1) {
+    keysToScale.forEach((key) => {
+      if (typeof scaled[key] === 'number') {
+        // @ts-ignore: key is valid
+        scaled[key] = Math.round(scaled[key] * multiplier * 10) / 10;
+        if (key === 'calories') scaled[key] = Math.round(scaled[key]);
+      }
+    });
+  }
+
+  // CRITICAL: Fallback for 0-calorie items that have macros
+  if ((scaled.calories === 0 || !scaled.calories) &&
+    ((scaled.protein_g || 0) > 0 || (scaled.carbs_g || 0) > 0 || (scaled.fat_total_g || 0) > 0)) {
+    const calculatedCals = ((scaled.protein_g || 0) * 4) + ((scaled.carbs_g || 0) * 4) + ((scaled.fat_total_g || 0) * 9);
+    if (calculatedCals > 0) {
+      console.log(`[NutritionAgent] 0 calories detected with macros for ${scaled.food_name}. Calculating from macros: ${calculatedCals}`);
+      scaled.calories = Math.round(calculatedCals);
+      if (scaled.confidence === 'high') scaled.confidence = 'medium';
+      if (!scaled.error_sources) scaled.error_sources = [];
+      if (!scaled.error_sources.includes('calculated_from_macros')) {
+        scaled.error_sources.push('calculated_from_macros');
+      }
     }
-  });
+  }
+
   return scaled;
 }
 export class NutritionAgent {

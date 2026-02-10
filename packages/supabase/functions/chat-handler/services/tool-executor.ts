@@ -299,9 +299,9 @@ export class ToolExecutor {
       const result = results[0];
       console.log(`[ToolExecutor] Processing result:`, JSON.stringify(result));
 
-
-      // If the result is valid (has calories), use it
-      if (result && (result.calories > 0 || result.calories === 0)) {
+      // FIX: Only accept results with positive calories for real food.
+      // Previously, result.calories === 0 was accepted, letting 0-calorie results through.
+      if (result && result.calories > 0) {
         const filteredResult: any = {
           food_name: result.food_name || food,
           portion: portion || result.serving_size || 'standard serving',
@@ -440,7 +440,10 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. Even
     });
     try {
       const estimate = JSON.parse(response.choices[0].message.content || '{}');
-      if (calories_hint !== undefined) estimate.calories = calories_hint;
+      // FIX: Only override LLM calories when hint is a valid positive number.
+      // Previously, null from IntentAgent passed (null !== undefined === true)
+      // and overwrote valid LLM estimates with null → 0.
+      if (calories_hint != null && calories_hint > 0) estimate.calories = calories_hint;
 
       const filtered: any = {
         food_name: estimate.food_name || description,

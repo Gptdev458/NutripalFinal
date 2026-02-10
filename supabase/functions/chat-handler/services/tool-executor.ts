@@ -366,7 +366,10 @@ export class ToolExecutor {
       trackedNutrients = Object.keys(goals).map(key => this.normalizeNutrientName(key));
     }
 
-    if (calories !== undefined) {
+    // FIX: Only use estimateNutrition when user explicitly provided a positive calorie count.
+    // Previously, null from IntentAgent passed this check (null !== undefined === true)
+    // which bypassed NutritionAgent entirely and overwrote LLM estimates with null → 0.
+    if (calories != null && calories > 0) {
       return this.estimateNutrition(food, portion, calories, trackedNutrients);
     }
 
@@ -374,7 +377,8 @@ export class ToolExecutor {
     // This ensures we use the specialized agent logic instead of a generic LLM estimate here.
     const items = [food];
     const portions = [portion || '1 serving'];
-    const results: any[] = await this.nutritionAgent.execute({ items, portions }, this.agentContext);
+    // FIX: Pass trackedNutrients so NutritionAgent can estimate all user-tracked nutrients
+    const results: any[] = await this.nutritionAgent.execute({ items, portions, trackedNutrients }, this.agentContext);
 
     // Define base keys for filtering
     const baseKeys = ['calories', 'protein_g', 'carbs_g', 'fat_total_g'];
@@ -382,8 +386,9 @@ export class ToolExecutor {
     if (results && results.length > 0) {
       const result = results[0];
 
-      // If the result is valid (has calories), use it
-      if (result && (result.calories > 0 || result.calories === 0)) {
+      // FIX: Only accept results with positive calories for real food.
+      // Previously, result.calories === 0 was accepted, letting 0-calorie results through.
+      if (result && result.calories > 0) {
         const filteredResult: any = {
           food_name: result.food_name || food,
           portion: portion || result.serving_size || 'standard serving',
@@ -511,7 +516,10 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. Even
     });
     try {
       const estimate = JSON.parse(response.choices[0].message.content || '{}');
-      if (calories_hint !== undefined) estimate.calories = calories_hint;
+      // FIX: Only override LLM calories when hint is a valid positive number.
+      // Previously, null from IntentAgent passed (null !== undefined === true)
+      // and overwrote valid LLM estimates with null → 0.
+      if (calories_hint != null && calories_hint > 0) estimate.calories = calories_hint;
 
       const filtered: any = {
         food_name: estimate.food_name || description,
