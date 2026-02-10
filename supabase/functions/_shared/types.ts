@@ -12,6 +12,8 @@ export interface IntentExtraction {
   nutrient?: string
   value?: number
   unit?: string
+  ambiguity_level?: 'none' | 'low' | 'medium' | 'high'
+  ambiguity_reasons?: string[]
   clarification_needed?: string
   modification_details?: string
   modified_items?: { index?: number, item?: string, portion?: string }[]

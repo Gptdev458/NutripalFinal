@@ -64,6 +64,23 @@ class ThoughtLogger {
     steps: [] as string[]
   };
   try {
+    // =========================================================
+    // STEP 0: Context Merging (Ambiguity Handling)
+    // =========================================================
+    // Check if we are returning from a clarification
+    const pendingClarification = await sessionService.getClarificationContext(userId);
+    let augmentedMessage = message;
+
+    if (pendingClarification) {
+      console.log('[OrchestratorV3] Found pending clarification context. Merging...');
+      // Prepend context to the current message
+      augmentedMessage = `[Context: User said '${pendingClarification.original_message}'. System asked to clarify '${pendingClarification.ambiguity_reasons?.join(', ')}'] ${message}`;
+      console.log('[OrchestratorV3] Augmented Message:', augmentedMessage);
+
+      // Clear the context so we don't get stuck in a loop
+      await sessionService.clearClarificationContext(userId);
+    }
+
     const lowerMessage = message.trim().toLowerCase();
     // =========================================================
     // STEP 0: Static Fast-Paths (Synchronous)
@@ -227,6 +244,40 @@ class ThoughtLogger {
     }, context);
     agentsInvolved.push('intent');
     console.log('[OrchestratorV3] Intent:', intentResult.intent, `(Confidence: ${intentResult.confidence || 'N/A'})`);
+
+    // =========================================================
+    // STEP 2.5: Ambiguity Check
+    // =========================================================
+    if (intentResult.ambiguity_level === 'high') {
+      console.log('[OrchestratorV3] High ambiguity detected. Triggering clarification flow.');
+      reportStep('Asking for clarification...');
+
+      // Store context for next turn
+      await sessionService.setClarificationContext(userId, {
+        original_message: message, // Store original user message
+        ambiguity_reasons: intentResult.ambiguity_reasons,
+        partial_intent: intentResult
+      });
+
+      // Ask ChatAgent to generate a clarification question
+      const chatAgent = new ChatAgent();
+      const clarificationMessage = await chatAgent.execute({
+        userMessage: message,
+        intent: 'clarify_ambiguity',
+        data: {
+          ambiguity_reasons: intentResult.ambiguity_reasons,
+          partial_data: intentResult
+        },
+        history: chatHistory
+      }, context);
+
+      return {
+        status: 'success',
+        message: clarificationMessage,
+        response_type: 'clarification_request',
+        steps: thoughts.getSteps()
+      };
+    }
     // =========================================================
     // STEP 3: Intent Switchboard (The Hub)
     // =========================================================
@@ -654,7 +705,7 @@ class ThoughtLogger {
     reportStep('Thinking about how to help...');
     const reasoningAgent = new ReasoningAgent();
     const reasoningResult = await reasoningAgent.execute({
-      message: message.length > 2000 ? message.substring(0, 2000) + "... [Truncated]" : message,
+      message: augmentedMessage.length > 2000 ? augmentedMessage.substring(0, 2000) + "... [Truncated]" : augmentedMessage,
       intent: {
         type: intentResult.intent,
         confidence: intentResult.confidence,

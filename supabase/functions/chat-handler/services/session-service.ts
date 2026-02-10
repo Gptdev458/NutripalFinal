@@ -1,6 +1,6 @@
 export class SessionService {
   supabase;
-  constructor(supabase){
+  constructor(supabase) {
     this.supabase = supabase;
   }
   /**
@@ -139,5 +139,62 @@ export class SessionService {
     await this.updateBuffer(userId, {
       userCorrections: trimmedCorrections
     });
+  }
+
+  /**
+   * Sets the clarification context when ambiguity is high.
+   * This stores the original message and reasoning so we can replay it later.
+   */
+  async setClarificationContext(userId: string, context: any) {
+    console.log('[SessionService] Setting clarification context for user:', userId);
+    await this.updateBuffer(userId, {
+      pending_clarification: {
+        ...context,
+        timestamp: new Date().toISOString()
+      }
+    });
+  }
+
+  /**
+   * Retrieves the pending clarification context if it exists.
+   */
+  async getClarificationContext(userId: string) {
+    const { data: session } = await this.supabase
+      .from('chat_sessions')
+      .select('buffer')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    return session?.buffer?.pending_clarification || null;
+  }
+
+  /**
+   * Clears the pending clarification context.
+   */
+  async clearClarificationContext(userId: string) {
+    // We need to fetch current buffer first to avoid wiping other data
+    const { data: session } = await this.supabase
+      .from('chat_sessions')
+      .select('buffer')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const currentBuffer = session?.buffer || {};
+
+    // Remove the pending_clarification key
+    const newBuffer = { ...currentBuffer };
+    delete newBuffer.pending_clarification;
+
+    const { error } = await this.supabase
+      .from('chat_sessions')
+      .update({
+        buffer: newBuffer,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('[SessionService] Error clearing clarification context:', error);
+    }
   }
 }

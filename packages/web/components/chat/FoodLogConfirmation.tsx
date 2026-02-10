@@ -77,6 +77,15 @@ export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
                 unit: '', // unit is now included in valueStr
                 confidence: mainItem?.confidence_details?.[goal.nutrient] || mainItem?.confidence || 'high'
             };
+        })
+        .sort((a, b) => {
+            const priority = ['calories', 'protein_g', 'carbs_g', 'fat_total_g', 'water', 'fiber_g', 'sugar_g'];
+            const idxA = priority.indexOf(a.key);
+            const idxB = priority.indexOf(b.key);
+            if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+            if (idxA !== -1) return -1;
+            if (idxB !== -1) return 1;
+            return 0;
         });
 
     return (
@@ -141,17 +150,22 @@ export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
                                     <div key={idx} className="flex justify-between text-xs group relative">
                                         <span className={`font-bold flex items-center gap-1 text-gray-700`}>
                                             {n.name}
-                                            {n.confidence === 'low' && (
+                                            {/* Show dot if confidence is low/medium, BUT treat 0 values as high confidence if not flagged specifically */}
+                                            {n.confidence === 'low' && n.valueStr !== '0 g' && (
                                                 <span className="w-2 h-2 rounded-full bg-red-400" title="Low confidence estimate"></span>
                                             )}
-                                            {n.confidence === 'medium' && (
+                                            {n.confidence === 'medium' && n.valueStr !== '0 g' && (
                                                 <span className="w-2 h-2 rounded-full bg-yellow-400" title="Medium confidence estimate"></span>
                                             )}
-                                            {(n.confidence === 'high' || !n.confidence) && (
+                                            {/* Green dot for high confidence OR 0 values (which are usually safe assumptions like 0g fiber in chicken) */}
+                                            {((n.confidence === 'high' || !n.confidence) || n.valueStr === '0 g') && (
                                                 <span className="w-2 h-2 rounded-full bg-green-400" title="High confidence estimate"></span>
                                             )}
                                         </span>
-                                        <span className={`font-bold ${n.confidence === 'low' ? 'text-red-600' : n.confidence === 'medium' ? 'text-amber-600' : 'text-gray-900'}`}>
+                                        <span className={`font-bold ${(n.confidence === 'low' && n.valueStr !== '0 g') ? 'text-red-600' :
+                                            (n.confidence === 'medium' && n.valueStr !== '0 g') ? 'text-amber-600' :
+                                                'text-gray-900'
+                                            }`}>
                                             {n.valueStr}
                                         </span>
                                     </div>

@@ -556,7 +556,7 @@ export class NutritionAgent {
       } else {
         // 5. Final fallback: LLM Estimation
         console.log(`[NutritionAgent] No data from API/Cache for "${itemName}", trying LLM estimation`);
-        const estimation = await this.estimateNutritionWithLLM(itemName);
+        const estimation = await this.estimateNutritionWithLLM(itemName, userPortion);
         if (estimation) {
           const multiplier = await getScalingMultiplier(userPortion, estimation.serving_size, itemName, supabase);
           return scaleNutrition(estimation, multiplier);
@@ -574,8 +574,9 @@ export class NutritionAgent {
     return results.filter((r) => r !== null);
   }
 
-  async estimateNutritionWithLLM(itemName: string): Promise<EnrichedNutritionResult | null> {
+  async estimateNutritionWithLLM(itemName: string, userPortion?: string): Promise<EnrichedNutritionResult | null> {
     try {
+      console.log(`[NutritionAgent] Estimating for: "${itemName}" (Portion: ${userPortion || 'N/A'})`);
       const openai = createOpenAIClient();
       const response = await openai.chat.completions.create({
         model: 'gpt-4o',
@@ -584,11 +585,29 @@ export class NutritionAgent {
             role: 'system',
             content: `You are a nutrition expert. Estimate nutrition data for a given food item.
             
-            Rank your confidence for each nutrient and the overall estimate as 'low', 'medium', or 'high'.
-            - High: Standard food items (e.g., "1 apple", "1 egg") where data is well-known.
-            - Medium: Common dishes with some variance (e.g., "slice of pizza", "bowl of cereal").
-            - Low: Obscure items, vague descriptions, or complex restaurant dishes without details.
-
+            **CRITICAL RULE: HIERARCHY OF PRECISION**
+            You must evaluate the input based on the most precise detail provided. The Hierarchy is:
+            1. **Specific Weight** (e.g. "200g", "4oz") -> **HIGHEST PRECISION**.
+               - If present by User, 'serving_size' MUST be that weight (e.g. "200g").
+               - You MUST NOT return "vague_portion".
+               - Confidence should be 'high' or 'medium' for the quantity-dependent nutrients.
+               - **Conflict Resolution**: If the input says "1 breast, 200g", the Weight ("200g") overrides the Count ("1 breast").
+            2. **Specific Count** (e.g. "2 eggs") -> **MEDIUM PRECISION**.
+               - 'serving_size' MUST be the count.
+               - You MAY return "estimation_variance", but NOT "vague_portion".
+            3. **Generic/Vague** (e.g. "chicken") -> **LOW PRECISION**.
+               - 'serving_size' should be "1 standard serving".
+               - You MUST return "vague_portion".
+            
+            
+            **Context Handling**:
+            - The input might start with '[Context: ...]'. This is background.
+            - **Specifics Override Context**: If the user provides a Specific Weight or Count in the new message, it INVALIDATES any vagueness in the Context. Treat the Context as resolved history.
+            
+            **Corrections**:
+            - If the user says "actually" or corrects a number, the NEW number is the truth. Ignore the old one.
+               
+            **Output Format**:
             Return ONLY a JSON object matching this interface:
             {
               "food_name": string,
@@ -608,7 +627,7 @@ export class NutritionAgent {
               "vitamin_a_mcg": number,
               "vitamin_c_mg": number,
               "vitamin_d_mcg": number,
-              "serving_size": string (e.g. "100g", "1 cup"),
+              "serving_size": string (return the quantity you used, e.g. "200g"),
               "confidence": "low" | "medium" | "high",
               "confidence_details": {
                   "calories": "low" | "medium" | "high",
@@ -616,13 +635,18 @@ export class NutritionAgent {
                   "carbs_g": "low" | "medium" | "high",
                   "fat_total_g": "low" | "medium" | "high"
               },
-              "error_sources": string[] (e.g. ["vague_portion", "unknown_preparation", "guesswork"])
+              "error_sources": string[] (e.g. ["vague_portion", "unknown_preparation", "estimation_variance"])
             }
             If you are completely unsure, return null.`
           },
           {
             role: 'user',
-            content: `Estimate nutrition for: "${itemName}"`
+            content: `Estimate nutrition for: "${itemName}". ${userPortion ? `User portion: "${userPortion}".` : ''}
+          
+          CRITICAL INSTRUCTION: coverage of the quantity is MANDATORY.
+          - If I provided a specific weight (e.g. "200g"), you MUST set 'serving_size' to that exact string.
+          - You MUST calculate calories/macros for THAT specific amount.
+          - Do NOT return "1 standard serving" if a specific quantity is provided.`
           }
         ],
         response_format: {
@@ -631,6 +655,7 @@ export class NutritionAgent {
       });
 
       const content = response.choices[0].message.content;
+      console.log('[NutritionAgent] LLM Response:', content);
       if (!content) return null;
 
       const parsed = JSON.parse(content);
