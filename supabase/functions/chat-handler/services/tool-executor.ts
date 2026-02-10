@@ -164,10 +164,17 @@ export class ToolExecutor {
   /**
    * Delegate insight/analysis tasks to InsightAgent
    */
-  async askInsightAgent(args: { action: string, days?: number }) {
+  async askInsightAgent(args: {
+    action: 'audit' | 'patterns' | 'reflect' | 'classify_day' | 'summary',
+    query?: string,
+    filters?: any,
+    day_type?: string,
+    notes?: string
+  }) {
     console.log('[ToolExecutor] Delegating to InsightAgent:', args);
-    const { action, days } = args;
-    return this.insightAgent.execute({ action, days }, this.agentContext);
+    // Inject DB into context if not present (safeguard)
+    const context = { ...this.agentContext, db: this.db };
+    return this.insightAgent.execute(args, context);
   }
 
   // =============================================================
@@ -275,7 +282,8 @@ export class ToolExecutor {
   }
 
   async getWeeklySummary() {
-    const result: any = await this.insightAgent.execute(undefined, this.agentContext);
+    const context = { ...this.agentContext, db: this.db };
+    const result: any = await this.insightAgent.execute({ action: 'summary' }, context);
     const todayProgress = await this.getTodayProgress();
     return {
       daily_averages: result.patterns ? this.parseWeeklyAverages(result.patterns) : {},

@@ -1,328 +1,179 @@
 import { createAdminClient } from '../../_shared/supabase-client.ts';
 import { createOpenAIClient } from '../../_shared/openai-client.ts';
-import { getStartAndEndOfDay, getDateRange } from '../../_shared/utils.ts';
+import { DbService } from '../services/db-service.ts';
 
+/**
+ * InsightAgent
+ * Specialist for forensic analysis, audits, and pattern recognition.
+ * Upgraded to "Forensic Health Analyst" persona (Feature 5).
+ */
 export class InsightAgent {
   name = 'insight';
 
   async execute(input: any, context: any) {
     const action = input?.action || 'summary';
+    const query = input?.query || '';
+    const filters = input?.filters || {};
+
+    console.log(`[InsightAgent] Executing ${action} with query: "${query}"`, filters);
 
     switch (action) {
       case 'audit':
-        return this.executeAudit(context);
+        return this.executeAudit(context, query, filters);
       case 'patterns':
-        return this.executePatterns(context);
+        return this.executePatterns(context, query, filters);
+      case 'reflect':
+        return this.executeReflect(context, query, filters);
+      case 'classify_day':
+        return this.executeClassifyDay(context, input?.day_type, input?.notes);
       case 'summary':
       default:
-        return this.executeSummary(context);
+        return this.executeSummary(context, filters);
     }
   }
 
-  /**
-   * AUDIT: Detailed breakdown of today's logs, identify undercount sources
-   * Triggered by: "this seems off", "check my numbers", "audit my day"
-   */
-  private async executeAudit(context: any) {
-    const { userId, supabase: contextSupabase, timezone = 'UTC' } = context;
-    const supabase = contextSupabase || createAdminClient();
-    const now = new Date();
-    const todayRange = getStartAndEndOfDay(now, timezone);
+  private async executeAudit(context: any, query: string, filters: any) {
+    const userId = context.userId;
+    const { logs, classifications } = await context.db.getHistoricalData(userId, { days: 7 });
+    const dayClass = await context.db.getDayClassification(userId, new Date().toISOString().split('T')[0]);
+    const goals = await context.db.getUserGoals(userId);
 
-    // Fetch today's logs with full details
-    const { data: todayLogs } = await supabase
-      .from('food_log')
-      .select('*')
-      .eq('user_id', userId)
-      .gte('log_time', todayRange.start)
-      .lte('log_time', todayRange.end)
-      .order('log_time', { ascending: true });
+    // Streamline logs for prompt to prevent timeouts
+    const streamlinedLogs = logs.map((l: any) => ({
+      name: l.food_name,
+      cals: l.calories,
+      macros: `P:${Math.round(l.protein)} C:${Math.round(l.carbs)} F:${Math.round(l.fat)}`,
+      time: l.log_time
+    }));
 
-    const { data: goals } = await supabase
-      .from('user_goals')
-      .select('nutrient, target_value, goal_type')
-      .eq('user_id', userId);
-
-    // Categorize logs by type for audit
-    const categories = {
-      meals: [] as any[],
-      snacks: [] as any[],
-      drinks: [] as any[],
-      unknown: [] as any[]
-    };
-
-    const totals: Record<string, number> = { calories: 0, protein_g: 0, carbs_g: 0, fat_total_g: 0 };
-
-    if (todayLogs) {
-      todayLogs.forEach((log: any) => {
-        totals.calories += log.calories || 0;
-        totals.protein_g += log.protein_g || 0;
-        totals.carbs_g += log.carbs_g || 0;
-        totals.fat_total_g += log.fat_total_g || 0;
-
-        const name = (log.food_name || '').toLowerCase();
-        if (name.includes('snack') || name.includes('bar') || name.includes('chips')) {
-          categories.snacks.push(log);
-        } else if (name.includes('water') || name.includes('coffee') || name.includes('tea') || name.includes('juice') || name.includes('soda')) {
-          categories.drinks.push(log);
-        } else if (log.calories > 100) {
-          categories.meals.push(log);
-        } else {
-          categories.unknown.push(log);
-        }
-      });
-    }
-
-    // Identify likely undercount sources
-    const undercountSources: string[] = [];
-    const restaurantItems = todayLogs?.filter((l: any) =>
-      (l.food_name || '').toLowerCase().match(/restaurant|takeout|order|delivery/)
-    ) || [];
-    if (restaurantItems.length > 0) {
-      undercountSources.push(`Restaurant meals (${restaurantItems.length} items) - hidden oils/butter likely`);
-    }
-    if (categories.drinks.length === 0 && totals.calories > 500) {
-      undercountSources.push('No beverages logged - sweetened drinks often forgotten');
-    }
-    if (categories.snacks.length === 0 && todayLogs && todayLogs.length > 0) {
-      undercountSources.push('No snacks logged - common undercount source');
-    }
-
-    // Generate audit report with OpenAI
-    const openai = createOpenAIClient();
     const auditPrompt = `
-You are auditing a user's food log for today. Provide a brief, bullet-point audit.
+    You are a Forensic Nutrition Analyst. Audit the user's food log for today.
+    
+    Context:
+    - User Goals: ${JSON.stringify(goals)}
+    - Day Type: ${dayClass?.day_type || 'normal'}
+    - User Inquiry: "${query}"
 
-Today's Log Items (${todayLogs?.length || 0} entries):
-${todayLogs?.map((l: any) => `- ${l.food_name}: ${l.calories}cal, ${l.protein_g}g protein`).join('\n') || 'No logs'}
+    Task:
+    1. Identify Entropy: Find unlogged gaps (e.g., long periods without food).
+    2. Statistical Outliers: Flag entries that look unusual for those items.
+    3. Nutritional Discordance: Check if logged items match core goal profiles.
+    
+    Format: 3-5 punchy bullets. Focus on "Debugging the model, not correcting the user."
+    If day type is 'travel' or 'social', acknowledge that baseline shifts (e.g., higher sodium) are contextual.
+    `;
 
-Totals: ${JSON.stringify(totals)}
-Goals: ${JSON.stringify(goals)}
-
-Likely Undercount Sources Detected:
-${undercountSources.length > 0 ? undercountSources.map(s => `- ${s}`).join('\n') : '- None detected'}
-
-Provide 3-5 bullet points:
-1. What looks accurate
-2. What might be missing
-3. Specific items that could be undercounted
-Keep each bullet under 20 words.`;
-
+    const openai = createOpenAIClient();
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: auditPrompt }],
-      max_tokens: 300
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: auditPrompt },
+        { role: "user", content: `Recent Logs for Review: ${JSON.stringify(streamlinedLogs)}` }
+      ],
     });
 
     return {
       action: 'audit',
-      daily_totals: totals,
-      logs_count: todayLogs?.length || 0,
-      categories: {
-        meals: categories.meals.length,
-        snacks: categories.snacks.length,
-        drinks: categories.drinks.length
-      },
-      undercount_sources: undercountSources,
-      audit_report: response.choices[0].message.content?.split('\n').filter((s: string) => s.trim()) || [],
-      logs: todayLogs?.map((l: any) => ({
-        name: l.food_name,
-        calories: l.calories,
-        time: l.log_time
-      })) || []
+      audit_report: response.choices[0].message.content,
+      data_snapshot: { logs_count: logs.length, day_type: dayClass?.day_type }
     };
   }
 
-  /**
-   * PATTERNS: 7-day trend analysis, pattern detection
-   * Triggered by: "any patterns?", "what's my trend?"
-   */
-  private async executePatterns(context: any) {
-    const { userId, supabase: contextSupabase, timezone = 'UTC' } = context;
-    const supabase = contextSupabase || createAdminClient();
-    const now = new Date();
-    const weekRange = getDateRange(now, 7, timezone);
+  private async executePatterns(context: any, query: string, filters: any) {
+    const userId = context.userId;
+    const days = filters.days || 7;
 
-    const { data: weekLogs } = await supabase
-      .from('food_log')
-      .select('*')
-      .eq('user_id', userId)
-      .gte('log_time', weekRange.start)
-      .lte('log_time', weekRange.end);
+    // Use summarized data for patterns to keep prompt size small
+    const analysisData = await context.db.getAnalyticalData(userId, days);
 
-    const { data: goals } = await supabase
-      .from('user_goals')
-      .select('nutrient, target_value, goal_type')
-      .eq('user_id', userId);
-
-    // Group by day
-    const dailyData: Record<string, { calories: number, protein_g: number, logs: number }> = {};
-
-    if (weekLogs) {
-      weekLogs.forEach((log: any) => {
-        const day = new Date(log.log_time).toLocaleDateString('en-US', { weekday: 'short' });
-        if (!dailyData[day]) {
-          dailyData[day] = { calories: 0, protein_g: 0, logs: 0 };
-        }
-        dailyData[day].calories += log.calories || 0;
-        dailyData[day].protein_g += log.protein_g || 0;
-        dailyData[day].logs += 1;
-      });
-    }
-
-    // Calculate averages
-    const days = Object.keys(dailyData).length;
-    const avgCalories = days > 0 ? Math.round(Object.values(dailyData).reduce((sum, d) => sum + d.calories, 0) / days) : 0;
-    const avgProtein = days > 0 ? Math.round(Object.values(dailyData).reduce((sum, d) => sum + d.protein_g, 0) / days) : 0;
-
-    // Identify patterns
-    const patterns: string[] = [];
-    const calorieValues = Object.values(dailyData).map(d => d.calories);
-    const maxCal = Math.max(...calorieValues);
-    const minCal = Math.min(...calorieValues);
-
-    if (maxCal - minCal > 500) {
-      patterns.push(`High variability: ${minCal}cal to ${maxCal}cal (${maxCal - minCal} difference)`);
-    }
-
-    const weekendDays = Object.entries(dailyData).filter(([day]) => day === 'Sat' || day === 'Sun');
-    const weekdayDays = Object.entries(dailyData).filter(([day]) => day !== 'Sat' && day !== 'Sun');
-    const weekendAvg = weekendDays.length > 0 ? weekendDays.reduce((sum, [, d]) => sum + d.calories, 0) / weekendDays.length : 0;
-    const weekdayAvg = weekdayDays.length > 0 ? weekdayDays.reduce((sum, [, d]) => sum + d.calories, 0) / weekdayDays.length : 0;
-
-    if (weekendAvg > weekdayAvg * 1.2) {
-      patterns.push(`Weekend spike: ~${Math.round(weekendAvg - weekdayAvg)} more calories on weekends`);
-    }
-
-    // Generate pattern analysis with OpenAI
-    const openai = createOpenAIClient();
     const patternPrompt = `
-Analyze this 7-day eating data and provide 3-4 brief pattern observations.
+    You are a Data Analyst. Look for structural patterns and directional insights.
+    
+    Target: ${query || 'General patterns'}
+    History: ${days} days
+    Daily Totals (Summarized): ${JSON.stringify(analysisData.dailyTotals)}
+    Special Context: ${JSON.stringify(analysisData.classifications)}
 
-Daily Breakdown:
-${Object.entries(dailyData).map(([day, data]) => `${day}: ${data.calories}cal, ${data.protein_g}g protein (${data.logs} logs)`).join('\n')}
+    Distinction:
+    - Patterns: Recurring behaviors (3+ times). Suggest one "Structural Fix".
+    - Insights: Directional trends or observations (even if not a strict pattern).
+    
+    Format: 3-5 bullets. Non-preachy, context-aware.
+    `;
 
-Averages: ${avgCalories}cal, ${avgProtein}g protein per day
-Goals: ${JSON.stringify(goals)}
-
-Detected Patterns: ${patterns.join('; ') || 'None obvious'}
-
-Provide 3-4 bullet points about patterns, trends, or notable observations.
-Focus on actionable insights. Keep each bullet under 20 words.`;
-
+    const openai = createOpenAIClient();
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: patternPrompt }],
-      max_tokens: 250
+      model: "gpt-4o",
+      messages: [{ role: "system", content: patternPrompt }],
     });
 
     return {
       action: 'patterns',
-      days_analyzed: days,
-      daily_breakdown: dailyData,
-      averages: { calories: avgCalories, protein_g: avgProtein },
-      detected_patterns: patterns,
-      analysis: response.choices[0].message.content?.split('\n').filter((s: string) => s.trim()) || []
+      analysis: response.choices[0].message.content,
+      history_range: days
     };
   }
 
-  /**
-   * SUMMARY: Daily progress report (original behavior)
-   * Triggered by: "how am I doing?", "daily summary"
-   */
-  private async executeSummary(context: any) {
-    const { userId, supabase: contextSupabase, timezone = 'UTC' } = context;
-    const supabase = contextSupabase || createAdminClient();
-    const now = new Date();
-    const todayRange = getStartAndEndOfDay(now, timezone);
-    const weekRange = getDateRange(now, 7, timezone);
+  private async executeReflect(context: any, query: string, filters: any) {
+    const userId = context.userId;
+    // CRITICAL: Use summarized data to prevent timeouts
+    const analysisData = await context.db.getAnalyticalData(userId, 7);
 
-    const [{ data: todayLogs }, { data: weekLogs }, { data: goals }] = await Promise.all([
-      supabase.from('food_log').select('*').eq('user_id', userId).gte('log_time', todayRange.start).lte('log_time', todayRange.end),
-      supabase.from('food_log').select('*').eq('user_id', userId).gte('log_time', weekRange.start).lte('log_time', weekRange.end),
-      supabase.from('user_goals').select('nutrient, target_value, goal_type').eq('user_id', userId)
-    ]);
+    const reflectPrompt = `
+    Analyze how today compares to the previous 7 days.
+    
+    Summarized Data: ${JSON.stringify(analysisData)}
+    User Focus: "${query}"
 
-    const totals: Record<string, number> = {
-      calories: 0, protein_g: 0, carbs_g: 0, fat_total_g: 0, fiber_g: 0, sugar_g: 0, sodium_mg: 0
-    };
-
-    if (todayLogs) {
-      todayLogs.forEach((log: any) => {
-        Object.keys(totals).forEach((key) => {
-          if (typeof log[key] === 'number') {
-            totals[key] += log[key] || 0;
-          }
-        });
-      });
-    }
-
-    const weekTotals: Record<string, number> = {
-      calories: 0, protein_g: 0, carbs_g: 0, fat_total_g: 0, fiber_g: 0, sugar_g: 0, sodium_mg: 0
-    };
-
-    if (weekLogs) {
-      weekLogs.forEach((log: any) => {
-        Object.keys(weekTotals).forEach((key) => {
-          if (typeof log[key] === 'number') {
-            weekTotals[key] += log[key] || 0;
-          }
-        });
-      });
-    }
-
-    const weeklyAverages: Record<string, number> = {};
-    Object.keys(weekTotals).forEach((key) => {
-      weeklyAverages[key] = Math.round(weekTotals[key] / 7);
-    });
-
-    const progress: Record<string, number> = {};
-    if (goals) {
-      goals.forEach((goal: any) => {
-        const nutrient = goal.nutrient;
-        const target = goal.target_value;
-        if (totals[nutrient] !== undefined && target > 0) {
-          progress[nutrient] = Math.round(totals[nutrient] / target * 100);
-        }
-      });
-    }
+    Task: Identify the "One Big Lever" for tomorrow.
+    Contrast the metrics without being preachy. If today was a "social" or "travel" day, contextualize the variance.
+    `;
 
     const openai = createOpenAIClient();
-    const prompt = `
-User's Today's Totals: ${JSON.stringify(totals)}
-User's Last 7 Days Averages: ${JSON.stringify(weeklyAverages)}
-User's Goals: ${JSON.stringify(goals)}
-Today's Progress (%): ${JSON.stringify(progress)}
-User Timezone: ${timezone}
-
-Based on the above, provide 2 very short, actionable nutrition suggestions. 
-One should focus on today, and one should mention a trend from the last 7 days if relevant.
-Example: "You're low on protein today. Try a greek yogurt for your next snack. Your weekly average for fiber is also a bit low."
-Keep it under 40 words total.`;
-
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 150
+      model: "gpt-4o",
+      messages: [{ role: "system", content: reflectPrompt }],
     });
 
-    const suggestions = response.choices[0].message.content?.split('\n').filter((s: string) => s.trim()) || [];
+    return {
+      action: 'reflect',
+      reflection: response.choices[0].message.content
+    };
+  }
+
+  private async executeClassifyDay(context: any, dayType: string, notes: string) {
+    const today = new Date().toISOString().split('T')[0];
+    await context.db.setDayClassification(context.userId, today, dayType, notes);
+
+    return {
+      action: 'classify_day',
+      status: 'confirmed',
+      day_type: dayType
+    };
+  }
+
+  private async executeSummary(context: any, filters: any) {
+    const userId = context.userId;
+    const days = filters.days || 1;
+    const { logs } = await context.db.getHistoricalData(userId, { days });
+
+    const summaryPrompt = `
+    Provide a compressed summary. 
+    Hard Rules: Bullets only, 3-5 max, one idea per bullet. No moral tone.
+    Answer: What mattered, what didn't, one takeaway, one adjustment.
+    
+    Logs: ${JSON.stringify(logs.slice(-10))} 
+    `;
+
+    const openai = createOpenAIClient();
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [{ role: "system", content: summaryPrompt }],
+    });
 
     return {
       action: 'summary',
-      daily_totals: totals,
-      goal_progress: progress,
-      suggestions,
-      patterns: [`Weekly avg calories: ${weeklyAverages.calories}kcal`]
+      summary: response.choices[0].message.content
     };
   }
-}
-
-// Keep legacy export for now
-export async function generateInsights(userId: string) {
-  const agent = new InsightAgent();
-  return agent.execute(undefined, {
-    userId,
-    supabase: createAdminClient()
-  });
 }

@@ -120,6 +120,7 @@ export class RecipeAgent {
               calories_per_serving: r.nutrition_data?.calories
                 ? Math.round(r.nutrition_data.calories / (r.servings || 1))
                 : 0,
+              ingredients: r.recipe_ingredients?.map((i: any) => i.ingredient_name).join(', '),
               full_recipe: r // Store full recipe for later use
             }))
           };
@@ -159,6 +160,7 @@ export class RecipeAgent {
                 calories_per_serving: r.nutrition_data?.calories
                   ? Math.round(r.nutrition_data.calories / (r.servings || 1))
                   : 0,
+                ingredients: r.recipe_ingredients?.map((i: any) => i.ingredient_name).join(', '),
                 full_recipe: r
               }))
             };
@@ -226,7 +228,9 @@ export class RecipeAgent {
           fingerprint: parsed.fingerprint
         }, context);
 
-        const existingRecipe = findResult.type === 'found' ? findResult.recipe : null;
+        const existingRecipe = findResult.type === 'found'
+          ? findResult.recipe
+          : (findResult.type === 'multiple_found' ? findResult.recipes[0].full_recipe : null);
 
         if (existingRecipe) {
           const isExactMatch = existingRecipe.ingredient_fingerprint === parsed.fingerprint;

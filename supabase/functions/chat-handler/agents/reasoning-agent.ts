@@ -8,9 +8,11 @@
  * 4. Pass results to ChatAgent for final formatting
  * 
  * Flow: IntentAgent -> ReasoningAgent -> [Tools] -> ChatAgent
- */ import { createOpenAIClient } from '../../_shared/openai-client.ts';
+ */
+import { createOpenAIClient } from '../../_shared/openai-client.ts';
 import { toolDefinitions } from '../services/tools.ts';
 import { ToolExecutor } from '../services/tool-executor.ts';
+
 const SYSTEM_PROMPT = `You are NutriPal's ReasoningAgent, the brain of an intelligent nutrition assistant.
 
 **MISSION: Be the ultimate proactive nutrition coach.**
@@ -30,7 +32,7 @@ const SYSTEM_PROMPT = `You are NutriPal's ReasoningAgent, the brain of an intell
 **DELEGATION TOOLS (USE THESE FOR SPECIALIST TASKS):**
 - **ask_nutrition_agent**: For nutrition lookups, estimates, and comparisons. Pass query_type and items array.
 - **ask_recipe_agent**: For searching saved recipes, getting recipe details. Pass action and query/recipe_id.
-- **ask_insight_agent**: For pattern analysis, audits, summaries. Pass action (audit/patterns/summary).
+- **ask_insight_agent**: For pattern analysis, audits, reflection, and classification. Pass action (audit/patterns/reflect/classify_day/summary).
 
 **TOOLS OVERVIEW:**
 - Context: profile, goals, today_progress, weekly_summary, history
@@ -38,16 +40,19 @@ const SYSTEM_PROMPT = `You are NutriPal's ReasoningAgent, the brain of an intell
 - Recipes: **ask_recipe_agent** (find, details), parse_recipe_text, calculate_recipe_serving
 - Logging: propose_food_log, propose_recipe_log, apply_daily_workout_offset
 - Goals: update_user_goal, calculate_recommended_goals
-- Insights: **ask_insight_agent** (audit, patterns, summary), get_food_recommendations`;
+- Insights: **ask_insight_agent** (audit, patterns, reflect, classify_day, summary), get_food_recommendations. Use 'audit' if user complains about data integrity, 'reflect' to find the 'one big lever' for tomorrow. Always 'classify_day' if user mentions travel, illness, or social events.`;
 
 export class ReasoningAgent {
   name = 'reasoning';
   openai = createOpenAIClient();
-  async execute(input, context) {
+
+  async execute(input: any, context: any) {
     const { message, intent, chatHistory = [] } = input;
     const { userId, supabase, timezone, sessionId } = context;
+
     console.log('[ReasoningAgent] Starting with message:', message);
     console.log('[ReasoningAgent] Intent:', intent);
+
     // Initialize tool executor
     const toolExecutor = new ToolExecutor({
       userId,
@@ -55,75 +60,91 @@ export class ReasoningAgent {
       timezone,
       sessionId
     });
+
     // Build messages array
-    const messages = [
+    const messages: any[] = [
       {
         role: 'system',
         content: SYSTEM_PROMPT
       }
     ];
+
     // Add recent chat history for context (last 6 messages)
     const recentHistory = chatHistory.slice(-6);
     for (const msg of recentHistory) {
       messages.push({
-        role: msg.role,
+        role: msg.role as 'user' | 'assistant' | 'system',
         content: msg.content
       });
     }
+
     // Add intent context if available
     let userMessage = message;
     const pendingAction = context.session?.pending_action;
     let contextPrefix = '';
+
     if (intent) {
       contextPrefix += `[Intent: ${intent.type}${intent.entities?.length ? ` | Entities: ${intent.entities.join(', ')}` : ''}]`;
     }
+
     if (pendingAction) {
       contextPrefix += ` [Pending Action: ${pendingAction.type} | Data: ${JSON.stringify(pendingAction.data)}]`;
     }
+
     if (contextPrefix) {
       userMessage = `${contextPrefix}\n\nUser: ${message}`;
     }
+
     messages.push({
       role: 'user',
       content: userMessage
     });
+
     // Track tools used and data gathered
-    const toolsUsed = [];
-    const gatheredData = {};
+    const toolsUsed: string[] = [];
+    const gatheredData: Record<string, any> = {};
+
     // Call OpenAI with tools - UPGRADED TO GPT-4o
     let response = await this.openai.chat.completions.create({
       model: 'gpt-4o',
-      messages,
-      tools: toolDefinitions,
+      messages: messages as any,
+      tools: toolDefinitions as any,
       tool_choice: 'auto',
       max_tokens: 1000
     });
+
     let assistantMessage = response.choices[0].message;
+
     // Process tool calls iteratively
     let iterations = 0;
-    const maxIterations = 5 // Safety limit
-      ;
+    const maxIterations = 5; // Safety limit
+
     while (assistantMessage.tool_calls && iterations < maxIterations) {
       iterations++;
       console.log(`[ReasoningAgent] Processing ${assistantMessage.tool_calls.length} tool calls (iteration ${iterations})`);
+
       // Add assistant message with tool calls
-      messages.push(assistantMessage);
+      messages.push(assistantMessage as any);
+
       // Execute each tool call
       for (const toolCall of assistantMessage.tool_calls) {
         const toolName = toolCall.function.name;
         const args = JSON.parse(toolCall.function.arguments || '{}');
+
         console.log(`[ReasoningAgent] Calling tool: ${toolName}`, args);
         toolsUsed.push(toolName);
+
         try {
           const result = await toolExecutor.execute(toolName, args);
           gatheredData[toolName] = result;
           console.log(`[ReasoningAgent] Tool ${toolName} result:`, JSON.stringify(result).slice(0, 200));
+
           // Add tool result
           messages.push({
             role: 'tool',
             tool_call_id: toolCall.id,
             content: JSON.stringify(result)
-          });
+          } as any);
         } catch (error) {
           console.error(`[ReasoningAgent] Tool ${toolName} error:`, error);
           messages.push({
@@ -131,24 +152,28 @@ export class ReasoningAgent {
             tool_call_id: toolCall.id,
             content: JSON.stringify({
               error: true,
-              message: error.message
+              message: (error as Error).message
             })
-          });
+          } as any);
         }
       }
+
       // Get next response
       response = await this.openai.chat.completions.create({
         model: 'gpt-4o',
-        messages,
-        tools: toolDefinitions,
+        messages: messages as any,
+        tools: toolDefinitions as any,
         tool_choice: 'auto',
         max_tokens: 1000
       });
+
       assistantMessage = response.choices[0].message;
     }
+
     // Extract final response
     const finalResponse = assistantMessage.content || '';
     console.log('[ReasoningAgent] Final response:', finalResponse.slice(0, 200));
+
     // Check for any proposals in gathered data
     let proposal = undefined;
     for (const [_toolName, result] of Object.entries(gatheredData)) {
@@ -166,6 +191,7 @@ export class ReasoningAgent {
         break;
       }
     }
+
     return {
       reasoning: finalResponse,
       toolsUsed,

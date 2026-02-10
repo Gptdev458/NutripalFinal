@@ -95,76 +95,93 @@ export const FoodLogConfirmation: React.FC<FoodLogConfirmationProps> = ({
             </div>
 
             <div className="p-4 space-y-3">
-                {/* Header Row: Name | Calories */}
-                <div className="flex justify-between items-baseline">
-                    <h3 className="text-lg font-bold text-gray-900 truncate pr-2">{itemName}</h3>
-                    <div className="flex flex-col items-end">
-                        <span className="text-lg font-black text-blue-600 whitespace-nowrap">{Math.round(totalCalories)} kcal</span>
+                {/* Header Section */}
+                <div className="flex justify-between items-start gap-3">
+                    {/* Left Column: Name & Portion */}
+                    <div className="flex-1 min-w-0">
+                        <h3 className="text-lg font-bold text-gray-900 leading-tight mb-0.5 break-words">
+                            {itemName}
+                        </h3>
+                        <div className="text-sm text-gray-500 font-medium">
+                            {mainItem?.serving_size || '1 serving'}
+                        </div>
+                    </div>
+
+                    {/* Right Column: Calories & Badge */}
+                    <div className="flex flex-col items-end flex-shrink-0">
+                        <span className="text-xl font-black text-blue-600 whitespace-nowrap leading-none mb-1">
+                            {Math.round(totalCalories)} <span className="text-sm font-bold text-blue-500">kcal</span>
+                        </span>
+
                         {mainItem?.confidence && mainItem.confidence !== 'high' && (
                             <span
-                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${mainItem.confidence === 'low' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${mainItem.confidence === 'low' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                                    }`}
                                 title={(mainItem.error_sources?.length ?? 0) > 0 ? `Reasons: ${mainItem.error_sources!.map(formatConfidenceReason).join(', ')}` : undefined}
                             >
                                 {mainItem.confidence === 'low' ? 'Low Confidence' : 'Medium Confidence'}
                             </span>
                         )}
                         {(!mainItem?.confidence || mainItem.confidence === 'high') && (
-                            <span
-                                className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-green-100 text-green-700"
-                            >
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 whitespace-nowrap">
                                 High Confidence
                             </span>
                         )}
+
                         {(mainItem?.error_sources?.length ?? 0) > 0 && (
-                            <span
-                                className="text-xs text-gray-500 max-w-[220px] text-right italic leading-tight mt-1"
-                                title={mainItem.error_sources!.map(formatConfidenceReason).join(', ')}
-                            >
-                                {mainItem.error_sources!.map(formatConfidenceReason).join(', ')}
-                            </span>
+                            <div className="mt-1 flex flex-col items-end">
+                                {mainItem.error_sources!.map((reason, idx) => (
+                                    <span
+                                        key={idx}
+                                        className="text-[10px] text-gray-400 text-right leading-tight max-w-[140px] truncate"
+                                        title={formatConfidenceReason(reason)}
+                                    >
+                                        {formatConfidenceReason(reason)}
+                                    </span>
+                                ))}
+                            </div>
                         )}
                     </div>
                 </div>
 
-                {/* Sub-header: Portion details */}
-                <div className="text-sm text-gray-500 -mt-1">
-                    {mainItem?.serving_size || '1 serving'}
-                </div>
-
-                {/* Collapsible Details */}
+                {/* Tracking Details Toggle */}
                 {trackedDetails.length > 0 && (
-                    <div className="border-t border-gray-50 pt-2">
+                    <div className="pt-1">
                         <button
                             onClick={() => setShowDetails(!showDetails)}
-                            className="flex items-center text-xs font-bold text-gray-400 hover:text-blue-500 transition-colors"
+                            className="flex items-center text-xs font-bold text-gray-400 hover:text-blue-600 transition-colors py-1"
                         >
-                            <span>Details</span>
-                            <svg className={`ml-1 h-3 w-3 transform transition-transform ${showDetails ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <span>Nutrition Details</span>
+                            <svg
+                                className={`ml-1 h-3 w-3 transform transition-transform duration-200 ${showDetails ? 'rotate-180' : ''}`}
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                            >
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                             </svg>
                         </button>
 
                         {showDetails && (
-                            <div className="mt-2 space-y-1 bg-gray-50 p-2 rounded border border-gray-100 animate-in fade-in slide-in-from-top-1 duration-200">
+                            <div className="mt-1 space-y-1.5 bg-gray-50/80 p-3 rounded-md border border-gray-100 animate-in fade-in zoom-in-95 duration-200">
                                 {trackedDetails.map((n: any, idx) => (
-                                    <div key={idx} className="flex justify-between text-xs group relative">
-                                        <span className={`font-bold flex items-center gap-1 text-gray-700`}>
-                                            {n.name}
-                                            {/* Show dot if confidence is low/medium, BUT treat 0 values as high confidence if not flagged specifically */}
+                                    <div key={idx} className="flex justify-between items-center text-xs">
+                                        <div className="flex items-center gap-1.5">
+                                            {/* Confidence Dot Indicator */}
                                             {n.confidence === 'low' && n.valueStr !== '0 g' && (
-                                                <span className="w-2 h-2 rounded-full bg-red-400" title="Low confidence estimate"></span>
+                                                <div className="w-1.5 h-1.5 rounded-full bg-red-400 ring-4 ring-red-50" title="Low confidence" />
                                             )}
                                             {n.confidence === 'medium' && n.valueStr !== '0 g' && (
-                                                <span className="w-2 h-2 rounded-full bg-yellow-400" title="Medium confidence estimate"></span>
+                                                <div className="w-1.5 h-1.5 rounded-full bg-amber-400 ring-4 ring-amber-50" title="Medium confidence" />
                                             )}
-                                            {/* Green dot for high confidence OR 0 values (which are usually safe assumptions like 0g fiber in chicken) */}
                                             {((n.confidence === 'high' || !n.confidence) || n.valueStr === '0 g') && (
-                                                <span className="w-2 h-2 rounded-full bg-green-400" title="High confidence estimate"></span>
+                                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 ring-4 ring-emerald-50" title="High confidence" />
                                             )}
-                                        </span>
-                                        <span className={`font-bold ${(n.confidence === 'low' && n.valueStr !== '0 g') ? 'text-red-600' :
-                                            (n.confidence === 'medium' && n.valueStr !== '0 g') ? 'text-amber-600' :
-                                                'text-gray-900'
+                                            <span className="font-semibold text-gray-600">{n.name}</span>
+                                        </div>
+                                        <span className={`font-mono font-bold ${(n.confidence === 'low' && n.valueStr !== '0 g') ? 'text-red-600' :
+                                                (n.confidence === 'medium' && n.valueStr !== '0 g') ? 'text-amber-600' :
+                                                    'text-gray-800'
                                             }`}>
                                             {n.valueStr}
                                         </span>

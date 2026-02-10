@@ -31,6 +31,27 @@ class ThoughtLogger {
   }
 }
 /**
+ * Helper to decorate user message with explicit context for the AI
+ * This prevents the AI from "missing" details buried in JSON blobs
+ */
+function decorateWithContext(message: string, pendingAction: any): string {
+  if (!pendingAction) return message;
+
+  let decoration = '';
+  if (pendingAction.type === 'recipe_selection' && pendingAction.data?.recipes) {
+    decoration = `[CONTEXT: Choice pending for "${pendingAction.data.query}". Options:\n` +
+      pendingAction.data.recipes.map((r: any, i: number) =>
+        `${i + 1}. ${r.recipe_name}: ${r.ingredients || 'Details unknown'}`
+      ).join('\n') + ']';
+  } else if (pendingAction.type === 'recipe_save' && pendingAction.data?.flowState?.parsed) {
+    const p = pendingAction.data.flowState.parsed;
+    const ingredients = p.ingredients?.map((i: any) => `${i.quantity} ${i.unit} ${i.name}`).join(', ');
+    decoration = `[CONTEXT: Preparing to save recipe "${p.recipe_name}". Ingredients: ${ingredients || 'Unknown'}]`;
+  }
+
+  return decoration ? `${decoration}\n\n${message}` : message;
+}
+/**
  * Main Orchestrator V3 for the Chat Handler.
  * Uses hybrid multi-agent architecture:
  * - IntentAgent: Fast classification (gpt-4o-mini)
@@ -80,6 +101,9 @@ class ThoughtLogger {
       // Clear the context so we don't get stuck in a loop
       await sessionService.clearClarificationContext(userId);
     }
+
+    // Deep Context Decoration (e.g. for Recipes)
+    augmentedMessage = decorateWithContext(augmentedMessage, session.pending_action);
 
     const lowerMessage = message.trim().toLowerCase();
     // =========================================================
@@ -239,7 +263,7 @@ class ThoughtLogger {
     reportStep('Analyzing intent...');
     const intentAgent = new IntentAgent();
     const intentResult = await intentAgent.execute({
-      message: message.length > 2000 ? message.substring(0, 2000) + "... [Truncated]" : message,
+      message: augmentedMessage.length > 2000 ? augmentedMessage.substring(0, 2000) + "... [Truncated]" : augmentedMessage,
       history: chatHistory
     }, context);
     agentsInvolved.push('intent');
@@ -248,7 +272,9 @@ class ThoughtLogger {
     // =========================================================
     // STEP 2.5: Ambiguity Check
     // =========================================================
-    if (intentResult.ambiguity_level === 'high') {
+    // Only trigger clarification if we are NOT already in a clarification flow
+    // If we have pending clarification context (augmentedMessage !== message), we want ReasoningAgent to handle it
+    if (intentResult.ambiguity_level === 'high' && augmentedMessage === message) {
       console.log('[OrchestratorV3] High ambiguity detected. Triggering clarification flow.');
       reportStep('Asking for clarification...');
 
@@ -334,11 +360,20 @@ class ThoughtLogger {
         };
       case 'audit':
       case 'patterns':
+      case 'reflect':
+      case 'classify_day':
       case 'summary':
         console.log(`[OrchestratorV3] Branch: ${intent} (Direct Route to InsightAgent)`);
         reportStep('Analyzing your data...');
         const insightAgent = new InsightAgent();
-        const insightResult = await insightAgent.execute({ action: intent }, context);
+        const insightResult = await insightAgent.execute({
+          action: intent,
+          query: intentResult.query_focus || message,
+          filters: intentResult.flexible_range || {},
+          day_type: intentResult.day_type,
+          notes: intentResult.notes
+        }, { ...context, db });
+
         agentsInvolved.push('insight');
         // Format with ChatAgent
         const chatAgentInsight = new ChatAgent();
@@ -359,6 +394,12 @@ class ThoughtLogger {
         };
       case 'log_food':
       case 'query_nutrition':
+        // Clear any stale pending actions from previous turns (Zombie Chicken Fix)
+        // BUT preserve context if we are just querying details (e.g. "What ingredients?")
+        if (intent === 'log_food') {
+          await sessionService.clearPendingAction(userId);
+        }
+
         // Simple logging or query can often bypass reasoning if entities are clear
         // But for now, we'll let reasoning handle it to maintain the tool orchestration
         // UNLESS it's a very simple one-item log.
@@ -389,7 +430,8 @@ class ThoughtLogger {
                 id: r.id,
                 recipe_name: r.recipe_name,
                 servings: r.servings,
-                calories_per_serving: r.calories_per_serving
+                calories_per_serving: r.calories_per_serving,
+                ingredients: r.ingredients // Explicitly passed
               })),
               query: food
             };
@@ -497,6 +539,9 @@ class ThoughtLogger {
         // Instead, let them reach the ReasoningAgent fallback at STEP 4.
         break;
       case 'log_recipe':
+        // Clear any stale pending actions from previous turns
+        await sessionService.clearPendingAction(userId);
+
         // Shortcut: If intent is log_recipe and message is large or context exists
         if (message.length > 500 || intentResult.recipe_text) {
           console.log('[OrchestratorV3] Branch: log_recipe_shortcut (parse)');
@@ -579,7 +624,8 @@ class ThoughtLogger {
                 id: r.id,
                 recipe_name: r.recipe_name,
                 servings: r.servings,
-                calories_per_serving: r.calories_per_serving
+                calories_per_serving: r.calories_per_serving,
+                ingredients: r.ingredients // Explicitly passed
               })),
               query: query
             };
@@ -651,6 +697,9 @@ class ThoughtLogger {
         break;
       case 'save_recipe':
         console.log('[OrchestratorV3] Branch: save_recipe');
+        // Clear any stale pending actions from previous turns
+        await sessionService.clearPendingAction(userId);
+
         reportStep('Parsing recipe...');
         const saveRecipeText = intentResult.recipe_text || message;
         const saveParseResult = await toolExecutor.execute('parse_recipe_text', {

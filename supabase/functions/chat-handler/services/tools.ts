@@ -145,18 +145,35 @@
     type: "function",
     function: {
       name: "ask_insight_agent",
-      description: "Delegate insight/analysis tasks to the specialist InsightAgent. Use for audits, patterns, and summaries.",
+      description: "Delegate insight/analysis tasks to the specialist InsightAgent. Use for forensic audits, pattern recognition, comparisons, and reflection.",
       parameters: {
         type: "object",
         properties: {
           action: {
             type: "string",
-            enum: ["audit", "patterns", "summary"],
-            description: "Type of analysis: 'audit' for number verification, 'patterns' for trend analysis, 'summary' for daily report"
+            enum: ["audit", "patterns", "reflect", "classify_day", "summary"],
+            description: "Type of analysis: 'audit' (number verification/forensics), 'patterns' (trend analysis), 'reflect' (today vs baseline), 'classify_day' (setting travel/sick/social context), 'summary' (stat report)"
           },
-          days: {
-            type: "number",
-            description: "Optional: number of days to analyze (default varies by action)"
+          query: {
+            type: "string",
+            description: "The user's specific query or focus (e.g., 'sodium levels', 'why is protein low?')"
+          },
+          filters: {
+            type: "object",
+            properties: {
+              days: { type: "number" },
+              type: { type: "string", enum: ["travel", "sick", "social", "workout", "normal"] }
+            },
+            description: "Optional filters for analysis"
+          },
+          day_type: {
+            type: "string",
+            enum: ["travel", "sick", "social", "workout", "normal"],
+            description: "For 'classify_day' action: the type of day"
+          },
+          notes: {
+            type: "string",
+            description: "Optional notes for classification"
           }
         },
         required: ["action"]
