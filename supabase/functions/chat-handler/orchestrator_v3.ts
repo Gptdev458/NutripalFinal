@@ -898,7 +898,7 @@ function decorateWithContext(message: string, pendingAction: any): string {
       });
     }
     response.steps = thoughts.getSteps();
-    persistence.logExecution(userId, sessionId, 'reasoning', agentsInvolved, startTime, response, message, timezone);
+    persistence.logExecution(userId, sessionId, 'reasoning', agentsInvolved, startTime, response, message, undefined);
     return response;
   } catch (error) {
     console.error('[OrchestratorV3] Fatal Error:', error);

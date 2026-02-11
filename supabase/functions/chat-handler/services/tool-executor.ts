@@ -216,15 +216,25 @@ export class ToolExecutor {
     const updateData: any = {};
     if (dietary_preferences) updateData.dietary_preferences = dietary_preferences;
     if (health_goal) updateData.health_goal = health_goal;
-    if (allergies) updateData.allergies = allergies;
+    // allergies handled via health constraints table
     if (notes) updateData.notes = notes;
 
-    await this.db.updateUserProfile(this.context.userId, updateData);
+    if (Object.keys(updateData).length > 0) {
+      await this.db.updateUserProfile(this.context.userId, updateData);
+    }
+
+    if (allergies && Array.isArray(allergies)) {
+      const constraints = allergies.map((a: string) => ({
+        constraint: a,
+        severity: 'high'
+      }));
+      await this.db.replaceHealthConstraints(this.context.userId, 'allergy', constraints);
+    }
 
     return {
       status: 'success',
       message: '✅ Profile updated with your health considerations! 🩺',
-      data: updateData
+      data: { ...updateData, allergies }
     };
   }
 
@@ -853,7 +863,7 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. Even
 
   async searchMemory(args: any) {
     const { query } = args;
-    const categories = ['food', 'health', 'habit', 'preferences'];
+    const categories = ['food', 'health', 'habits', 'preferences'];
     const memories = await this.db.getMemories(this.context.userId, categories);
 
     if (!memories || memories.length === 0) {

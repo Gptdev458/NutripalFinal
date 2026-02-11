@@ -21,6 +21,9 @@ You are a nutrition assistant's intent classifier. Your job is to analyze user m
 - store_memory: User explicitly states a preference, habit, or health condition to be remembered (e.g., "I'm vegan", "I always eat 2 eggs", "I have a nut allergy").
 - off_topic: Unrelated.
 
+TYPO HANDLING:
+You must be robust to common typos and misspellings (e.g., "habbits" -> "habits", "protien" -> "protein", "calores" -> "calories"). If a message clearly maps to an intent despite a typo, classify it accordingly.
+
 CRITICAL: If the user message describes a NEW food item (e.g., "log chicken"), it MUST be classified as "log_food", even if there is an active confirmation modal for a different item. Do NOT classify a message as "confirm" if it contains new food names that were not part of the previous turn.
 
 CONTEXT HANDLING:
@@ -63,7 +66,7 @@ You MUST return a JSON object:
   "profile_updates": { "dietary_preferences": string[], "health_goal": string, "allergies": string[], "notes": string },
   "modification_details": string,
   "modified_items": [{ "item": "string", "portion": "string" }],
-  "memory_content": { "category": "food" | "health" | "habit" | "preferences", "fact": "string" }
+  "memory_content": { "category": "food" | "health" | "habits" | "preferences", "fact": "string" }
 }
 `;
 

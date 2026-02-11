@@ -607,7 +607,7 @@
         properties: {
           category: {
             type: "string",
-            enum: ["food", "health", "habit", "preferences"],
+            enum: ["food", "health", "habits", "preferences"],
             description: "Category of the memory"
           },
           fact: {

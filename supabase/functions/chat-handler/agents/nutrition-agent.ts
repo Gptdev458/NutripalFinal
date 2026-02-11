@@ -472,36 +472,82 @@ export class NutritionAgent {
     return flags;
   }
 
-  private applyMemories(foodName: string, currentPortion: string, memories: any[]): { portion: string, memory?: any } {
+  private async applyMemories(foodName: string, currentPortion: string, memories: any[]): Promise<{ portion: string, refinedFoodName?: string, memory?: any }> {
     // Only apply memory if portion is vague or default
     const isVague = !currentPortion ||
       currentPortion === '1 serving' ||
       currentPortion === 'serving' ||
-      ['a', 'an', 'one'].includes(currentPortion.toLowerCase().split(' ')[0]) && !currentPortion.match(/\d/);
+      ['a', 'an', 'one', 'some'].includes(currentPortion.toLowerCase().split(' ')[0]) && !currentPortion.match(/\d/);
 
     if (!isVague) return { portion: currentPortion };
 
-    const normalizedFood = foodName.toLowerCase();
+    const normalizedFood = normalizeFoodName(foodName);
+    const foodWords = new Set(normalizedFood.split(' '));
 
-    // Look for relevant memories
-    // We prioritize "specific" matches over "general" ones logic could be improved
+    // 1. Fast path: Heuristic matching
     for (const memory of memories) {
       if (memory.category === 'food' || memory.category === 'preferences') {
         const fact = memory.fact.toLowerCase();
-        // Heuristic: Check if memory mentions the food name
-        if (fact.includes(normalizedFood) || normalizedFood.includes(fact.split(' ')[0] || '')) {
-          // Extract portion from fact (assuming fact is like "I eat 200g of chicken" or just "200g chicken")
-          // For now, we trust the fact IS the preference. 
-          // Better: "I usually have 200g chicken" -> extract "200g".
-          // This is hard with regex alone. 
-          // Let's assume the ReasoningAgent stored the memory as "200g" or "always 200g".
-          // If the memory contains a number and a unit, we try to use it.
-          const match = fact.match(/(\d+(?:\.\d+)?\s*(?:g|oz|ml|cup|tbsp|tsp|slice|piece))/i);
-          if (match) {
-            console.log(`[NutritionAgent] Applying memory for ${foodName}: ${match[1]}`);
-            return { portion: match[1], memory };
+        const normalizedFact = normalizeFoodName(fact);
+        const factWords = normalizedFact.split(' ');
+
+        // Check if any significant word from food name matches fact word (handles typos better if normalized name matches)
+        const hasWordMatch = factWords.some(word => foodWords.has(word));
+
+        if (hasWordMatch || fact.includes(normalizedFood) || normalizedFood.includes(fact)) {
+          const matchPortion = fact.match(/(\d+(?:\.\d+)?\s*(?:g|oz|ml|cup|tbsp|tsp|slice|piece|large|medium|small))/i);
+          if (matchPortion) {
+            console.log(`[NutritionAgent] Fast-path memory match for ${foodName}: ${matchPortion[1]}`);
+            return { portion: matchPortion[1], memory };
           }
         }
+      }
+    }
+
+    // 2. Slow path: LLM for complex matching (typos, detailed modifications)
+    // Only do this if there are relevant-looking memories to save tokens
+    const relevantMemories = memories.filter(m =>
+      (m.category === 'food' || m.category === 'preferences') &&
+      (normalizeFoodName(m.fact).split(' ').some(w => foodWords.has(w)) ||
+        m.fact.toLowerCase().includes(foodName.toLowerCase().slice(0, 4)) ||
+        foodName.toLowerCase().includes(m.fact.toLowerCase().slice(0, 4)))
+    );
+
+    if (relevantMemories.length > 0) {
+      console.log(`[NutritionAgent] Calling LLM for memory matching: "${foodName}" with ${relevantMemories.length} memories`);
+      const openai = createOpenAIClient();
+      try {
+        const response = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content: `You are a nutrition assistant. A user wants to log "${foodName}" (portion: "${currentPortion}"). 
+              Determine if any of these memories apply.
+              
+              Memories:
+              ${relevantMemories.map((m, i) => `${i}. [${m.category}] ${m.fact}`).join('\n')}
+              
+              Return JSON: { "applies": boolean, "memory_index": number, "refined_portion": string, "refined_food_name": string }
+              If a memory describes HOW they eat it (e.g. "with sugar"), include that in 'refined_food_name'.
+              Handle typos (e.g. "coffe" should match "coffee").`
+            }
+          ],
+          response_format: { type: "json_object" }
+        });
+
+        const result = JSON.parse(response.choices[0].message.content || '{}');
+        if (result.applies && result.memory_index !== undefined && result.memory_index < relevantMemories.length) {
+          const memory = relevantMemories[result.memory_index];
+          console.log(`[NutritionAgent] LLM memory match: "${memory.fact}" -> portion: ${result.refined_portion}, name: ${result.refined_food_name}`);
+          return {
+            portion: result.refined_portion || currentPortion,
+            refinedFoodName: result.refined_food_name,
+            memory
+          };
+        }
+      } catch (err) {
+        console.error('[NutritionAgent] Error in LLM memory matching:', err);
       }
     }
 
@@ -514,16 +560,20 @@ export class NutritionAgent {
     const memories = context.memories || [];
     const healthConstraints = context.healthConstraints || [];
 
-    const results = await Promise.all(items.map(async (itemName: string, i: number) => {
+    const results = await Promise.all(items.map(async (rawItemName: string, i: number) => {
+      let itemName = rawItemName;
       let userPortion = portions[i] || '1 serving';
       let appliedMemory = null;
 
-      // 0. Feature 6: Apply Memories
+      // 0. Feature 6: Apply Memories (Smarter matching for typos/ingredients)
       if (memories.length > 0) {
-        const memoryResult = this.applyMemories(itemName, userPortion, memories);
+        const memoryResult = await this.applyMemories(itemName, userPortion, memories);
         if (memoryResult.memory) {
           userPortion = memoryResult.portion;
           appliedMemory = memoryResult.memory;
+          if (memoryResult.refinedFoodName) {
+            itemName = memoryResult.refinedFoodName;
+          }
           // Mark memory as used (async, fire and forget)
           if (context.db) {
             context.db.markMemoryUsed(appliedMemory.id).catch((e: any) => console.error('Failed to mark memory used', e));
@@ -662,7 +712,7 @@ export class NutritionAgent {
       } else {
         // 5. Final fallback: LLM Estimation
         console.log(`[NutritionAgent] No data from API/Cache for "${itemName}", trying LLM estimation`);
-        const estimation = await this.estimateNutritionWithLLM(itemName, userPortion, healthConstraints);
+        const estimation = await this.estimateNutritionWithLLM(itemName, userPortion, healthConstraints, memories);
 
         if (estimation) {
           const multiplier = await getScalingMultiplier(userPortion, estimation.serving_size, itemName, supabase);
@@ -696,14 +746,21 @@ export class NutritionAgent {
     return results.filter((r) => r !== null);
   }
 
-  async estimateNutritionWithLLM(itemName: string, userPortion?: string, healthConstraints?: any[]): Promise<EnrichedNutritionResult | null> {
+  async estimateNutritionWithLLM(itemName: string, userPortion?: string, healthConstraints?: any[], memories?: any[]): Promise<EnrichedNutritionResult | null> {
     try {
       console.log(`[NutritionAgent] Estimating for: "${itemName}" (Portion: ${userPortion || 'N/A'})`);
       const openai = createOpenAIClient();
 
-      let healthPrompt = '';
+      let contextualPrompt = '';
       if (healthConstraints && healthConstraints.length > 0) {
-        healthPrompt = `\n**HEALTH CHECK**: The user has these constraints: ${healthConstraints.map((c: any) => `${c.category} (${c.severity})`).join(', ')}. If this food likely violates them, add a 'health_flags' string array to the response using "Contains [Category]" or "May contain [Category]".`;
+        contextualPrompt += `\n**HEALTH CHECK**: The user has these constraints: ${healthConstraints.map((c: any) => `${c.category} (${c.severity})`).join(', ')}. If this food likely violates them, add a 'health_flags' string array to the response using "Contains [Category]" or "May contain [Category]".`;
+      }
+
+      if (memories && memories.length > 0) {
+        const foodMemories = memories.filter(m => m.category === 'food' || m.category === 'preferences');
+        if (foodMemories.length > 0) {
+          contextualPrompt += `\n**USER PREFERENCES/HABITS**: Incorporate these habits if relevant to the food being estimated: ${foodMemories.map(m => m.fact).join('; ')}. If a memory specifies a preparation or added ingredient (e.g. "with sugar"), include that in your estimation.`;
+        }
       }
 
       const response = await openai.chat.completions.create({
@@ -735,7 +792,7 @@ export class NutritionAgent {
             **Corrections**:
             - If the user says "actually" or corrects a number, the NEW number is the truth. Ignore the old one.
 
-            ${healthPrompt}
+            ${contextualPrompt}
                
             **Output Format**:
             Return ONLY a JSON object matching this interface:

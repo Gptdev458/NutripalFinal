@@ -304,7 +304,6 @@ export class DbService {
         category,
         fact,
         source_message: source,
-        confidence: 1.0,
         active: true
       });
 
@@ -313,6 +312,42 @@ export class DbService {
       throw error;
     }
   }
+
+  /**
+   * Replaces all constraints of a specific category for a user
+   */
+  async replaceHealthConstraints(userId: string, category: string, constraints: { constraint: string, severity: string }[]) {
+    // 1. Delete existing constraints for this category
+    const { error: deleteError } = await this.supabase
+      .from('user_health_constraints')
+      .delete()
+      .eq('user_id', userId)
+      .eq('category', category);
+
+    if (deleteError) {
+      console.error('[DbService] Error deleting old health constraints:', deleteError);
+      throw deleteError;
+    }
+
+    if (constraints.length === 0) return;
+
+    // 2. Insert new constraints
+    const { error: insertError } = await this.supabase
+      .from('user_health_constraints')
+      .insert(constraints.map(c => ({
+        user_id: userId,
+        category: category,
+        constraint: c.constraint,
+        severity: c.severity,
+        active: true
+      })));
+
+    if (insertError) {
+      console.error('[DbService] Error inserting new health constraints:', insertError);
+      throw insertError;
+    }
+  }
+
 
   /**
    * Marks a memory as used (updates timestamp)
