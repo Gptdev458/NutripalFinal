@@ -32,7 +32,9 @@ export class ToolExecutor {
       userId: context.userId,
       supabase: context.supabase,
       timezone: context.timezone || 'UTC',
-      sessionId: context.sessionId
+      sessionId: context.sessionId,
+      healthConstraints: context.healthConstraints,
+      memories: context.memories
     };
   }
 
@@ -87,6 +89,8 @@ export class ToolExecutor {
           return this.proposeRecipeLog(args);
         case 'confirm_pending_log':
           return this.confirmPendingLog(args.proposal_id);
+        case 'update_user_profile':
+          return this.updateUserProfile(args);
         // Goal Tools
         case 'update_user_goal':
           return this.updateUserGoal(args.nutrient, args.target_value, args.unit, {
@@ -94,6 +98,8 @@ export class ToolExecutor {
             green_min: args.green_min,
             red_min: args.red_min
           });
+        case 'bulk_update_user_goals':
+          return this.bulkUpdateUserGoals(args.goals);
         case 'apply_daily_workout_offset':
           return this.applyDailyWorkoutOffset(args.adjustment_value, args.nutrient, args.notes);
         case 'calculate_recommended_goals':
@@ -101,6 +107,11 @@ export class ToolExecutor {
         // Insight Support Tools
         case 'get_food_recommendations':
           return this.getFoodRecommendations(args.focus, args.preferences);
+        // Memory Tools
+        case 'store_memory':
+          return this.storeMemory(args);
+        case 'search_memory':
+          return this.searchMemory(args);
         default:
           throw new Error(`Unknown tool: ${toolName}`);
       }
@@ -197,6 +208,23 @@ export class ToolExecutor {
       goal: data.health_goal || data.goal,
       dietary_preferences: data.dietary_preferences,
       allergies: data.allergies
+    };
+  }
+
+  async updateUserProfile(data: any) {
+    const { dietary_preferences, health_goal, allergies, notes } = data;
+    const updateData: any = {};
+    if (dietary_preferences) updateData.dietary_preferences = dietary_preferences;
+    if (health_goal) updateData.health_goal = health_goal;
+    if (allergies) updateData.allergies = allergies;
+    if (notes) updateData.notes = notes;
+
+    await this.db.updateUserProfile(this.context.userId, updateData);
+
+    return {
+      status: 'success',
+      message: '✅ Profile updated with your health considerations! 🩺',
+      data: updateData
     };
   }
 
@@ -405,7 +433,8 @@ export class ToolExecutor {
           confidence: result.confidence || 'medium',
           confidence_details: result.confidence_details || {},
           error_sources: result.error_sources || [],
-          health_flags: result.health_flags || []
+          health_flags: result.health_flags || [],
+          applied_memory: result.applied_memory || null
         };
 
         // Map nutrient names correctly from agent result to our schema
@@ -745,6 +774,8 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. Even
     filteredData.confidence = data.confidence || 'medium';
     filteredData.confidence_details = data.confidence_details || {};
     filteredData.error_sources = data.error_sources || [];
+    filteredData.health_flags = data.health_flags || [];
+    filteredData.applied_memory = data.applied_memory || null;
 
     return {
       proposal_type: 'food_log',
@@ -800,6 +831,44 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. Even
       status: 'pending_frontend_confirmation',
       proposal_id: proposalId,
       message: 'Awaiting user confirmation via UI'
+    };
+  }
+
+  // =============================================================
+  // MEMORY TOOLS (NEW)
+  // =============================================================
+
+  async storeMemory(args: any) {
+    const { category, fact } = args;
+    if (!category || !fact) {
+      return { error: true, message: 'Category and fact are required' };
+    }
+    await this.db.saveMemory(this.context.userId, category, fact, 'Chat Interaction');
+    return {
+      status: 'success',
+      message: 'Memory stored successfully.',
+      data: { category, fact }
+    };
+  }
+
+  async searchMemory(args: any) {
+    const { query } = args;
+    const categories = ['food', 'health', 'habit', 'preferences'];
+    const memories = await this.db.getMemories(this.context.userId, categories);
+
+    if (!memories || memories.length === 0) {
+      return { matches: [] };
+    }
+
+    const lowerQuery = query.toLowerCase();
+    const matches = memories.filter((m: any) =>
+      m.fact.toLowerCase().includes(lowerQuery) ||
+      m.category.toLowerCase().includes(lowerQuery)
+    );
+
+    return {
+      query,
+      matches: matches.slice(0, 5)
     };
   }
 
@@ -865,6 +934,37 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. Even
         ...cleanedThresholds
       },
       message: `Ready to update ${normalizedNutrient} goal to ${targetValue}${unit || defaultUnit}${Object.keys(cleanedThresholds).length ? ' with custom thresholds' : ''}. Please confirm.`
+    };
+  }
+
+  async bulkUpdateUserGoals(goals: any[]) {
+    const proposalId = `bulk_goal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    const processedGoals = goals.map(g => {
+      const normalizedNutrient = this.normalizeNutrientName(g.nutrient);
+      const defaultUnit = normalizedNutrient === 'calories' ? 'kcal' : normalizedNutrient === 'sodium_mg' ? 'mg' : 'g';
+
+      const thresholds: any = {};
+      if (g.yellow_min !== undefined) thresholds.yellow_min = g.yellow_min;
+      if (g.green_min !== undefined) thresholds.green_min = g.green_min;
+      if (g.red_min !== undefined) thresholds.red_min = g.red_min;
+
+      return {
+        nutrient: normalizedNutrient,
+        value: g.target_value,
+        unit: g.unit || defaultUnit,
+        ...thresholds
+      };
+    });
+
+    return {
+      proposal_type: 'bulk_goal_update',
+      proposal_id: proposalId,
+      pending: true,
+      data: {
+        goals: processedGoals
+      },
+      message: `Ready to update ${processedGoals.length} nutrition goals. Please confirm.`
     };
   }
 

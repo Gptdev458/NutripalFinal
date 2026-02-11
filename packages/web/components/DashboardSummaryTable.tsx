@@ -165,16 +165,23 @@ const SummaryTableRow: React.FC<SummaryTableRowProps> = ({ nutrient, current, ta
     const fraction = (finalTarget && finalTarget > 0) ? (current / finalTarget) : 0;
     const barWidth = Math.min(percentage, 100);
 
+    // Delta: Target - Consumed. If consumed > target, delta is negative (e.g. 2000 - 2100 = -100)
     const delta = finalTarget !== undefined ? finalTarget - current : null;
     const displayDelta = delta !== null ? formatNutrientValue(nutrient, Math.abs(delta)) : '-';
-    const deltaColor = delta !== null ? (delta < 0 ? (isLimit ? 'text-red-500' : 'text-emerald-500') : 'text-gray-400') : 'text-gray-400';
+
+    // For limits, being "over" (negative delta) is bad (red). For goals, it's usually good (emerald).
+    const deltaColor = delta !== null
+        ? (delta < 0
+            ? (isLimit ? 'text-red-500 font-bold' : 'text-emerald-600 font-bold')
+            : 'text-gray-400')
+        : 'text-gray-400';
 
     // Color coding logic
-    // For goals: Green ≥75%, Yellow 50-75%, Red <50%
-    // For limits: Green <75%, Yellow 75-90%, Red >90%
-    const yellowMin = thresholds.yellow_min ?? 0.50;  // Below this = red for goals
-    const greenMin = thresholds.green_min ?? 0.75;    // Above this = green for goals, below = green for limits
-    const redMin = thresholds.red_min ?? 0.90;        // Above this = red for limits
+    // For goals: Green ≥75%, Yellow 50-75%, Red <50% (defaults)
+    // For limits: Green <75%, Yellow 75-90%, Red >90% (defaults)
+    const yellowMin = thresholds.yellow_min ?? (isLimit ? 0.90 : 0.50);
+    const greenMin = thresholds.green_min ?? 0.75;
+    const redMin = thresholds.red_min ?? (isLimit ? 1.0 : 0.90); // Note: UI logic below uses these differently
 
     let textColorClass = 'text-gray-600';
     let progressBarClass = 'bg-gray-300';

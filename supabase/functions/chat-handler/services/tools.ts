@@ -10,12 +10,43 @@
  * 3. Nutrition Support (2 tools) - Validation, comparison
  * 4. Recipes Support (2 tools) - Parse, calculate
  * 5. Logging (3 tools) - PCC pattern for food/recipe logging
- * 6. Goals (3 tools) - Goal management
+ * 6. Goals (4 tools) - Goal management
  * 7. Insights Support (1 tool) - Food recommendations
+ * 8. Profile Support (1 tool) - Profile management
  */ export const toolDefinitions = [
   // =============================================================
-  // CATEGORY 1: USER CONTEXT (5 tools)
+  // CATEGORY 1: USER CONTEXT (6 tools)
   // =============================================================
+  {
+    type: "function",
+    function: {
+      name: "update_user_profile",
+      description: "Updates the user's profile information, including dietary preferences, health goals, and allergies. Use this to record health considerations like 'colitis', 'dairy-free', 'high heart rate', etc.",
+      parameters: {
+        type: "object",
+        properties: {
+          dietary_preferences: {
+            type: "array",
+            items: { type: "string" },
+            description: "Array of dietary preferences or restrictions (e.g., ['dairy-free', 'avoid soy']). Put health conditions here too if they impact diet."
+          },
+          health_goal: {
+            type: "string",
+            description: "The user's primary health goal (e.g., 'lose weight', 'improve heart health')"
+          },
+          allergies: {
+            type: "array",
+            items: { type: "string" },
+            description: "Array of known allergies"
+          },
+          notes: {
+            type: "string",
+            description: "Any extra notes about the user's health profile"
+          }
+        }
+      }
+    }
+  },
   {
     type: "function",
     function: {
@@ -503,6 +534,34 @@
   {
     type: "function",
     function: {
+      name: "bulk_update_user_goals",
+      description: "Proposes updating multiple nutrition goals at once. Returns a summary confirmation card.",
+      parameters: {
+        type: "object",
+        properties: {
+          goals: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                nutrient: { type: "string", description: "calories, protein, carbs, fat, fiber, sugar, sodium, etc." },
+                target_value: { type: "number" },
+                unit: { type: "string" },
+                yellow_min: { type: "number" },
+                green_min: { type: "number" },
+                red_min: { type: "number" }
+              },
+              required: ["nutrient", "target_value"]
+            }
+          }
+        },
+        required: ["goals"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "calculate_recommended_goals",
       description: "Calculates recommended nutrition goals based on user profile (TDEE calculation). Uses height, weight, age, activity level, and goal.",
       parameters: {
@@ -532,6 +591,48 @@
             description: "Any dietary preferences (e.g., 'vegetarian', 'quick snack', 'meal')"
           }
         }
+      }
+    }
+  },
+  // =============================================================
+  // CATEGORY 8: MEMORY & PERSONALIZATION (2 tools)
+  // =============================================================
+  {
+    type: "function",
+    function: {
+      name: "store_memory",
+      description: "Collects and stores a new user preference, habit, or health constraint.",
+      parameters: {
+        type: "object",
+        properties: {
+          category: {
+            type: "string",
+            enum: ["food", "health", "habit", "preferences"],
+            description: "Category of the memory"
+          },
+          fact: {
+            type: "string",
+            description: "The specific fact to remember (e.g., 'User is vegan', 'User dislikes cilantro')"
+          }
+        },
+        required: ["category", "fact"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_memory",
+      description: "Searches the user's learned context for relevant information.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Search keywords"
+          }
+        },
+        required: ["query"]
       }
     }
   }

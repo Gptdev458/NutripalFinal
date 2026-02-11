@@ -429,15 +429,108 @@ export interface EnrichedNutritionResult {
   error_sources: string[];
 }
 
+// Basic allergen keywords for heuristic checking
+const ALLERGEN_KEYWORDS: Record<string, string[]> = {
+  dairy: ['milk', 'cheese', 'yogurt', 'cream', 'butter', 'whey', 'casein', 'lactose', 'ghee', 'custard', 'ice cream'],
+  gluten: ['wheat', 'bread', 'pasta', 'barley', 'rye', 'flour', 'cake', 'biscuit', 'cookie', 'cracker', 'malt', 'seitan'],
+  peanut: ['peanut', 'groundnut'],
+  treenut: ['almond', 'cashew', 'walnut', 'pecan', 'pistachio', 'hazelnut', 'macadamia', 'pine nut'],
+  shellfish: ['shrimp', 'crab', 'lobster', 'prawn', 'mussel', 'clam', 'oyster', 'scallop', 'squid', 'octopus'],
+  fish: ['fish', 'salmon', 'tuna', 'cod', 'trout', 'bass', 'snapper', 'sardine', 'anchovy'],
+  soy: ['soy', 'tofu', 'edamame', 'tempeh', 'miso', 'natto'],
+  egg: ['egg', 'mayonnaise', 'meringue', 'albumin']
+};
+
 export class NutritionAgent {
   name = 'nutrition';
+
+  private checkHealthConstraints(foodName: string, constraints: any[]): string[] {
+    const flags: string[] = [];
+    const normalizedFood = foodName.toLowerCase();
+
+    for (const constraint of constraints) {
+      if (!constraint) continue;
+
+      const category = constraint.category.toLowerCase();
+      // 1. Direct match (e.g. constraint "strawberry" matches "strawberry jam")
+      if (normalizedFood.includes(category)) {
+        flags.push(`${constraint.severity === 'critical' ? 'CRITICAL: ' : ''}Contains ${category}`);
+        continue;
+      }
+
+      // 2. Keyword check for common allergens
+      const keywords = ALLERGEN_KEYWORDS[category];
+      if (keywords) {
+        for (const keyword of keywords) {
+          if (normalizedFood.includes(keyword)) {
+            flags.push(`${constraint.severity === 'critical' ? 'CRITICAL: ' : ''}May contain ${category} (${keyword})`);
+            break;
+          }
+        }
+      }
+    }
+    return flags;
+  }
+
+  private applyMemories(foodName: string, currentPortion: string, memories: any[]): { portion: string, memory?: any } {
+    // Only apply memory if portion is vague or default
+    const isVague = !currentPortion ||
+      currentPortion === '1 serving' ||
+      currentPortion === 'serving' ||
+      ['a', 'an', 'one'].includes(currentPortion.toLowerCase().split(' ')[0]) && !currentPortion.match(/\d/);
+
+    if (!isVague) return { portion: currentPortion };
+
+    const normalizedFood = foodName.toLowerCase();
+
+    // Look for relevant memories
+    // We prioritize "specific" matches over "general" ones logic could be improved
+    for (const memory of memories) {
+      if (memory.category === 'food' || memory.category === 'preferences') {
+        const fact = memory.fact.toLowerCase();
+        // Heuristic: Check if memory mentions the food name
+        if (fact.includes(normalizedFood) || normalizedFood.includes(fact.split(' ')[0] || '')) {
+          // Extract portion from fact (assuming fact is like "I eat 200g of chicken" or just "200g chicken")
+          // For now, we trust the fact IS the preference. 
+          // Better: "I usually have 200g chicken" -> extract "200g".
+          // This is hard with regex alone. 
+          // Let's assume the ReasoningAgent stored the memory as "200g" or "always 200g".
+          // If the memory contains a number and a unit, we try to use it.
+          const match = fact.match(/(\d+(?:\.\d+)?\s*(?:g|oz|ml|cup|tbsp|tsp|slice|piece))/i);
+          if (match) {
+            console.log(`[NutritionAgent] Applying memory for ${foodName}: ${match[1]}`);
+            return { portion: match[1], memory };
+          }
+        }
+      }
+    }
+
+    return { portion: currentPortion };
+  }
 
   async execute(input: any, context: any) {
     const { items, portions } = input;
     const supabase = context.supabase || createAdminClient();
+    const memories = context.memories || [];
+    const healthConstraints = context.healthConstraints || [];
 
     const results = await Promise.all(items.map(async (itemName: string, i: number) => {
-      const userPortion = portions[i] || '1 serving';
+      let userPortion = portions[i] || '1 serving';
+      let appliedMemory = null;
+
+      // 0. Feature 6: Apply Memories
+      if (memories.length > 0) {
+        const memoryResult = this.applyMemories(itemName, userPortion, memories);
+        if (memoryResult.memory) {
+          userPortion = memoryResult.portion;
+          appliedMemory = memoryResult.memory;
+          // Mark memory as used (async, fire and forget)
+          if (context.db) {
+            context.db.markMemoryUsed(appliedMemory.id).catch((e: any) => console.error('Failed to mark memory used', e));
+          }
+        }
+      }
+
       const normalizedSearch = normalizeFoodName(itemName);
 
       // 1. Check Cache with normalized name
@@ -551,15 +644,44 @@ export class NutritionAgent {
         // 4. Portion scaling
         const multiplier = await getScalingMultiplier(userPortion, nutrition.serving_size, itemName, supabase);
         console.log(`[NutritionAgent] Scaling ${itemName} by ${multiplier} (user: ${userPortion}, official: ${nutrition.serving_size})`);
-        // We preserve the confidence level when scaling, but logic could degrade it if scaling excessively
-        return scaleNutrition(nutrition, multiplier);
+
+        let scaled = scaleNutrition(nutrition, multiplier);
+
+        // Feature 6: Check Health Constraints
+        const healthFlags = this.checkHealthConstraints(itemName, healthConstraints);
+        if (healthFlags.length > 0) {
+          // @ts-ignore
+          scaled.health_flags = healthFlags;
+        }
+        if (appliedMemory) {
+          // @ts-ignore
+          scaled.applied_memory = appliedMemory;
+        }
+
+        return scaled;
       } else {
         // 5. Final fallback: LLM Estimation
         console.log(`[NutritionAgent] No data from API/Cache for "${itemName}", trying LLM estimation`);
-        const estimation = await this.estimateNutritionWithLLM(itemName, userPortion);
+        const estimation = await this.estimateNutritionWithLLM(itemName, userPortion, healthConstraints);
+
         if (estimation) {
           const multiplier = await getScalingMultiplier(userPortion, estimation.serving_size, itemName, supabase);
-          return scaleNutrition(estimation, multiplier);
+          let scaled = scaleNutrition(estimation, multiplier);
+
+          // Feature 6: Check Health Constraints (LLM might have done it, but double check heuristics)
+          const healthFlags = this.checkHealthConstraints(itemName, healthConstraints);
+          // Merge flags if LLM returned some (not yet implemented in LLM return but good to have)
+          // @ts-ignore
+          const llmFlags = estimation.health_flags || [];
+          // @ts-ignore
+          scaled.health_flags = [...new Set([...healthFlags, ...llmFlags])];
+
+          if (appliedMemory) {
+            // @ts-ignore
+            scaled.applied_memory = appliedMemory;
+          }
+
+          return scaled;
         } else {
           await logFailedLookup(itemName, 'No nutrition data available from any source including LLM', {
             supabase,
@@ -574,10 +696,16 @@ export class NutritionAgent {
     return results.filter((r) => r !== null);
   }
 
-  async estimateNutritionWithLLM(itemName: string, userPortion?: string): Promise<EnrichedNutritionResult | null> {
+  async estimateNutritionWithLLM(itemName: string, userPortion?: string, healthConstraints?: any[]): Promise<EnrichedNutritionResult | null> {
     try {
       console.log(`[NutritionAgent] Estimating for: "${itemName}" (Portion: ${userPortion || 'N/A'})`);
       const openai = createOpenAIClient();
+
+      let healthPrompt = '';
+      if (healthConstraints && healthConstraints.length > 0) {
+        healthPrompt = `\n**HEALTH CHECK**: The user has these constraints: ${healthConstraints.map((c: any) => `${c.category} (${c.severity})`).join(', ')}. If this food likely violates them, add a 'health_flags' string array to the response using "Contains [Category]" or "May contain [Category]".`;
+      }
+
       const response = await openai.chat.completions.create({
         model: 'gpt-4o',
         messages: [
@@ -606,6 +734,8 @@ export class NutritionAgent {
             
             **Corrections**:
             - If the user says "actually" or corrects a number, the NEW number is the truth. Ignore the old one.
+
+            ${healthPrompt}
                
             **Output Format**:
             Return ONLY a JSON object matching this interface:
@@ -635,7 +765,8 @@ export class NutritionAgent {
                   "carbs_g": "low" | "medium" | "high",
                   "fat_total_g": "low" | "medium" | "high"
               },
-              "error_sources": string[] (e.g. ["vague_portion", "unknown_preparation", "estimation_variance"])
+              "error_sources": string[],
+              "health_flags": string[] (OPTIONAL)
             }
             If you are completely unsure, return null.`
           },
@@ -687,7 +818,9 @@ export class NutritionAgent {
           carbs_g: 'low',
           fat_total_g: 'low'
         },
-        error_sources: parsed.error_sources || ['llm_estimation']
+        error_sources: parsed.error_sources || ['llm_estimation'],
+        // @ts-ignore
+        health_flags: parsed.health_flags || []
       };
     } catch (e) {
       console.error('[NutritionAgent] LLM estimation failed:', e);

@@ -34,17 +34,29 @@ export class InsightAgent {
 
   private async executeAudit(context: any, query: string, filters: any) {
     const userId = context.userId;
-    const { logs, classifications } = await context.db.getHistoricalData(userId, { days: 7 });
-    const dayClass = await context.db.getDayClassification(userId, new Date().toISOString().split('T')[0]);
+    const timezone = context.timezone || 'UTC';
+    const { logs, classifications } = await context.db.getHistoricalData(userId, { days: 7 }, timezone);
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
+    const dayClass = await context.db.getDayClassification(userId, today);
     const goals = await context.db.getUserGoals(userId);
 
-    // Streamline logs for prompt to prevent timeouts
-    const streamlinedLogs = logs.map((l: any) => ({
-      name: l.food_name,
-      cals: l.calories,
-      macros: `P:${Math.round(l.protein)} C:${Math.round(l.carbs)} F:${Math.round(l.fat)}`,
-      time: l.log_time
-    }));
+    const metadataFields = ['id', 'user_id', 'food_name', 'meal_type', 'log_time', 'created_at', 'updated_at', 'portion', 'recipe_id', 'extras', 'confidence', 'confidence_details', 'error_sources'];
+
+    // Streamline logs for prompt to prevent timeouts, dynamically including all numeric metrics
+    const streamlinedLogs = logs.map((l: any) => {
+      const entry: any = {
+        name: l.food_name,
+        time: l.log_time
+      };
+
+      Object.keys(l).forEach(key => {
+        if (!metadataFields.includes(key) && typeof l[key] === 'number' && l[key] !== 0) {
+          entry[key] = l[key];
+        }
+      });
+
+      return entry;
+    });
 
     const auditPrompt = `
     You are a Forensic Nutrition Analyst. Audit the user's food log for today.
@@ -57,10 +69,10 @@ export class InsightAgent {
     Task:
     1. Identify Entropy: Find unlogged gaps (e.g., long periods without food).
     2. Statistical Outliers: Flag entries that look unusual for those items.
-    3. Nutritional Discordance: Check if logged items match core goal profiles.
+    3. Nutritional Discordance: Check if logged items match core goal profiles. Analyze EVERY tracked metric provided (e.g., Sodium, Sugar, Fiber, Water, etc.).
     
     Format: 3-5 punchy bullets. Focus on "Debugging the model, not correcting the user."
-    If day type is 'travel' or 'social', acknowledge that baseline shifts (e.g., higher sodium) are contextual.
+    If day type is 'travel' or 'social', acknowledge that baseline shifts (e.g., higher sodium/fat/calories) are contextual and expected.
     `;
 
     const openai = createOpenAIClient();
@@ -79,26 +91,28 @@ export class InsightAgent {
     };
   }
 
-  private async executePatterns(context: any, query: string, filters: any) {
+  private async executePatterns(context: any, query: string, days: number = 7) {
     const userId = context.userId;
-    const days = filters.days || 7;
+    const timezone = context.timezone || 'UTC';
+    const analysisData = await context.db.getAnalyticalData(userId, days, timezone);
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
 
     // Use summarized data for patterns to keep prompt size small
-    const analysisData = await context.db.getAnalyticalData(userId, days);
 
     const patternPrompt = `
     You are a Data Analyst. Look for structural patterns and directional insights.
     
     Target: ${query || 'General patterns'}
+    Today is: ${today}
     History: ${days} days
     Daily Totals (Summarized): ${JSON.stringify(analysisData.dailyTotals)}
     Special Context: ${JSON.stringify(analysisData.classifications)}
 
     Distinction:
-    - Patterns: Recurring behaviors (3+ times). Suggest one "Structural Fix".
-    - Insights: Directional trends or observations (even if not a strict pattern).
+    - Patterns: Recurring behaviors in macros, calories, or timing (3+ times). Suggest one "Structural Fix".
+    - Insights: Directional trends or observations (e.g., "Protein is consistently 20% lower on weekends").
     
-    Format: 3-5 bullets. Non-preachy, context-aware.
+    Format: 3-5 bullets. Non-preachy, context-aware. Focus on the integration of macros, not just calories.
     `;
 
     const openai = createOpenAIClient();
@@ -116,17 +130,24 @@ export class InsightAgent {
 
   private async executeReflect(context: any, query: string, filters: any) {
     const userId = context.userId;
+    const timezone = context.timezone || 'UTC';
     // CRITICAL: Use summarized data to prevent timeouts
-    const analysisData = await context.db.getAnalyticalData(userId, 7);
+    const analysisData = await context.db.getAnalyticalData(userId, 7, timezone);
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
+    console.log(`[InsightAgent] executeReflect: timezone=${timezone}, today=${today}, analysisDays=${Object.keys(analysisData.dailyTotals).length}`);
 
     const reflectPrompt = `
-    Analyze how today compares to the previous 7 days.
+    Analyze how today (${today}) compares to the previous 7 days (the baseline).
     
-    Summarized Data: ${JSON.stringify(analysisData)}
+    Today's Date: ${today}
+    Summarized Data (Daily Totals): ${JSON.stringify(analysisData.dailyTotals)}
     User Focus: "${query}"
 
-    Task: Identify the "One Big Lever" for tomorrow.
-    Contrast the metrics without being preachy. If today was a "social" or "travel" day, contextualize the variance.
+    Task:
+    1. Contrast EVERY tracked metric (all numeric fields in the data) between today and the average/trend of the baseline.
+    2. Identify the "One Big Lever" for tomorrow (the most impactful macro, micro-nutrient, or timing adjustment).
+    
+    Style: Non-preachy, context-aware. If today was a "social" or "travel" day, explain the variance as a context choice rather than a failure.
     `;
 
     const openai = createOpenAIClient();

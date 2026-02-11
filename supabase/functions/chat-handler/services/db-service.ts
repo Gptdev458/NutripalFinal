@@ -1,6 +1,9 @@
 /**
  * Service to handle database operations, decoupling persistence from orchestrator
- */ export class DbService {
+ */
+import { getStartAndEndOfDay, getDateRange } from '../../_shared/utils.ts';
+
+export class DbService {
   supabase: any;
   constructor(supabase: any) {
     this.supabase = supabase;
@@ -113,7 +116,7 @@
   }
   /**
    * Updates a user's profile information
-   */ async updateUserProfile(userId, data) {
+   */ async updateUserProfile(userId: string, data: any) {
     const { error } = await this.supabase.from('user_profiles').update(data).eq('id', userId);
     if (error) {
       console.error('[DbService] Error updating user profile:', error);
@@ -122,7 +125,7 @@
   }
   /**
    * Fetches user profile with safe handling for missing rows
-   */ async getUserProfile(userId) {
+   */ async getUserProfile(userId: string) {
     const { data, error } = await this.supabase.from('user_profiles').select('*').eq('id', userId).maybeSingle();
     if (error) {
       console.error('[DbService] Error fetching user profile:', error);
@@ -134,7 +137,7 @@
   }
   /**
    * Adds a daily adjustment (e.g., workout)
-   */ async addDailyAdjustment(userId, adjustment) {
+   */ async addDailyAdjustment(userId: string, adjustment: any) {
     const { error } = await this.supabase.from('daily_adjustments').upsert({
       user_id: userId,
       nutrient: adjustment.nutrient,
@@ -152,7 +155,7 @@
   }
   /**
    * Fetches daily adjustments for a date range
-   */ async getDailyAdjustments(userId, start, end) {
+   */ async getDailyAdjustments(userId: string, start: string, end: string) {
     const { data, error } = await this.supabase.from('daily_adjustments').select('*').eq('user_id', userId).gte('adjustment_date', start).lte('adjustment_date', end);
     if (error) {
       console.error('[DbService] Error fetching daily adjustments:', error);
@@ -172,7 +175,7 @@
   }
   /**
    * Sets or updates the day classification for a user
-   */ async setDayClassification(userId, date, type, notes = null) {
+   */ async setDayClassification(userId: string, date: string, type: string, notes: string | null = null) {
     const { error } = await this.supabase.from('daily_classification').upsert({
       user_id: userId,
       date: date,
@@ -186,15 +189,11 @@
       throw error;
     }
   }
-  /**
-   * Fetches historical logs and metadata for analysis
-   */ async getHistoricalData(userId: string, filters: { days?: number, range?: { start: string, end: string }, type?: string }) {
+  async getHistoricalData(userId: string, filters: { days?: number, range?: { start: string, end: string }, type?: string }, timezone: string = 'UTC') {
     let query = this.supabase.from('food_log').select('*').eq('user_id', userId);
     if (filters.days) {
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - filters.days);
-      const startStr = startDate.toISOString().split('T')[0];
-      query = query.gte('log_time', startStr);
+      const { start } = getDateRange(new Date(), filters.days, timezone);
+      query = query.gte('log_time', start);
     } else if (filters.range) {
       query = query.gte('log_time', filters.range.start).lte('log_time', filters.range.end);
     }
@@ -225,40 +224,43 @@
   }
 
   /**
-   * Fetches summarized daily totals for analysis
+   * Fetches summarized daily totals for analysis, grouping by the user's local date
    */
-  async getAnalyticalData(userId: string, days: number = 7) {
-    const { logs, classifications } = await this.getHistoricalData(userId, { days });
+  async getAnalyticalData(userId: string, days: number = 7, timezone: string = 'UTC') {
+    const { logs, classifications } = await this.getHistoricalData(userId, { days }, timezone);
+    console.log(`[DbService] getAnalyticalData: Found ${logs.length} logs for range. Timezone: ${timezone}`);
 
     // Group logs by date and calculate totals
     const dailyTotals: Record<string, any> = {};
+    const metadataFields = ['id', 'user_id', 'food_name', 'meal_type', 'log_time', 'created_at', 'updated_at', 'portion', 'recipe_id', 'extras', 'confidence', 'confidence_details', 'error_sources', 'hydration_ml'];
 
     logs.forEach((log: any) => {
-      const date = new Date(log.log_time).toISOString().split('T')[0];
+      // Use the user's timezone to get the date string (YYYY-MM-DD)
+      const date = new Date(log.log_time).toLocaleDateString('en-CA', { timeZone: timezone });
+      console.log(`[DbService] Map log "${log.food_name}" (${log.log_time}) to local date: ${date}`);
       if (!dailyTotals[date]) {
         dailyTotals[date] = {
-          calories: 0,
-          protein: 0,
-          carbs: 0,
-          fat: 0,
-          fiber: 0,
-          sugar: 0,
-          sodium: 0,
-          water: 0,
           items: []
         };
       }
 
-      dailyTotals[date].calories += Number(log.calories) || 0;
-      dailyTotals[date].protein += Number(log.protein) || 0;
-      dailyTotals[date].carbs += Number(log.carbs) || 0;
-      dailyTotals[date].fat += Number(log.fat) || 0;
-      dailyTotals[date].fiber += Number(log.fiber) || 0;
-      dailyTotals[date].sugar += Number(log.sugar) || 0;
-      dailyTotals[date].sodium += Number(log.sodium) || 0;
-      dailyTotals[date].water += Number(log.water_ml) || 0;
+      // Dynamically aggregate all numeric fields
+      Object.keys(log).forEach(key => {
+        if (!metadataFields.includes(key) && typeof log[key] === 'number') {
+          dailyTotals[date][key] = (dailyTotals[date][key] || 0) + log[key];
+        }
+      });
+
+      // Special handling for hydration (sometimes named differently in logs vs schema)
+      const water = log.hydration_ml || log.water_ml || 0;
+      if (water > 0) {
+        dailyTotals[date].water_ml = (dailyTotals[date].water_ml || 0) + water;
+      }
+
       dailyTotals[date].items.push(log.food_name);
     });
+
+    console.log(`[DbService] Daily totals keys: ${Object.keys(dailyTotals).join(', ')}`);
 
     // Map classifications for easy access
     const classMap: Record<string, any> = {};
@@ -271,5 +273,93 @@
       classifications: classMap,
       daysAnalysed: days
     };
+  }
+
+  /**
+   * Fetches active memories for a user by category
+   */
+  async getMemories(userId: string, categories: string[]) {
+    const { data, error } = await this.supabase
+      .from('user_learned_context')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('active', true)
+      .in('category', categories);
+
+    if (error) {
+      console.error('[DbService] Error fetching memories:', error);
+      throw error;
+    }
+    return data;
+  }
+
+  /**
+   * Saves a new learned memory
+   */
+  async saveMemory(userId: string, category: string, fact: string, source: string) {
+    const { error } = await this.supabase
+      .from('user_learned_context')
+      .insert({
+        user_id: userId,
+        category,
+        fact,
+        source_message: source,
+        confidence: 1.0,
+        active: true
+      });
+
+    if (error) {
+      console.error('[DbService] Error saving memory:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Marks a memory as used (updates timestamp)
+   */
+  async markMemoryUsed(memoryId: string) {
+    const { error } = await this.supabase
+      .from('user_learned_context')
+      .update({ last_used_at: new Date().toISOString() })
+      .eq('id', memoryId);
+
+    if (error) {
+      console.error('[DbService] Error marking memory used:', error);
+    }
+  }
+
+  /**
+   * Fetches user health constraints
+   */
+  async getHealthConstraints(userId: string) {
+    const { data, error } = await this.supabase
+      .from('user_health_constraints')
+      .select('*')
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('[DbService] Error fetching health constraints:', error);
+      throw error;
+    }
+    return data;
+  }
+
+  /**
+   * Saves or updates a health constraint
+   */
+  async saveHealthConstraint(userId: string, constraint: any) {
+    const { error } = await this.supabase
+      .from('user_health_constraints')
+      .upsert({
+        user_id: userId,
+        ...constraint
+      }, {
+        onConflict: 'user_id, category'
+      });
+
+    if (error) {
+      console.error('[DbService] Error saving health constraint:', error);
+      throw error;
+    }
   }
 }

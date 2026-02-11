@@ -64,12 +64,20 @@ function decorateWithContext(message: string, pendingAction: any): string {
   const sessionService = new SessionService(supabase);
   // Load session state
   const session = await sessionService.getSession(userId, sessionId);
+
+  // Feature 6: Fetch Learned Context & Health Constraints
+  const healthConstraints = await db.getHealthConstraints(userId);
+  // We fetch commonly used memory categories by default
+  const memories = await db.getMemories(userId, ['food', 'preferences', 'habits', 'health']);
+
   const context = {
     userId,
     sessionId,
     supabase,
     timezone,
-    session
+    session,
+    healthConstraints,
+    memories
   };
   const startTime = Date.now();
   const thoughts = new ThoughtLogger();
@@ -332,6 +340,20 @@ function decorateWithContext(message: string, pendingAction: any): string {
           ...response,
           steps: thoughts.getSteps()
         };
+      case 'store_memory':
+        console.log('[OrchestratorV3] Branch: store_memory');
+        reportStep('Storing memory...');
+        if (intentResult.memory_content) {
+          const toolExecutor = new ToolExecutor({ userId, supabase, timezone, sessionId });
+          await toolExecutor.storeMemory(intentResult.memory_content);
+          return {
+            status: 'success',
+            message: "Got it! I've remembered that for you.",
+            response_type: 'chat_response',
+            steps: thoughts.getSteps()
+          };
+        }
+        break; // Fallback to reasoning if no content extracted
       case 'confirm':
         if (session.pending_action) {
           // DEFENSIVE CHECK: If the explorer found food items, it might NOT be a confirmation of the PREVIOUS action
@@ -975,7 +997,11 @@ async function logFilteredFood(userId: string, db: DbService, nutritionData: any
           }
         };
       case 'goal_update':
-        await db.updateUserGoal(userId, data.nutrient, data.target_value, data.unit);
+        await db.updateUserGoal(userId, data.nutrient, data.target_value, data.unit, {
+          yellow_min: data.yellow_min,
+          green_min: data.green_min,
+          red_min: data.red_min
+        });
         await sessionService.clearPendingAction(userId);
         return {
           status: 'success',
@@ -983,6 +1009,18 @@ async function logFilteredFood(userId: string, db: DbService, nutritionData: any
           response_type: 'goal_updated',
           data: {
             goal_updated: data
+          }
+        };
+
+      case 'bulk_goal_update':
+        await db.updateUserGoals(userId, data.goals);
+        await sessionService.clearPendingAction(userId);
+        return {
+          status: 'success',
+          message: `✅ Updated ${data.goals.length} nutrition goals! 🎯`,
+          response_type: 'goal_updated',
+          data: {
+            goals_updated: data.goals
           }
         };
       case 'recipe_selection':
