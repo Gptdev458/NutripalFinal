@@ -11,6 +11,7 @@ import { InsightAgent } from '../agents/insight-agent.ts';
 import { ValidatorAgent } from '../agents/validator-agent.ts';
 import { createOpenAIClient } from '../../_shared/openai-client.ts';
 import { getStartAndEndOfDay, getDateRange } from '../../_shared/utils.ts';
+import { parseHealthInput } from '../utils/health-parser.ts';
 
 export class ToolExecutor {
   context: any;
@@ -91,6 +92,8 @@ export class ToolExecutor {
           return this.confirmPendingLog(args.proposal_id);
         case 'update_user_profile':
           return this.updateUserProfile(args);
+        case 'manage_health_constraints':
+          return this.manageHealthConstraints(args.instruction);
         // Goal Tools
         case 'update_user_goal':
           return this.updateUserGoal(args.nutrient, args.target_value, args.unit, {
@@ -224,17 +227,52 @@ export class ToolExecutor {
     }
 
     if (allergies && Array.isArray(allergies)) {
-      const constraints = allergies.map((a: string) => ({
-        constraint: a,
-        severity: 'high'
-      }));
-      await this.db.replaceHealthConstraints(this.context.userId, 'allergy', constraints);
+      // Use addHealthConstraint to safely handle multiple allergies without unique constraint violations
+      for (const allergy of allergies) {
+        await this.db.addHealthConstraint(this.context.userId, {
+          category: allergy,
+          type: 'allergy',
+          severity: 'critical', // Treat explicit allergies as critical/high
+          notes: 'From profile update'
+        });
+      }
     }
 
     return {
       status: 'success',
       message: '✅ Profile updated with your health considerations! 🩺',
       data: { ...updateData, allergies }
+    };
+  }
+
+  async manageHealthConstraints(instruction: string) {
+    const updates = await parseHealthInput(instruction);
+    if (!updates || updates.length === 0) {
+      return {
+        message: "I couldn't identify any specific health constraints to update. Please be more specific (e.g., 'I am allergic to peanuts')."
+      };
+    }
+
+    const applied: string[] = [];
+    for (const update of updates) {
+      if (update.action === 'add') {
+        await this.db.addHealthConstraint(this.context.userId, {
+          category: update.category,
+          type: update.type,
+          severity: update.severity,
+          notes: update.notes || ''
+        });
+        applied.push(`Added ${update.severity} ${update.type}: ${update.category}`);
+      } else if (update.action === 'remove') {
+        await this.db.removeHealthConstraint(this.context.userId, update.category);
+        applied.push(`Removed: ${update.category}`);
+      }
+    }
+
+    return {
+      success: true,
+      message: `Health profile updated:\n- ${applied.join('\n- ')}`,
+      data: updates
     };
   }
 

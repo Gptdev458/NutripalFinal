@@ -397,4 +397,44 @@ export class DbService {
       throw error;
     }
   }
+
+  /**
+   * Adds a dictionary-based health constraint
+   */
+  async addHealthConstraint(userId: string, data: { category: string, type: string, severity: string, notes?: string }) {
+    console.log(`[DbService] Adding constraint: ${data.category} (${data.type})`);
+    const { error } = await this.supabase
+      .from('user_health_constraints')
+      .upsert({
+        user_id: userId,
+        category: data.category.toLowerCase().trim(),
+        constraint_type: data.type,
+        severity: data.severity,
+        notes: data.notes
+      }, {
+        onConflict: 'user_id, category'
+      });
+
+    if (error) {
+      console.error('[DbService] Error adding health constraint:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Removes a health constraint by category
+   */
+  async removeHealthConstraint(userId: string, category: string) {
+    console.log(`[DbService] Removing constraint: ${category}`);
+    const { error } = await this.supabase
+      .from('user_health_constraints')
+      .delete()
+      .eq('user_id', userId)
+      .eq('category', category.toLowerCase().trim());
+
+    if (error) {
+      console.error('[DbService] Error removing health constraint:', error);
+      throw error;
+    }
+  }
 }

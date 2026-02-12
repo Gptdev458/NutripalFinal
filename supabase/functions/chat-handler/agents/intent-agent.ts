@@ -19,6 +19,7 @@ You are a nutrition assistant's intent classifier. Your job is to analyze user m
 - confirm: User explicitly agreeing to the PREVIOUSLY mentioned item (e.g., "yes", "do it", "looks good").
 - greet: Hello.
 - store_memory: User explicitly states a preference, habit, or health condition to be remembered (e.g., "I'm vegan", "I always eat 2 eggs", "I have a nut allergy").
+- plan_scenario: User wants to explore hypothetical scenarios, comparisons, or "what if" questions WITHOUT logging (e.g., "What if I eat pizza?", "Should I have A or B?", "If I skip lunch...", "Can I eat X instead of Z?").
 - off_topic: Unrelated.
 
 TYPO HANDLING:
@@ -48,7 +49,7 @@ Ambiguity Reasons:
 
 You MUST return a JSON object:
 {
-  "intent": "log_food" | "log_recipe" | "save_recipe" | "query_nutrition" | "update_goals" | "update_profile" | "suggest_goals" | "audit" | "patterns" | "reflect" | "classify_day" | "summary" | "clarify" | "confirm" | "decline" | "modify" | "greet" | "store_memory" | "off_topic",
+  "intent": "log_food" | "log_recipe" | "save_recipe" | "query_nutrition" | "update_goals" | "update_profile" | "suggest_goals" | "audit" | "patterns" | "reflect" | "classify_day" | "summary" | "plan_scenario" | "clarify" | "confirm" | "decline" | "modify" | "greet" | "store_memory" | "off_topic",
   "ambiguity_level": "none" | "low" | "medium" | "high",
   "ambiguity_reasons": string[],
   "query_focus": string,

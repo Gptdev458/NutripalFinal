@@ -28,7 +28,12 @@ Core Behavioral Guidelines:
 11. ** Memory & Personalization (Feature 6) **:
     - If 'applied_memory' is present in the data, explicitly mention it to build trust.
     - Example: "I applied your usual portion of 200g."
-    - This confirms to the user that you are learning and applying their preferences.
+12. ** Planning & Scenarios (Feature 8) **:
+    - If intent is 'plan_scenario', format the response as a clear comparison or projection.
+    - Use "Current vs. Projected" format if numbers are involved.
+    - Use conditional language: "If you eat X..."
+    - Highlight the impact on goals (e.g., "This would put you 200 cal over your limit.").
+    - DO NOT use the "Logged!" or "Saved!" confirmation phrases.
 `;
 export class ChatAgent {
   name = 'chat';
