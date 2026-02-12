@@ -141,22 +141,26 @@ function decorateWithContext(message: string, pendingAction: any): string {
     // If message starts with "Confirm " or is exactly "Log it", "Save it", etc.
     const looksLikeNewLog = lowerMessage.startsWith('log ') || lowerMessage.startsWith('track ') || lowerMessage.startsWith('save ') || lowerMessage.startsWith('add ');
 
-    const isButtonConfirm = !looksLikeNewLog && (lowerMessage.startsWith('confirm') || lowerMessage.startsWith('yes, ') || [
-      'yes',
-      'log it',
-      'log this',
-      'save it',
-      'save this',
-      'record it',
-      'track it',
-      'correct',
-      'yep',
-      'yeah',
-      'yes, save',
-      'yes, log',
-      'confirm save',
-      'looks good'
-    ].includes(lowerMessage) || lowerMessage.includes('portion:') || lowerMessage.includes('name:'));
+    // STRICTER Fast-Path: Only accept exact short phrases or button payloads.
+    // This prevents "Yes, but add sugar" from being caught as a simple "Yes" confirmation.
+    const fastPathPhrases = new Set([
+      'yes', 'yeah', 'yep', 'correct', 'confirm', 'log it', 'save it',
+      'save', 'record it', 'track it', 'looks good', 'ok', 'okay', 'right', 'sure',
+      'yes log', 'yes save', 'confirm save'
+    ]);
+
+    // Clean punctuation for matching "Yes." or "Yes!"
+    const cleanMessage = lowerMessage.replace(/[.!]/g, '');
+    const isExactMatch = fastPathPhrases.has(cleanMessage);
+
+    // Check for button interactions (which often contain hidden payloads like "name:..." or "portion:...")
+    const isButtonPayload = lowerMessage.includes('portion:') || lowerMessage.includes('name:');
+
+    // Also allow "Confirm [action]" if it's very short (e.g. "Confirm that"), but reject long sentences.
+    const isShortConfirm = lowerMessage.startsWith('confirm') && lowerMessage.length < 30;
+
+    const isButtonConfirm = !looksLikeNewLog && (isExactMatch || isButtonPayload || isShortConfirm);
+
     if (isButtonConfirm && session.pending_action) {
       console.log(`[OrchestratorV3] Static fast-path: button confirm (Action: ${session.pending_action.type})`);
       reportStep('Processing your confirmation...');

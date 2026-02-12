@@ -473,13 +473,7 @@ export class NutritionAgent {
   }
 
   private async applyMemories(foodName: string, currentPortion: string, memories: any[]): Promise<{ portion: string, refinedFoodName?: string, memory?: any }> {
-    // Only apply memory if portion is vague or default
-    const isVague = !currentPortion ||
-      currentPortion === '1 serving' ||
-      currentPortion === 'serving' ||
-      ['a', 'an', 'one', 'some'].includes(currentPortion.toLowerCase().split(' ')[0]) && !currentPortion.match(/\d/);
-
-    if (!isVague) return { portion: currentPortion };
+    // REMOVED: Strict "isVague" check. We now apply memories even if portion is specific (e.g. "200ml coffee" + "with sugar").
 
     const normalizedFood = normalizeFoodName(foodName);
     const foodWords = new Set(normalizedFood.split(' '));
@@ -496,7 +490,11 @@ export class NutritionAgent {
 
         if (hasWordMatch || fact.includes(normalizedFood) || normalizedFood.includes(fact)) {
           const matchPortion = fact.match(/(\d+(?:\.\d+)?\s*(?:g|oz|ml|cup|tbsp|tsp|slice|piece|large|medium|small))/i);
-          if (matchPortion) {
+          // Only auto-apply portion from memory IF the current portion is vague.
+          // If user said "200ml", we shouldn't overwrite it with "1 cup" from memory unless the memory is about ingredients.
+          const isCurrentPortionVague = !currentPortion || currentPortion === '1 serving' || ['a', 'an', 'one'].includes(currentPortion.split(' ')[0].toLowerCase());
+
+          if (matchPortion && isCurrentPortionVague) {
             console.log(`[NutritionAgent] Fast-path memory match for ${foodName}: ${matchPortion[1]}`);
             return { portion: matchPortion[1], memory };
           }
@@ -529,8 +527,11 @@ export class NutritionAgent {
               ${relevantMemories.map((m, i) => `${i}. [${m.category}] ${m.fact}`).join('\n')}
               
               Return JSON: { "applies": boolean, "memory_index": number, "refined_portion": string, "refined_food_name": string }
-              If a memory describes HOW they eat it (e.g. "with sugar"), include that in 'refined_food_name'.
-              Handle typos (e.g. "coffe" should match "coffee").`
+              
+              Rules:
+              1. **Refined Name**: If a memory adds ingredients (e.g. "with sugar", "with milk"), ALWAYS include that in 'refined_food_name' (e.g. "coffee with sugar").
+              2. **Portion**: Only suggest a 'refined_portion' if the user's input portion ("${currentPortion}") is vague (like "a cup", "1 serving"). If the user gave a specific amount (like "200ml", "50g"), LEAVE 'refined_portion' EMPTY/NULL to preserve their input.
+              3. **Typos**: Handle typos gracefully (e.g. "coffe" -> "coffee").`
             }
           ],
           response_format: { type: "json_object" }
