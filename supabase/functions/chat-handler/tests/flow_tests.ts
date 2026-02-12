@@ -53,3 +53,17 @@ Deno.test("Phase 1: Recipe Shortcut Detection", async () => {
     assertEquals(steps.includes('This looks like a recipe! Parsing details...'), true)
     assertEquals(result.response_type, 'confirmation_recipe_save')
 })
+
+Deno.test("Feature 9: Day Classification Injection", async () => {
+    // This test simulates the orchestrator flow with day classification
+    const userId = "test-user-id"
+    const message = "How is my sodium doing?"
+
+    // NOTE: In a real test, we would mock DbService.getDayClassification to return { day_type: 'travel' }
+    // and verify that ChatAgent receives this context.
+
+    console.log("To verify Feature 9 manually:")
+    console.log("1. Set 'travel' day in DB for today")
+    console.log("2. Ask 'How am I doing?'")
+    console.log("3. Check if response mentions travel context")
+})

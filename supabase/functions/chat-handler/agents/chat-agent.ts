@@ -37,7 +37,7 @@ Core Behavioral Guidelines:
 `;
 export class ChatAgent {
   name = 'chat';
-  async execute(input, _context) {
+  async execute(input: any, context: any) {
     const { userMessage, intent, data, history } = input;
     const openai = createOpenAIClient();
     const messages = [
@@ -48,7 +48,7 @@ export class ChatAgent {
       ...history.slice(-5),
       {
         role: "system",
-        content: `Current Intent: ${intent}. Data involved: ${JSON.stringify(data)} `
+        content: `Current Intent: ${intent}. Data involved: ${JSON.stringify(data)}. Context: ${context.dayClassification ? `Day Type: ${context.dayClassification.day_type}` : 'Normal Day'}`
       },
       {
         role: "user",
@@ -64,7 +64,7 @@ export class ChatAgent {
   }
 }
 // Keep legacy export for now
-export async function generateChatResponse(userMessage, intent, data, history = []) {
+export async function generateChatResponse(userMessage: string, intent: string, data: any, history: any[] = []) {
   const agent = new ChatAgent();
   return agent.execute({
     userMessage,

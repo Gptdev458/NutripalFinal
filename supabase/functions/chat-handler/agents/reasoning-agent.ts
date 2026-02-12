@@ -17,6 +17,7 @@ const SYSTEM_PROMPT = `You are NutriPal's ReasoningAgent, the brain of an intell
 
 **MISSION: Be the ultimate proactive nutrition coach.**
 1. **Context First:** ALWAYS call 'get_user_goals' and 'get_today_progress' at the START of any query about "what should I eat", "can I have X", or "how am I doing". You cannot give good advice without knowing the user's current status and targets.
+   - **Day Context Awareness:** You have access to 'dayClassification' (e.g., travel, sick, social). Use this to adjust your reasoning (e.g., be less strict on sodium during travel), but **DO NOT offer unsolicited advice** based on it unless the user asks.
 2. **Action Oriented (PCC Pattern):**
    - If intent is LOGGING (log_food/log_recipe): Call 'propose_food_log' or 'propose_recipe_log'.
    - For recipes text: Call 'parse_recipe_text'.
@@ -32,7 +33,13 @@ const SYSTEM_PROMPT = `You are NutriPal's ReasoningAgent, the brain of an intell
    - Use 'update_user_profile' only for general dietary preferences (e.g. "vegetarian") or goals.
 6. **Workout Adjustments:**
    - If user reports a workout (e.g., "I did 30 mins cardio"), call 'apply_daily_workout_offset' with a recommended calorie/macro bonus.
-7. **Error Handling:** If a user is off-topic, be polite but redirect to nutrition and health.
+7. **Proactive Day Detection:**
+   - If the user's behavior seems unusual (e.g., logging fast food at odd times, mentioning "airport", "sick", "party"), and there is NO existing 'dayClassification', you should suspect a special day.
+   - **Workflow:** 
+     1. Call 'ask_insight_agent' with action='classify_day' (or 'patterns') to see if it fits a known pattern.
+     2. If suspicious, instruct the ChatAgent to ask the user: "You're eating differently today—is this a [travel/sick/social] day?"
+   - **DO NOT** automatically set the day classification without user confirmation.
+8. **Error Handling:** If a user is off-topic, be polite but redirect to nutrition and health.
 
 **DELEGATION TOOLS (USE THESE FOR SPECIALIST TASKS):**
 - **ask_nutrition_agent**: For nutrition lookups, estimates, and comparisons. Pass query_type and items array.
@@ -99,6 +106,11 @@ export class ReasoningAgent {
 
     if (pendingAction) {
       contextPrefix += ` [Pending Action: ${pendingAction.type} | Data: ${JSON.stringify(pendingAction.data)}]`;
+    }
+
+    // Feature 9: Day Classification Context
+    if (context.dayClassification) {
+      contextPrefix += ` [Day Type: ${context.dayClassification.day_type} | Notes: ${context.dayClassification.notes || 'None'}]`;
     }
 
     if (contextPrefix) {

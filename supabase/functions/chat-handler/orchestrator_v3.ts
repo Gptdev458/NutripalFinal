@@ -70,6 +70,11 @@ function decorateWithContext(message: string, pendingAction: any): string {
   // We fetch commonly used memory categories by default
   const memories = await db.getMemories(userId, ['food', 'preferences', 'habits', 'health']);
 
+  // Feature 9: Day Classification
+  // Get today's classification based on user's timezone
+  const todayDate = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
+  const dayClassification = await db.getDayClassification(userId, todayDate);
+
   const context = {
     userId,
     sessionId,
@@ -77,7 +82,8 @@ function decorateWithContext(message: string, pendingAction: any): string {
     timezone,
     session,
     healthConstraints,
-    memories
+    memories,
+    dayClassification // { day_type: 'travel' | 'sick' | ..., notes: ... }
   };
   const startTime = Date.now();
   const thoughts = new ThoughtLogger();
