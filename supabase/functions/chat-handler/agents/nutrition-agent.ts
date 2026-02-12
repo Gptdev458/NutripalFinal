@@ -785,7 +785,13 @@ export class NutritionAgent {
                - 'serving_size' should be "1 standard serving".
                - You MUST return "vague_portion".
             
-            
+            **SCIENTIFIC CONSISTENCY (CRITICAL)**:
+            You must ensure the following logical relationships are respected. If you are unsure of the breakdown, prioritize the Total values.
+            - Sugar <= Total Carbs
+            - Fiber <= Total Carbs (Fiber is a type of Carbohydrate)
+            - Saturated Fat <= Total Fat
+            - Polyunsaturated + Monounsaturated + Saturated + Trans Fat <= Total Fat
+
             **Context Handling**:
             - The input might start with '[Context: ...]'. This is background.
             - **Specifics Override Context**: If the user provides a Specific Weight or Count in the new message, it INVALIDATES any vagueness in the Context. Treat the Context as resolved history.

@@ -2,6 +2,7 @@
  * Service to handle database operations, decoupling persistence from orchestrator
  */
 import { getStartAndEndOfDay, getDateRange } from '../../_shared/utils.ts';
+import { validateNutrientHierarchy } from '../../_shared/nutrient-validation.ts';
 
 export class DbService {
   supabase: any;
@@ -11,6 +12,16 @@ export class DbService {
   /**
    * Logs food items to the database
    */ async logFoodItems(userId: string, items: any[]) {
+    // Validate each item for nutrient hierarchy (Feature 10)
+    for (const item of items) {
+      const validation = validateNutrientHierarchy(item);
+      if (!validation.valid) {
+        const errorMsg = `Nutrient Validation Failed for "${item.food_name}": ${validation.violations.join(', ')}`;
+        console.error(`[DbService] ${errorMsg}`);
+        throw new Error(errorMsg);
+      }
+    }
+
     const { error } = await this.supabase.from('food_log').insert(items.map((item: any) => ({
       ...item,
       user_id: userId,

@@ -12,6 +12,7 @@ import { ValidatorAgent } from '../agents/validator-agent.ts';
 import { createOpenAIClient } from '../../_shared/openai-client.ts';
 import { getStartAndEndOfDay, getDateRange } from '../../_shared/utils.ts';
 import { parseHealthInput } from '../utils/health-parser.ts';
+import { validateNutrientHierarchy, sanitizeNutrients } from '../../_shared/nutrient-validation.ts';
 
 export class ToolExecutor {
   context: any;
@@ -817,6 +818,18 @@ Be reasonable and accurate. Use your knowledge of typical nutrition values. Even
 
     // Ensure calories is explicitly set for the proposal message
     if (filteredData.calories === undefined) filteredData.calories = 0;
+
+    // Feature 10: Validate Nutrient Hierarchy (AI Feedback Loop)
+    // If the AI proposes invalid data (e.g. Sugar > Carbs), reject it immediately
+    // and ask the AI to correct it. Do NOT show this to the user.
+    const validation = validateNutrientHierarchy(filteredData);
+    if (!validation.valid) {
+      console.warn(`[ToolExecutor] Rejecting invalid food log proposal: ${validation.violations.join(', ')}`);
+      return {
+        error: true,
+        message: `Scientific impossibility detected: ${validation.violations.join(', ')}. Please recalculate and try again with corrected values.`
+      };
+    }
 
     // Attach metadata for the UI (Feature 3)
     filteredData.confidence = data.confidence || 'medium';

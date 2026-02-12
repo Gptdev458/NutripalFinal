@@ -249,7 +249,7 @@ function decorateWithContext(message: string, pendingAction: any): string {
               recipe_name: fs.parsed.recipe_name,
               servings: fs.parsed.servings,
               nutrition_data: fs.batchNutrition,
-              ingredients: fs.ingredientsWithNutrition?.map((ing) => ({
+              ingredients: fs.ingredientsWithNutrition?.map((ing: any) => ({
                 name: ing.name,
                 amount: ing.amount || ing.quantity || '',
                 unit: ing.unit || '',
@@ -483,7 +483,7 @@ function decorateWithContext(message: string, pendingAction: any): string {
               parsed: {
                 recipe_name: recipe.recipe_name,
                 servings: recipe.servings,
-                ingredients: recipe.recipe_ingredients?.map((ing) => ({
+                ingredients: recipe.recipe_ingredients?.map((ing: any) => ({
                   name: ing.ingredient_name,
                   quantity: ing.quantity,
                   unit: ing.unit
@@ -597,7 +597,7 @@ function decorateWithContext(message: string, pendingAction: any): string {
                 recipe_name: fs.parsed.recipe_name,
                 servings: fs.parsed.servings,
                 nutrition_data: fs.batchNutrition,
-                ingredients: fs.ingredientsWithNutrition?.map((ing) => ({
+                ingredients: fs.ingredientsWithNutrition?.map((ing: any) => ({
                   name: ing.name,
                   amount: ing.amount || ing.quantity || '',
                   unit: ing.unit || '',
@@ -678,7 +678,7 @@ function decorateWithContext(message: string, pendingAction: any): string {
               parsed: {
                 recipe_name: recipe.recipe_name,
                 servings: recipe.servings,
-                ingredients: recipe.recipe_ingredients?.map((ing) => ({
+                ingredients: recipe.recipe_ingredients?.map((ing: any) => ({
                   name: ing.ingredient_name,
                   quantity: ing.quantity,
                   unit: ing.unit
@@ -705,7 +705,7 @@ function decorateWithContext(message: string, pendingAction: any): string {
                 ...fs.parsed,
                 nutrition_data: fs.batchNutrition,
                 per_serving_nutrition: perServingNutrition,
-                ingredients: recipe.recipe_ingredients?.map((ing) => ({
+                ingredients: recipe.recipe_ingredients?.map((ing: any) => ({
                   name: ing.ingredient_name,
                   amount: ing.quantity,
                   unit: ing.unit,
@@ -752,7 +752,7 @@ function decorateWithContext(message: string, pendingAction: any): string {
               recipe_name: fs.parsed.recipe_name,
               servings: fs.parsed.servings,
               nutrition_data: fs.batchNutrition,
-              ingredients: fs.ingredientsWithNutrition?.map((ing) => ({
+              ingredients: fs.ingredientsWithNutrition?.map((ing: any) => ({
                 name: ing.name,
                 amount: ing.amount || ing.quantity || '',
                 unit: ing.unit || '',
@@ -914,7 +914,7 @@ function decorateWithContext(message: string, pendingAction: any): string {
     console.error('[OrchestratorV3] Fatal Error:', error);
     return {
       status: 'error',
-      message: `I encountered an unexpected error. Please try again. (${error.message})`,
+      message: `I encountered an unexpected error. Please try again. (${(error as Error).message})`,
       response_type: 'fatal_error'
     };
   }
@@ -955,7 +955,7 @@ async function logFilteredFood(userId: string, db: DbService, nutritionData: any
     'folate_mcg', 'vitamin_b12_mcg'
   ];
 
-  trackedKeys.forEach(key => {
+  trackedKeys.forEach((key: string) => {
     if (nutritionData[key] !== undefined && key !== 'calories') {
       const val = typeof nutritionData[key] === 'number' ? Math.round(nutritionData[key] * 10) / 10 : nutritionData[key];
       if (schemaColumns.includes(key)) {
@@ -1221,7 +1221,7 @@ async function logFilteredFood(userId: string, db: DbService, nutritionData: any
     console.error('[OrchestratorV3] Confirmation error:', error);
     return {
       status: 'error',
-      message: `Failed to save: ${error.message}. Please try again.`,
+      message: `Failed to save: ${(error as Error).message}. Please try again.`,
       response_type: 'confirmation_failed'
     };
   }
@@ -1237,7 +1237,7 @@ async function logFilteredFood(userId: string, db: DbService, nutritionData: any
   }
   if (intentResult.entities && Array.isArray(intentResult.entities)) {
     // Entities might contain food names
-    foods.push(...intentResult.entities.filter((e) => ![
+    foods.push(...intentResult.entities.filter((e: any) => ![
       'today',
       'yesterday',
       'tomorrow',
