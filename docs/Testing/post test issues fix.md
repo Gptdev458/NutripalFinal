@@ -65,7 +65,7 @@ User verified "Standard packaged Oreos".
 The `NutritionAgent` likely caps confidence at "Medium" for any LLM-derived estimate, even if the user explicitly confirmed the standard product.
 
 **Fix**:
-- [ ] **Logic Update**: If User confirms a specific product/brand during clarification, upgrade confidence to **High**.
+- [x] **Logic Update**: If User confirms a specific product/brand during clarification, upgrade confidence to **High**.
 
 ---
 

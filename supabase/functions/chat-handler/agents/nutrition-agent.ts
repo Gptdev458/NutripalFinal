@@ -816,26 +816,29 @@ export class NutritionAgent {
             role: 'system',
             content: `You are a nutrition expert. Estimate nutrition data for a given food item.
             
-            **CRITICAL RULE: HIERARCHY OF PRECISION**
-            You must evaluate the input based on the most precise detail provided. The Hierarchy is:
-            1. **Specific Weight** (e.g. "200g", "4oz") -> **HIGHEST PRECISION**.
-               - If present by User, 'serving_size' MUST be that weight (e.g. "200g").
-               - You MUST NOT return "vague_portion".
-               - Confidence should be 'high' or 'medium' for the quantity-dependent nutrients.
-               - **Conflict Resolution**: If the input says "1 breast, 200g", the Weight ("200g") overrides the Count ("1 breast").
-            2. **Specific Count** (e.g. "2 eggs") -> **MEDIUM PRECISION**.
-               - 'serving_size' MUST be the count.
-               - You MAY return "estimation_variance", but NOT "vague_portion".
-            3. **Generic/Vague** (e.g. "chicken") -> **LOW PRECISION**.
-               - 'serving_size' should be "1 standard serving".
-               - You MUST return "vague_portion".
-            
-            **SCIENTIFIC CONSISTENCY (CRITICAL)**:
-            You must ensure the following logical relationships are respected. If you are unsure of the breakdown, prioritize the Total values.
+            **CRITICAL RULE: CONFIDENCE & PRECISION MATRIX**
+            You must evaluate confidence based on TWO factors: **Identity Precision** and **Quantity Precision**.
+
+            1. **IDENTITY PRECISION**:
+               - **Standardized/Specific** (High): Specific brands ("Oreo", "Big Mac"), biological standards ("Large Egg", "Banana"), or pure chemicals ("Sugar", "Salt").
+               - **Variable** (Medium): Generic whole foods ("Chicken Breast", "Apple", "Steak").
+               - **Highly Variable** (Low): Complex cooked dishes ("Lasagna", "Curry", "Sandwich", "Cake").
+
+            2. **QUANTITY PRECISION**:
+               - **Precise** (High): Exact weight ("100g") or standard count for standardized items ("1 cookie", "1 egg").
+               - **Estimated** (Medium): Volume ("1 cup") or count for variable items ("1 breast").
+               - **Vague** (Low): "A bowl", "some", "a serving".
+
+            **SCORING RULES**:
+            - **HIGH CONFIDENCE**: Identity is Standardized/Specific AND Quantity is Precise. (e.g. "1 Oreo", "100g Chicken").
+            - **MEDIUM CONFIDENCE**: Identity is Variable OR Quantity is Estimated. (e.g. "1 Chicken Breast", "1 cup Rice").
+            - **LOW CONFIDENCE**: Identity is Highly Variable OR Quantity is Vague. (e.g. "Lasagna", "bowl of chips").
+
+            **SCIENTIFIC CONSISTENCY**:
             - Sugar <= Total Carbs
-            - Fiber <= Total Carbs (Fiber is a type of Carbohydrate)
+            - Fiber <= Total Carbs
             - Saturated Fat <= Total Fat
-            - Polyunsaturated + Monounsaturated + Saturated + Trans Fat <= Total Fat
+            - Poly + Mono + Sat + Trans <= Total Fat (approx)
 
             **Context Handling**:
             - The input might start with '[Context: ...]'. This is background.
