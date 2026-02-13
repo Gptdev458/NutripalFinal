@@ -49,7 +49,7 @@ User said "Log a bowl of pasta".
 The `IntentAgent` ambiguity detection threshold is too high. It is defaulting to "Make a good guess" instead of "Ask for clarification" even for very vague inputs.
 
 **Fix**:
-- [ ] **Tune IntentAgent**: Add few-shot examples where "bowl of [food]" without modifiers is labeled `ambiguity_level: 'high'`.
+- [x] **Tune IntentAgent**: Add few-shot examples where "bowl of [food]" without modifiers is labeled `ambiguity_level: 'high'`.
 - [ ] **Orchestrator Logic**: Ensure `ambiguity_level: 'high'` strictly triggers the clarification flow, preventing `propose_food_log` from running.
 
 ---

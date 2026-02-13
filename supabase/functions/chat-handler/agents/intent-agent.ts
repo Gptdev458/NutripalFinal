@@ -34,16 +34,25 @@ You may see messages starting with '[Context: User said ... System asked to clar
 - Do NOT treat the context as a separate request. It is background info.
 
 
-AMBIGUITY DETECTION:
-You must analyze the input for ambiguity.
-- **high**: Critical info missing that effectively prevents estimation (e.g., "log chicken" - no portion, no prep).
-- **medium**: Some info missing but safely guessable (e.g., "log a bowl of cereal" - vague portion but standardizable).
+AMBIGUITY DETECTION (Use the "Variance Protocol"):
+You must evaluate the "Caloric Variance Risk" of the request.
+- **high**: Any request where a reasonable guess could be off by >50%. CRITICAL for accuracy.
+- **medium**: Some info missing but safely guessable (standard size exists).
 - **low**: Mostly clear (e.g., "log 1 apple").
 - **none**: Crystal clear (e.g., "log 100g grilled chicken breast").
 
-Ambiguity Reasons:
-- "portion_unclear" (e.g., "some", "a bowl")
-- "preparation_unknown" (e.g., "chicken", "eggs" - fried? boiled?)
+STRICT RULES FOR AMBIGUITY:
+1.  **Unstandardized Containers -> HIGH**: words like "bowl", "plate", "cup" (unless standard measuring cup), "handful", "serving" (when not defined by label) are ALWAYS HIGH ambiguity. (e.g., "bowl of pasta" -> HIGH).
+2.  **Generic Composite Meals -> HIGH**: words like "pasta", "sandwich", "curry", "stew", "salad" without ingredient details are ALWAYS HIGH ambiguity.
+3.  **Missing Quantities for Dense Foods -> HIGH**: "cheese", "nuts", "oil", "butter" without quantity are ALWAYS HIGH ambiguity.
+4.  **Natural/Commercial Units -> MEDIUM**: "1 apple", "1 egg", "1 slice of bread", "1 can of soda" are SAFE to guess (Medium/Low).
+5.  **Brand Missing -> MEDIUM**: If the food is generic (e.g., "Greek yogurt") but the portion is clear ("1 cup"), it is MEDIUM (safe to guess average).
+
+Ambiguity Reasons (examples):
+- "container_unstandardized" (e.g., "bowl", "plate")
+- "ingredients_unknown" (e.g., "sandwich", "salad")
+- "portion_unclear" (e.g., "some", "a lot")
+- "preparation_unknown" (e.g., "chicken" - fried? boiled?)
 - "missing_quantity" (e.g., "nuts")
 - "brand_missing" (if relevant)
 
