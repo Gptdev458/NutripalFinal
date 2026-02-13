@@ -76,7 +76,8 @@ export class ReasoningAgent {
       userId,
       supabase,
       timezone,
-      sessionId
+      sessionId,
+      healthConstraints: context.healthConstraints
     });
 
     // Build messages array

@@ -230,7 +230,8 @@ function decorateWithContext(message: string, pendingAction: any): string {
           userId,
           supabase,
           timezone,
-          sessionId
+          sessionId,
+          healthConstraints: context.healthConstraints
         });
         const parseResult = await toolExecutor.execute('parse_recipe_text', {
           recipe_text: message
@@ -329,7 +330,8 @@ function decorateWithContext(message: string, pendingAction: any): string {
       userId,
       supabase,
       timezone,
-      sessionId
+      sessionId,
+      healthConstraints: context.healthConstraints
     });
     const intent = intentResult.intent;
     switch (intent) {

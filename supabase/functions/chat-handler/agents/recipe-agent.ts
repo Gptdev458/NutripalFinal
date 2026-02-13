@@ -189,15 +189,16 @@ export class RecipeAgent {
   "ingredients": [ { "name": "string", "quantity": number, "unit": "string" } ],
   "instructions": "string"
 }
-- Use provided name exactly if given. If the user says "save this recipe for my [name]", extract [name] as the recipe\_name.
+- **NAME GENERATION**: If a name is provided in the text or by the user, use it.
+- **CRITICAL**: If NO name is found, **GENERATE a short, descriptive name** based on the ingredients (e.g., "Peanut Butter Banana Toast").
+- **NEVER** return "String", "Recipe", "Unknown", or "My Recipe".
 - Default servings to 1.
 - Extract batch/serving sizes if mentioned.
-- ONLY include "instructions" if they were explicitly provided. DO NOT infer them.
-- If not a recipe, return what you can find.`
+- ONLY include "instructions" if they were explicitly provided. DO NOT infer them.`
             },
             {
               role: "user",
-              content: action.text
+              content: `${action.recipeName ? `User provided name: "${action.recipeName}"\n\n` : ''}${action.text}`
             }
           ],
           response_format: { type: "json_object" }
